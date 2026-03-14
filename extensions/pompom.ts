@@ -145,13 +145,67 @@ function fbm(x: number, y: number): number {
 		Math.sin(x * 30 - time) * Math.cos(y * 30) * 0.02;
 }
 
-function getWeatherAndTime() {
+type Weather = "clear" | "cloudy" | "rain" | "snow" | "storm";
+type TimeOfDay = "dawn" | "morning" | "day" | "sunset" | "dusk" | "night";
+
+function getTimeOfDay(): TimeOfDay {
 	const h = new Date().getHours();
+	if (h >= 5 && h < 7) return "dawn";
+	if (h >= 7 && h < 10) return "morning";
+	if (h >= 10 && h < 16) return "day";
+	if (h >= 16 && h < 18) return "sunset";
+	if (h >= 18 && h < 20) return "dusk";
+	return "night";
+}
+
+function getWeather(): Weather {
+	// Cycle weather based on minute within each hour for variety
+	const m = new Date().getMinutes();
+	if (m < 15) return "clear";
+	if (m < 25) return "cloudy";
+	if (m < 35) return "rain";
+	if (m < 40) return "storm";
+	if (m < 45) return "snow";
+	if (m < 55) return "cloudy";
+	return "clear";
+}
+
+function getWeatherAndTime() {
+	const tod = getTimeOfDay();
+	const weather = getWeather();
 	let rTop = 0, gTop = 0, bTop = 0, rBot = 0, gBot = 0, bBot = 0;
-	if (h >= 6 && h < 17) { rTop = 40; gTop = 120; bTop = 255; rBot = 180; gBot = 220; bBot = 255; }
-	else if (h >= 17 && h < 19) { rTop = 140; gTop = 50; bTop = 120; rBot = 255; gBot = 160; bBot = 100; }
-	else { rTop = 10; gTop = 10; bTop = 20; rBot = 25; gBot = 20; bBot = 40; }
-	return { rTop, gTop, bTop, rBot, gBot, bBot, isNight: h >= 19 || h < 6 };
+
+	// Sky gradients per time of day
+	if (tod === "dawn") {
+		rTop = 40; gTop = 30; bTop = 80; rBot = 255; gBot = 140; bBot = 80;
+	} else if (tod === "morning") {
+		rTop = 60; gTop = 140; bTop = 255; rBot = 200; gBot = 220; bBot = 255;
+	} else if (tod === "day") {
+		rTop = 40; gTop = 120; bTop = 255; rBot = 180; gBot = 220; bBot = 255;
+	} else if (tod === "sunset") {
+		rTop = 140; gTop = 50; bTop = 120; rBot = 255; gBot = 120; bBot = 60;
+	} else if (tod === "dusk") {
+		rTop = 50; gTop = 20; bTop = 80; rBot = 120; gBot = 60; bBot = 80;
+	} else { // night
+		rTop = 5; gTop = 5; bTop = 15; rBot = 15; gBot = 10; bBot = 30;
+	}
+
+	// Weather tinting — overcast dims the sky, storm darkens further
+	if (weather === "cloudy") {
+		rTop = Math.floor(rTop * 0.7 + 40); gTop = Math.floor(gTop * 0.7 + 40); bTop = Math.floor(bTop * 0.7 + 40);
+		rBot = Math.floor(rBot * 0.7 + 40); gBot = Math.floor(gBot * 0.7 + 40); bBot = Math.floor(bBot * 0.7 + 40);
+	} else if (weather === "rain") {
+		rTop = Math.floor(rTop * 0.5 + 30); gTop = Math.floor(gTop * 0.5 + 30); bTop = Math.floor(bTop * 0.5 + 40);
+		rBot = Math.floor(rBot * 0.5 + 30); gBot = Math.floor(gBot * 0.5 + 30); bBot = Math.floor(bBot * 0.5 + 40);
+	} else if (weather === "storm") {
+		rTop = Math.floor(rTop * 0.3 + 15); gTop = Math.floor(gTop * 0.3 + 15); bTop = Math.floor(bTop * 0.3 + 20);
+		rBot = Math.floor(rBot * 0.3 + 20); gBot = Math.floor(gBot * 0.3 + 20); bBot = Math.floor(bBot * 0.3 + 25);
+	} else if (weather === "snow") {
+		rTop = Math.floor(rTop * 0.6 + 60); gTop = Math.floor(gTop * 0.6 + 60); bTop = Math.floor(bTop * 0.6 + 70);
+		rBot = Math.floor(rBot * 0.6 + 60); gBot = Math.floor(gBot * 0.6 + 60); bBot = Math.floor(bBot * 0.6 + 70);
+	}
+
+	return { rTop, gTop, bTop, rBot, gBot, bBot, isNight: tod === "night" || tod === "dusk", weather, timeOfDay: tod };
 }
 
 function getObjHit(px: number, py: number, objects: RenderObj[]) {
@@ -407,11 +461,44 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	let bgR = Math.floor(skyColors.rTop * (1 - grad) + skyColors.rBot * grad);
 	let bgG = Math.floor(skyColors.gTop * (1 - grad) + skyColors.gBot * grad);
 	let bgB = Math.floor(skyColors.bTop * (1 - grad) + skyColors.bBot * grad);
+
+	// Stars at night / dusk — twinkling via time modulation
 	if (skyColors.isNight) {
-		const star = Math.sin(px * 80) * Math.cos(py * 80);
-		if (star > 0.99) { bgR = 255; bgG = 255; bgB = 255; }
-		else if (star > 0.97) { bgR += 50; bgG += 50; bgB += 50; }
+		const star = Math.sin(px * 80 + 1.3) * Math.cos(py * 80 + 0.7);
+		const twinkle = Math.sin(time * 3 + px * 20 + py * 30) * 0.5 + 0.5;
+		if (star > 0.98) { const b = Math.floor(180 + twinkle * 75); bgR = b; bgG = b; bgB = b; }
+		else if (star > 0.96) { const b = Math.floor(40 + twinkle * 40); bgR += b; bgG += b; bgB += b; }
 	}
+
+	// Clouds — wispy noise shapes in upper sky
+	const w = (skyColors as any).weather as Weather | undefined;
+	if (w === "cloudy" || w === "rain" || w === "storm" || w === "snow") {
+		const cloudDensity = w === "storm" ? 0.7 : w === "rain" ? 0.5 : w === "snow" ? 0.4 : 0.3;
+		const cn = Math.sin(px * 8 + time * 0.3) * Math.cos(py * 12 - time * 0.2) +
+			Math.sin(px * 16 + py * 6) * 0.5;
+		if (cn > 1.0 - cloudDensity && py < 0.2) {
+			const blend = Math.min(1.0, (cn - (1.0 - cloudDensity)) * 4);
+			const cr = w === "storm" ? 50 : 180, cg = w === "storm" ? 50 : 185, cb = w === "storm" ? 55 : 195;
+			bgR = Math.floor(bgR * (1 - blend) + cr * blend);
+			bgG = Math.floor(bgG * (1 - blend) + cg * blend);
+			bgB = Math.floor(bgB * (1 - blend) + cb * blend);
+		}
+	}
+
+	// Sunset/dawn glow at horizon
+	const tod = (skyColors as any).timeOfDay as TimeOfDay | undefined;
+	if (tod === "sunset" || tod === "dawn") {
+		const horizonGlow = Math.exp(-(py - 0.4) * (py - 0.4) * 20);
+		if (tod === "sunset") {
+			bgR = Math.min(255, Math.floor(bgR + horizonGlow * 80));
+			bgG = Math.min(255, Math.floor(bgG + horizonGlow * 30));
+		} else {
+			bgR = Math.min(255, Math.floor(bgR + horizonGlow * 50));
+			bgG = Math.min(255, Math.floor(bgG + horizonGlow * 40));
+			bgB = Math.min(255, Math.floor(bgB + horizonGlow * 30));
+		}
+	}
+
 	return [bgR, bgG, bgB];
 }
 
@@ -486,14 +573,21 @@ function updatePhysics(dt: number) {
 	ffZ = posZ + Math.sin(time * 0.9) * 0.4;
 
 	// Weather particles
-	const isRaining = new Date().getMinutes() % 10 < 3 && !getWeatherAndTime().isNight;
-	if (isRaining && Math.random() < 0.3) {
-		const effectDim = Math.max(40, Math.min(W, H * 4));
-		const scale = 2.0 / effectDim;
-		particles.push({
-			x: (Math.random() - 0.5) * W * scale, y: -H * scale,
-			vx: 0.1, vy: 2.0 + Math.random(), char: "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain",
-		});
+	const weather = getWeather();
+	const effectDim = Math.max(40, Math.min(W, H * 4));
+	const wScale = 2.0 / effectDim;
+	if (weather === "rain" && Math.random() < 0.4) {
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.15, vy: 2.5 + Math.random(), char: "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
+	}
+	if (weather === "storm" && Math.random() < 0.6) {
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.4 + Math.random() * 0.3, vy: 3.0 + Math.random() * 2, char: "/", r: 180, g: 200, b: 255, life: 0.8, type: "rain" });
+		// Occasional lightning flash (brief bright particle)
+		if (Math.random() < 0.005) {
+			particles.push({ x: (Math.random() - 0.5) * W * wScale * 0.5, y: -H * wScale * 0.5, vx: 0, vy: 0, char: "#", r: 255, g: 255, b: 255, life: 0.1, type: "lightning" });
+		}
+	}
+	if (weather === "snow" && Math.random() < 0.2) {
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: (Math.random() - 0.5) * 0.3, vy: 0.4 + Math.random() * 0.3, char: ".", r: 240, g: 245, b: 255, life: 3.0, type: "snow" });
 	}
 
 	// Ball physics
@@ -639,6 +733,8 @@ function updatePhysics(dt: number) {
 		if (p.type === "z") p.x += Math.sin(p.y * 4.0) * 0.005;
 		if (p.type === "note") p.x += Math.sin(p.y * 6.0) * 0.01;
 		if (p.type === "rain" && p.y > 0.6) { p.type = "splash"; p.char = "."; p.vy = -0.5; p.vx = (Math.random() - 0.5) * 0.5; p.life = 0.2; }
+		if (p.type === "snow") { p.vx += Math.sin(time * 2 + p.x * 5) * 0.01; if (p.y > 0.55) { p.life = 0; } }
+		if (p.type === "lightning") { p.life -= dt * 8; }
 		p.life -= dt * 0.8;
 		if (p.life <= 0) particles.splice(i, 1);
 	}
@@ -798,7 +894,16 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	else if (currentState === "peek") stateMsg = "Pompom is peeking back in... hi!";
 	else if (currentState === "offscreen") stateMsg = "Pompom wandered off... they'll be back";
 	else if (isTalking) stateMsg = "Pompom is listening to you speak";
-	else stateMsg = "Pompom is vibing. Pet, feed, or play!";
+	else {
+		const w = getWeather(), tod = getTimeOfDay();
+		if (w === "storm") stateMsg = "Pompom hides from the thunder!";
+		else if (w === "rain") stateMsg = "Pompom watches the rain fall";
+		else if (w === "snow") stateMsg = "Pompom catches snowflakes!";
+		else if (tod === "dawn") stateMsg = "Pompom watches the sunrise";
+		else if (tod === "sunset") stateMsg = "Pompom enjoys the sunset";
+		else if (tod === "night") stateMsg = "Pompom stargazes under the night sky";
+		else stateMsg = "Pompom is vibing. Pet, feed, or play!";
+	}
 
 	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" exactly W visible chars
 	const shortcuts: [string, string][] = [
