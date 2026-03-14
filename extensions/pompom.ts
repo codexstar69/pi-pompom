@@ -330,9 +330,9 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 
 				// Layer 2: Colored iris
 				if (eDist1 < 0.005 || eDist2 < 0.005) {
-					r = 40; g = 130; b = 90; // teal-green iris
+					r = 50; g = 35; b = 25; // dark brown iris
 					// Lower iris lighter
-					if (ey1 > 0.01 || ey2 > 0.01) { r = 60; g = 170; b = 110; }
+					if (ey1 > 0.01 || ey2 > 0.01) { r = 70; g = 50; b = 35; } // warm brown
 
 					// Layer 3: Dark pupil
 					if (eDist1 < 0.002 || eDist2 < 0.002) {
@@ -346,7 +346,7 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 				}
 				// Small secondary highlight (lower-right)
 				if ((ex1 - 0.02) ** 2 + (ey1 - 0.02) ** 2 < 0.0006 || (ex2 - 0.02) ** 2 + (ey2 - 0.02) ** 2 < 0.0006) {
-					if (!isTired) { r = 230; g = 240; b = 255; }
+					if (!isTired) { r = 255; g = 250; b = 240; } // warm white
 				}
 			}
 		}
@@ -499,19 +499,21 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	const w = (skyColors as any).weather as Weather | undefined;
 	const tod = (skyColors as any).timeOfDay as TimeOfDay | undefined;
 
+	// BASE: Clean gradient from deep blue (top) to light blue (bottom) during daytime
+	// We keep the skyColors from getWeatherAndTime()
 	const grad = Math.max(0, (1.0 + py) / 2.0);
 	let bgR = Math.floor(skyColors.rTop * (1 - grad) + skyColors.rBot * grad);
 	let bgG = Math.floor(skyColors.gTop * (1 - grad) + skyColors.gBot * grad);
 	let bgB = Math.floor(skyColors.bTop * (1 - grad) + skyColors.bBot * grad);
 
-	// 5. SNOW: soft glow/haziness across whole sky
+	// SNOW: slight brightness boost
 	if (w === "snow") {
 		bgR = Math.min(255, bgR + 30);
 		bgG = Math.min(255, bgG + 30);
 		bgB = Math.min(255, bgB + 40);
 	}
 
-	// 3. STARS & MOON
+	// STARS & MOON (dimmer stars)
 	if (skyColors.isNight) {
 		const moonDist = Math.sqrt((px - 0.4) ** 2 + (py + 0.4) ** 2);
 		if (moonDist < 0.15) {
@@ -522,7 +524,7 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		}
 		
 		const starPattern = Math.sin(px * 150) * Math.cos(py * 150 + px * 40);
-		if (starPattern > 0.92) {
+		if (starPattern > 0.95) { // rarer stars
 			const twinkle = Math.sin(time * 3 + px * 30 + py * 40) * 0.5 + 0.5;
 			const starColorHash = Math.abs(Math.sin(px * 313 + py * 717));
 			let sr = 255, sg = 255, sb = 255;
@@ -530,53 +532,39 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 			else if (starColorHash < 0.6) { sr = 255; sg = 255; sb = 180; }
 			else if (starColorHash < 0.8) { sr = 255; sg = 180; sb = 150; }
 			
-			const intensity = starPattern > 0.98 ? twinkle : twinkle * 0.4;
+			// dimmer stars
+			const intensity = starPattern > 0.98 ? twinkle * 0.5 : twinkle * 0.2;
 			bgR = Math.min(255, bgR + sr * intensity);
 			bgG = Math.min(255, bgG + sg * intensity);
 			bgB = Math.min(255, bgB + sb * intensity);
 		}
 	}
 
-	// 4. SUNSET/DAWN (SUN DISK)
+	// SUNSET/DAWN: subtle warm glow
 	if (tod === "sunset" || tod === "dawn") {
 		const sunDist = Math.sqrt((px + 0.3) ** 2 + (py - 0.2) ** 2);
 		const halo = Math.max(0, 1.0 - sunDist * 2.0);
-		if (sunDist < 0.05) {
-			bgR = 255; bgG = 240; bgB = 200;
-		} else if (halo > 0) {
-			const hIntensity = Math.pow(halo, 2);
+		if (halo > 0) {
+			const hIntensity = Math.pow(halo, 2) * 0.5; // more subtle
 			bgR = Math.min(255, bgR + hIntensity * 120);
 			bgG = Math.min(255, bgG + hIntensity * (tod === "sunset" ? 70 : 90));
 			bgB = Math.min(255, bgB + hIntensity * 40);
 		}
 	}
 
-	// 1. CLOUDS & 6. STORM CLOUDS
-	if (w === "cloudy" || w === "rain" || w === "storm" || w === "snow") {
-		let cloudDensity = w === "storm" ? 0.8 : w === "rain" ? 0.6 : w === "snow" ? 0.5 : 0.4;
+	// CLOUDS: SUBTLE only. Small, soft wisps. Only upper 30% of sky. Opacity max 0.15. Light gray-white.
+	if ((w === "cloudy" || w === "rain" || w === "storm" || w === "snow") && py < -0.4) {
+		const drift = time * 0.05; // drift slowly
+		const n1 = Math.sin((px + drift) * 4) * Math.cos(py * 6) * 0.5 + 0.5;
+		const n2 = Math.sin((px - drift * 0.5) * 8 + py * 10) * 0.5 + 0.5;
+		const noise = n1 * 0.6 + n2 * 0.4;
 		
-		// Denser in upper half, wispy at lower altitudes
-		cloudDensity *= Math.max(0, 1.0 - (py + 1.0) / 1.6);
-
-		const drift = time * 0.15;
-		const n1 = Math.sin((px + drift) * 6) * Math.cos(py * 8) * 0.5 + 0.5;
-		const n2 = Math.sin((px - drift * 0.5) * 14 + py * 10) * 0.5 + 0.5;
-		const n3 = Math.sin((px + drift * 2) * 25 - py * 20) * 0.5 + 0.5;
-		const noise = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
-		
-		const shadowNoise = Math.sin((px + drift) * 6 + 0.3) * Math.cos((py - 0.08) * 8) * 0.5 + 0.5;
-
-		if (noise > 1.0 - cloudDensity) {
-			const blend = Math.min(1.0, (noise - (1.0 - cloudDensity)) * 4);
-			const isShadow = shadowNoise < noise - 0.1;
+		if (noise > 0.6) {
+			const blend = Math.min(0.15, (noise - 0.6) * 0.5); // Max opacity 0.15
 			
-			let cr = w === "storm" ? 60 : 200;
-			let cg = w === "storm" ? 65 : 205;
-			let cb = w === "storm" ? 75 : 215;
-
-			if (isShadow) {
-				cr *= 0.6; cg *= 0.6; cb *= 0.7;
-			}
+			const cr = w === "storm" ? 100 : 240;
+			const cg = w === "storm" ? 105 : 245;
+			const cb = w === "storm" ? 115 : 255;
 
 			bgR = Math.floor(bgR * (1 - blend) + cr * blend);
 			bgG = Math.floor(bgG * (1 - blend) + cg * blend);
@@ -584,34 +572,11 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		}
 	}
 
-	// 6. STORM LIGHTNING
-	if (w === "storm" && Math.sin(time * 47) > 0.99) {
+	// STORM LIGHTNING: rarer
+	if (w === "storm" && Math.sin(time * 47) > 0.995) {
 		bgR = Math.min(255, bgR + 180);
 		bgG = Math.min(255, bgG + 180);
 		bgB = Math.min(255, bgB + 200);
-	}
-
-	// 2. RAIN VISUAL
-	if (w === "rain" || w === "storm") {
-		if (Math.sin(px * 40 + py * 80 + time * 15) > 0.95) {
-			bgR = Math.min(255, bgR + 50);
-			bgG = Math.min(255, bgG + 50);
-			bgB = Math.min(255, bgB + 70);
-		}
-	}
-
-	// 7. FOG/MIST
-	if (w === "rain" || w === "snow") {
-		const fogDist = Math.max(0, py); 
-		if (fogDist > 0) {
-			const fogBlend = Math.min(1.0, (fogDist / 0.6) * 0.5); 
-			const fr = w === "snow" ? 220 : 140;
-			const fg = w === "snow" ? 220 : 150;
-			const fb = w === "snow" ? 230 : 160;
-			bgR = Math.floor(bgR * (1 - fogBlend) + fr * fogBlend);
-			bgG = Math.floor(bgG * (1 - fogBlend) + fg * fogBlend);
-			bgB = Math.floor(bgB * (1 - fogBlend) + fb * fogBlend);
-		}
 	}
 
 	return [bgR, bgG, bgB];
