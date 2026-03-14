@@ -9,7 +9,7 @@
 // Widget dimensions — set once, used by renderPompom
 let W = 50;
 let H = 14; // character rows (each = 2 logical pixels via half-block)
-const VIEW_OFFSET_Y = 0.18; // shift camera down so ground is visible in compact mode
+const VIEW_OFFSET_Y = 0.2; // shift camera down so ground is visible in compact mode
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
 
@@ -91,7 +91,7 @@ function say(text: string, duration = 4.0) {
 }
 
 function project2D(x: number, y: number): [number, number] {
-	const effectDim = Math.max(40, Math.min(W, H * 2.8));
+	const effectDim = Math.max(40, Math.min(W, H * 4));
 	const scale = 2.0 / effectDim;
 	const cx = (x / scale) + (W / 2.0);
 	const cy = ((y - VIEW_OFFSET_Y) / scale + H) / 2.0;
@@ -255,9 +255,9 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		                if (eDist1 < 0.004 || eDist2 < 0.004) {
 		                        r = 15; g = 10; b = 20;
 		                        if (ey1 > 0 || ey2 > 0) { r = 50; g = 180; b = 100; }
-		                        if ((ex1 + 0.012) ** 2 + (ey1 + 0.012) ** 2 < 0.0003 || (ex2 + 0.012) ** 2 + (ey2 + 0.012) ** 2 < 0.0003) {
+		                        if ((ex1 + 0.012) ** 2 + (ey1 + 0.012) ** 2 < 0.0008 || (ex2 + 0.012) ** 2 + (ey2 + 0.012) ** 2 < 0.0008) {
 		                                if (!isTired) { r = 255; g = 255; b = 255; }
-		                        } else if ((ex1 - 0.015) ** 2 + (ey1 - 0.015) ** 2 < 0.0001 || (ex2 - 0.015) ** 2 + (ey2 - 0.015) ** 2 < 0.0001) {
+		                        } else if ((ex1 - 0.015) ** 2 + (ey1 - 0.015) ** 2 < 0.0005 || (ex2 - 0.015) ** 2 + (ey2 - 0.015) ** 2 < 0.0005) {
 		                                if (!isTired) { r = 255; g = 255; b = 255; }
 		                        }
 		                }
@@ -463,7 +463,7 @@ function buildObjects(): RenderObj[] {
 }
 
 function getScreenEdgeX(): number {
-	const effectDim = Math.max(40, Math.min(W, H * 2.8));
+	const effectDim = Math.max(40, Math.min(W, H * 4));
 	const scale = 2.0 / effectDim;
 	return (W / 2.0) * scale;
 }
@@ -488,7 +488,7 @@ function updatePhysics(dt: number) {
 	// Weather particles
 	const isRaining = new Date().getMinutes() % 10 < 3 && !getWeatherAndTime().isNight;
 	if (isRaining && Math.random() < 0.3) {
-		const effectDim = Math.max(40, Math.min(W, H * 2.8));
+		const effectDim = Math.max(40, Math.min(W, H * 4));
 		const scale = 2.0 / effectDim;
 		particles.push({
 			x: (Math.random() - 0.5) * W * scale, y: -H * scale,
@@ -645,7 +645,7 @@ function updatePhysics(dt: number) {
 }
 
 function renderToBuffers() {
-	const effectDim = Math.max(40, Math.min(W, H * 2.8));
+	const effectDim = Math.max(40, Math.min(W, H * 4));
 	const scale = 2.0 / effectDim;
 	const objects = buildObjects();
 	const skyColors = getWeatherAndTime();
@@ -676,7 +676,7 @@ function renderToBuffers() {
 				if (d > maxD) maxD = d;
 			}
 
-			if (maxD > 60) {
+			if (maxD > 30) {
 				// EDGE CELL — use quadrant character for 2× horizontal detail
 				const lum0 = tl[0] * 77 + tl[1] * 150 + tl[2] * 29;
 				const lum1 = tr[0] * 77 + tr[1] * 150 + tr[2] * 29;
