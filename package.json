@@ -1,8 +1,10 @@
 {
   "name": "@codexstar/pi-pompom",
   "version": "1.1.0",
-  "description": "Pompom — a 3D raymarched virtual pet companion for Pi CLI",
+  "description": "A 3D raymarched virtual pet companion for Pi CLI",
   "type": "module",
+  "author": "codexstar69 <engazedigital@gmail.com>",
+  "license": "MIT",
   "keywords": [
     "pi-package",
     "pi",
@@ -10,9 +12,25 @@
     "pompom",
     "companion",
     "virtual-pet",
-    "terminal-pet"
+    "terminal-pet",
+    "terminal-art",
+    "raymarching",
+    "ascii-art",
+    "ansi",
+    "tui",
+    "widget",
+    "interactive",
+    "animation",
+    "coding-agent"
   ],
-  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codexstar69/pi-pompom.git"
+  },
+  "homepage": "https://github.com/codexstar69/pi-pompom#readme",
+  "bugs": {
+    "url": "https://github.com/codexstar69/pi-pompom/issues"
+  },
   "scripts": {
     "typecheck": "bunx tsc -p tsconfig.json",
     "check": "bun run typecheck"
@@ -32,6 +50,8 @@
   "files": [
     "extensions",
     "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
     "package.json"
   ]
 }

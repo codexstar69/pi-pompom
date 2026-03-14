@@ -1,0 +1,31 @@
+# pi-pompom
+
+> A 3D raymarched virtual pet companion for Pi CLI terminals.
+
+## What It Does
+
+Pompom is a terminal widget that renders an animated 3D creature above the Pi editor using Unicode half-block characters. It has physics, AI behaviors, particle effects, and responds to keyboard shortcuts and slash commands.
+
+## Key Capabilities
+
+- Real-time raymarched 3D rendering with 4x4 supersampled anti-aliasing
+- 12 interactive states: idle, walk, flip, sleep, excited, chasing, fetching, singing, dance, offscreen, peek
+- Cross-platform keyboard shortcuts (macOS Option, Windows/Linux Alt, Kitty protocol)
+- Hunger/energy needs system with visual status bars
+- 4 color themes, day/night cycle, particle effects, speech bubbles
+
+## Usage
+
+```bash
+pi install @codexstar/pi-pompom
+```
+
+Then in Pi: `/pompom on`, `/pompom help` for commands.
+
+## File Index
+
+- [README.md](README.md): Full documentation with commands, shortcuts, and features
+- [extensions/pompom.ts](extensions/pompom.ts): Core renderer, physics, shading, and public API
+- [extensions/pompom-extension.ts](extensions/pompom-extension.ts): Pi extension lifecycle, commands, keyboard input
+- [CONTRIBUTING.md](CONTRIBUTING.md): Development setup
+- [CHANGELOG.md](CHANGELOG.md): Version history

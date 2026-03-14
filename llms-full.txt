@@ -1,0 +1,100 @@
+# pi-pompom — Full Reference
+
+> A 3D raymarched virtual pet companion for Pi CLI.
+
+## Overview
+
+pi-pompom is a Pi CLI extension that renders an animated virtual pet (Pompom) above the editor. The creature is 3D raymarched in real-time using Unicode half-block characters with true-color ANSI escape sequences. It has a full physics simulation, state machine AI, particle system, speech bubbles, and responds to user interaction via keyboard shortcuts and slash commands.
+
+## Architecture
+
+### extensions/pompom.ts (Core Renderer)
+
+The main module. All rendering, physics, and game logic lives here.
+
+**Rendering pipeline:**
+- `renderPompom(width, audioLevel, dt)` — main entry point, returns `string[]` of ANSI lines
+- `renderToBuffers()` — raymarches the scene into `screenChars`/`screenColors` buffers
+- `getPixel(px, py, objects, skyColors)` — returns RGB for a world-space coordinate
+- `getObjHit(px, py, objects)` — tests ray against all scene objects (ellipsoids with rotation)
+- `shadeObject(hit, px, py, objects)` — computes lighting: diffuse, wrap, ambient occlusion, specular, firefly point light, antenna glow
+- `buildObjects()` — constructs the scene graph each frame (body, ears, paws, tail, antenna, ball, food, firefly)
+
+**Physics:**
+- `updatePhysics(dt)` — state machine, ball physics, food gravity, particle lifecycle, needs decay
+- 60fps sub-stepping via `PHYSICS_DT = 0.016`
+
+**States:** idle, walk, flip, sleep, excited, chasing, fetching, singing, dance, offscreen, peek
+
+**Rendering config:**
+- `W` — widget width in characters (from terminal)
+- `H` — widget height in rows: `max(14, min(18, floor(W * 0.24)))`
+- `effectDim = max(40, min(W, H * 2.8))` — controls zoom level
+- `VIEW_OFFSET_Y = 0.18` — camera vertical offset
+- `posY = 0.15` — creature Y position (close to ground at y=0.6)
+- 4x4 supersampling (16 samples per half-pixel)
+
+**Exports:**
+- `renderPompom(width: number, audioLevel: number, dt: number): string[]`
+- `pompomKeypress(key: string): void` — keys: p,f,b,m,c,d,s,w,o,x,t,h
+- `pompomSetTalking(active: boolean): void`
+- `pompomStatus(): { hunger, energy, mood, theme }`
+- `pompomHeight(): number`
+- `resetPompom(): void`
+
+### extensions/pompom-extension.ts (Pi Extension)
+
+Registers the widget, lifecycle hooks, keyboard handler, and `/pompom` command.
+
+**Widget:** ID `codexstar-pompom-companion`, placement `aboveEditor`, 150ms refresh interval.
+
+**Keyboard input** (4 methods, checked in order):
+1. Ghostty keybind prefix `\x1d` + letter
+2. ESC prefix `\x1b` + letter (Windows/Linux Alt, macOS Option-as-Meta)
+3. macOS Unicode characters (π→p, ƒ→f, ∫→b, etc.)
+4. Kitty keyboard protocol `\x1b[<codepoint>;<modifier>u`
+
+**Error isolation:** All rendering and input handling wrapped in try/catch. Widget removal is defensive. Extension never crashes the host TUI.
+
+## Commands
+
+| Command | Key | Action |
+|---------|-----|--------|
+| `/pompom on` | — | Enable companion |
+| `/pompom off` | — | Disable companion |
+| `/pompom help` | — | Show command reference |
+| `/pompom status` | — | Show hunger/energy/mood/theme |
+| `/pompom pet` | p | Excited state, sparkles |
+| `/pompom feed` | f | Drop food (hunger +20) |
+| `/pompom treat` | t | Special food (hunger +30) + excited |
+| `/pompom hug` | h | Excited + energy +10 |
+| `/pompom ball` | b | Throw ball, fetch behavior |
+| `/pompom dance` | x | Dance with sparkle particles |
+| `/pompom music` | m | Singing with note particles |
+| `/pompom theme` | c | Cycle: Cloud → Cotton Candy → Mint Drop → Sunset Gold |
+| `/pompom sleep` | s | Nap on pillow, energy recovery |
+| `/pompom wake` | w | Wake up from sleep |
+| `/pompom flip` | d | Backflip animation |
+| `/pompom hide` | o | Walk offscreen, peek back |
+
+## Themes
+
+| Name | RGB |
+|------|-----|
+| Cloud | 245, 250, 255 |
+| Cotton Candy | 255, 210, 230 |
+| Mint Drop | 200, 255, 220 |
+| Sunset Gold | 255, 225, 180 |
+
+## Dependencies
+
+- Peer: `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`
+- Runtime: Node.js 18+ or Bun
+- No production dependencies
+
+## Troubleshooting
+
+- **Widget not showing:** Run `/pompom on`. Check `pi list` includes `@codexstar/pi-pompom`.
+- **Shortcuts not working:** On macOS with Ghostty, add keybindings to `~/.config/ghostty/config`. On Windows, Alt+key should work by default.
+- **Rendering glitches:** Set `POMPOM_NO_KITTY=1` environment variable.
+- **Conflict with other extensions:** Pompom uses namespaced widget ID and defensive error handling. It should coexist with any extension.
