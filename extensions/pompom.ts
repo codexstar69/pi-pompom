@@ -276,74 +276,113 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		        const spot = Math.sin(hitNx * 10) * Math.cos(hitNy * 8);
 		        if (spot > 0.6) { r = Math.max(0, r - 40); g = Math.max(0, g - 20); b = Math.max(0, b - 10); }
 		}
-		if (hitObj.id === "body") {
-		        let bdx = px - hitObj.x, bdy = py - hitObj.y;
-		        if (isFlipping) {
-		                const s = Math.sin(-flipPhase), c = Math.cos(-flipPhase);
-		                const nx = bdx * c - bdy * s, ny = bdx * s + bdy * c;
-		                bdx = nx; bdy = ny;
-		        }
-		        // Blush
-		        const blx1 = bdx + 0.16, bly1 = bdy - 0.04;
-		        const blx2 = bdx - 0.16, bly2 = bdy - 0.04;
-		        const blush = Math.exp(-(blx1 * blx1 + bly1 * bly1) * 80) + Math.exp(-(blx2 * blx2 + bly2 * bly2) * 80);
-		        if (!isSleeping) {
-		                r = r * (1 - blush) + 255 * blush; g = g * (1 - blush) + 80 * blush; b = b * (1 - blush) + 100 * blush;
-		        }
-		        // Eyes
-		        const isTired = (energy < 20 || hunger < 30) && !isSleeping;
-		        const eyeOpen = isSleeping ? 0.05 : (isTired ? 0.4 : 1.0) - blinkFade;
-		        const ex1 = bdx - lookX * 0.08 + 0.1, ey1 = bdy - lookY * 0.05 + 0.02;
-		        const ex2 = bdx - lookX * 0.08 - 0.1, ey2 = bdy - lookY * 0.05 + 0.02;
+		let isOnFace = false;
+	if (hitObj.id === "body") {
+		let bdx = px - hitObj.x, bdy = py - hitObj.y;
+		if (isFlipping) {
+			const s = Math.sin(-flipPhase), c = Math.cos(-flipPhase);
+			const nx = bdx * c - bdy * s, ny = bdx * s + bdy * c;
+			bdx = nx; bdy = ny;
+		}
 
-		        if (isSleeping || currentState === "singing") {
-		                if (isSleeping) {
-		                        if ((Math.abs(ey1) < 0.01 && Math.abs(ex1) < 0.05) || (Math.abs(ey2) < 0.01 && Math.abs(ex2) < 0.05)) { r = 30; g = 20; b = 30; }
-		                } else {
-		                        if ((Math.abs(ey1 + ex1 * ex1 * 15) < 0.015 && Math.abs(ex1) < 0.06 && ey1 > -ex1 * ex1 * 15) ||
-		                                (Math.abs(ey2 + ex2 * ex2 * 15) < 0.015 && Math.abs(ex2) < 0.06 && ey2 > -ex2 * ex2 * 15)) { r = 30; g = 20; b = 30; }
-		                }
-		        } else {
-		                const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
-		                const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
-		                if (eDist1 < 0.004 || eDist2 < 0.004) {
-		                        r = 15; g = 10; b = 20;
-		                        if (ey1 > 0 || ey2 > 0) { r = 50; g = 180; b = 100; }
-		                        if ((ex1 + 0.012) ** 2 + (ey1 + 0.012) ** 2 < 0.0008 || (ex2 + 0.012) ** 2 + (ey2 + 0.012) ** 2 < 0.0008) {
-		                                if (!isTired) { r = 255; g = 255; b = 255; }
-		                        } else if ((ex1 - 0.015) ** 2 + (ey1 - 0.015) ** 2 < 0.0005 || (ex2 - 0.015) ** 2 + (ey2 - 0.015) ** 2 < 0.0005) {
-		                                if (!isTired) { r = 255; g = 255; b = 255; }
-		                        }
-		                }
-		        }
-		        // Nose
-		        const nnx = bdx - lookX * 0.06, nny = bdy - lookY * 0.05 - 0.02;
-		        if (nnx * nnx * 1.5 + nny * nny < 0.0006 && !isSleeping) { r = 30; g = 20; b = 30; }
-		        // Mouth
-		        if (!isSleeping && !hasBall) {
-		                const mx = bdx - lookX * 0.06, my = bdy - lookY * 0.05 - 0.06;
-		                if ((Math.abs(my - (mx - 0.025) ** 2 * 20 + 0.01) < 0.01 && mx > 0 && mx < 0.05) ||
-		                        (Math.abs(my - (mx + 0.025) ** 2 * 20 + 0.01) < 0.01 && mx < 0 && mx > -0.05)) {
-		                        r = 50; g = 30; b = 40;
-		                }
-		                if (currentState === "excited" || currentState === "singing" || speechTimer > 0 || isTalking) {
-		                        const mouthOpen = (speechTimer > 0 || currentState === "singing" || isTalking)
-		                                ? (isTalking ? talkAudioLevel * 0.04 + 0.005 : Math.abs(Math.sin(time * 12)) * 0.025)
-		                                : 0.015;
-		                        if (mx * mx + (my + 0.01) ** 2 < mouthOpen && my < -0.01) {
-		                                r = 240; g = 80; b = 100;
-		                                if (my < -0.025) { r = 255; g = 120; b = 140; }
-		                        }
-		                }
-		        }
+		// ── Face plate: bright cream area so features pop ──
+		const faceR = Math.sqrt(bdx * bdx + bdy * bdy);
+		if (faceR < 0.22) {
+			isOnFace = true;
+			const faceMix = Math.max(0, 1.0 - faceR / 0.22);
+			r = Math.floor(r * (1 - faceMix * 0.6) + 255 * faceMix * 0.6);
+			g = Math.floor(g * (1 - faceMix * 0.6) + 252 * faceMix * 0.6);
+			b = Math.floor(b * (1 - faceMix * 0.6) + 248 * faceMix * 0.6);
+		}
+
+		// ── Blush: big rosy cheeks ──
+		const blx1 = bdx + 0.15, bly1 = bdy - 0.05;
+		const blx2 = bdx - 0.15, bly2 = bdy - 0.05;
+		const blush = Math.exp(-(blx1 * blx1 + bly1 * bly1) * 40) + Math.exp(-(blx2 * blx2 + bly2 * bly2) * 40);
+		if (!isSleeping) {
+			r = Math.floor(r * (1 - blush) + 255 * blush);
+			g = Math.floor(g * (1 - blush) + 70 * blush);
+			b = Math.floor(b * (1 - blush) + 90 * blush);
+		}
+
+		// ── Eyes: kawaii style — white sclera → colored iris → dark pupil → highlight ──
+		const isTired = (energy < 20 || hunger < 30) && !isSleeping;
+		const eyeOpen = isSleeping ? 0.05 : (isTired ? 0.4 : 1.0) - blinkFade;
+		const ex1 = bdx - lookX * 0.08 + 0.11, ey1 = bdy - lookY * 0.05 + 0.02;
+		const ex2 = bdx - lookX * 0.08 - 0.11, ey2 = bdy - lookY * 0.05 + 0.02;
+
+		if (isSleeping || currentState === "singing") {
+			// Closed eyes — horizontal lines
+			if (isSleeping) {
+				if ((Math.abs(ey1) < 0.012 && Math.abs(ex1) < 0.06) || (Math.abs(ey2) < 0.012 && Math.abs(ex2) < 0.06)) { r = 40; g = 30; b = 50; }
+			} else {
+				// Happy squint arcs
+				if ((Math.abs(ey1 + ex1 * ex1 * 12) < 0.018 && Math.abs(ex1) < 0.07 && ey1 > -ex1 * ex1 * 12) ||
+					(Math.abs(ey2 + ex2 * ex2 * 12) < 0.018 && Math.abs(ex2) < 0.07 && ey2 > -ex2 * ex2 * 12)) { r = 40; g = 30; b = 50; }
+			}
 		} else {
-		        if (hitObj.id === "earL" || hitObj.id === "earR") {
-		                if (hitU > -0.3 && hitU < 0.3 && hitV > -0.5 && hitV < 0.5) { r = 255; g = 130; b = 160; }
-		        }
+			const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
+			const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
+
+			// Layer 1: White sclera (outermost)
+			if (eDist1 < 0.009 || eDist2 < 0.009) {
+				r = 250; g = 250; b = 255;
+
+				// Layer 2: Colored iris
+				if (eDist1 < 0.005 || eDist2 < 0.005) {
+					r = 40; g = 130; b = 90; // teal-green iris
+					// Lower iris lighter
+					if (ey1 > 0.01 || ey2 > 0.01) { r = 60; g = 170; b = 110; }
+
+					// Layer 3: Dark pupil
+					if (eDist1 < 0.002 || eDist2 < 0.002) {
+						r = 10; g = 10; b = 15;
+					}
+				}
+
+				// Big highlight (upper-left) — spans ~2 chars
+				if ((ex1 + 0.02) ** 2 + (ey1 + 0.02) ** 2 < 0.0015 || (ex2 + 0.02) ** 2 + (ey2 + 0.02) ** 2 < 0.0015) {
+					if (!isTired) { r = 255; g = 255; b = 255; }
+				}
+				// Small secondary highlight (lower-right)
+				if ((ex1 - 0.02) ** 2 + (ey1 - 0.02) ** 2 < 0.0006 || (ex2 - 0.02) ** 2 + (ey2 - 0.02) ** 2 < 0.0006) {
+					if (!isTired) { r = 230; g = 240; b = 255; }
+				}
+			}
 		}
-		if (hitNz < 0.25) {
-		        r *= 0.6; g *= 0.6; b *= 0.6;
+
+		// ── Nose: small dark oval ──
+		const nnx = bdx - lookX * 0.06, nny = bdy - lookY * 0.05 - 0.03;
+		if (nnx * nnx * 1.2 + nny * nny < 0.001 && !isSleeping) { r = 40; g = 30; b = 40; }
+
+		// ── Mouth: clear smile arc ──
+		if (!isSleeping && !hasBall) {
+			const mx = bdx - lookX * 0.06, my = bdy - lookY * 0.05 - 0.07;
+			// Smile curves
+			if ((Math.abs(my - (mx - 0.03) ** 2 * 15 + 0.012) < 0.013 && mx > 0 && mx < 0.06) ||
+				(Math.abs(my - (mx + 0.03) ** 2 * 15 + 0.012) < 0.013 && mx < 0 && mx > -0.06)) {
+				r = 50; g = 30; b = 40;
+			}
+			// Open mouth when excited/talking
+			if (currentState === "excited" || currentState === "singing" || currentState === "dance" || speechTimer > 0 || isTalking) {
+				const mouthOpen = (speechTimer > 0 || currentState === "singing" || isTalking)
+					? (isTalking ? talkAudioLevel * 0.04 + 0.008 : Math.abs(Math.sin(time * 12)) * 0.03)
+					: 0.02;
+				if (mx * mx + (my + 0.012) ** 2 < mouthOpen && my < -0.01) {
+					r = 230; g = 70; b = 90;
+					if (my < -0.03) { r = 255; g = 110; b = 130; }
+				}
+			}
 		}
+	} else {
+		if (hitObj.id === "earL" || hitObj.id === "earR") {
+			if (hitU > -0.3 && hitU < 0.3 && hitV > -0.5 && hitV < 0.5) { r = 255; g = 130; b = 160; }
+		}
+	}
+	// Dark outline — but NOT on the face area (preserves feature contrast)
+	if (hitNz < 0.25 && !isOnFace) {
+		r = Math.floor(r * 0.6); g = Math.floor(g * 0.6); b = Math.floor(b * 0.6);
+	}
 	} else if (hitObj.mat === 2) {
 		r = Math.max(0, th.r - 20); g = Math.max(0, th.g - 15); b = Math.max(0, th.b - 10);
 		if (hitNy > 0.5) { r = 255; g = 180; b = 190; }
