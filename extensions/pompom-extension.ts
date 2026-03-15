@@ -1011,6 +1011,15 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify("Switched to Deepgram (cloud TTS). Run /pompom:voice test", "info");
 					return;
 				}
+				if (sub === "elevenlabs" || sub === "eleven" || sub === "11labs") {
+					if (!process.env.ELEVENLABS_API_KEY) {
+						commandContext.ui.notify("ELEVENLABS_API_KEY not set. Add it to your .env or shell config.", "warning");
+						return;
+					}
+					setVoiceEngine("elevenlabs");
+					commandContext.ui.notify("Switched to ElevenLabs (cloud TTS). Run /pompom:voice test", "info");
+					return;
+				}
 				if (sub === "test") {
 					speakTest();
 					commandContext.ui.notify("Speaking test phrase...", "info");
@@ -1018,12 +1027,15 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const voiceConfig = getVoiceConfig();
+				const voiceName = voiceConfig.engine === "kokoro" ? voiceConfig.kokoroVoice
+					: voiceConfig.engine === "elevenlabs" ? voiceConfig.elevenlabsVoice
+					: voiceConfig.deepgramVoice;
 				commandContext.ui.notify(
 					"Pompom Voice\n" +
 					"  Status: " + (voiceConfig.enabled ? "ON" : "OFF") + "\n" +
 					"  Engine: " + voiceConfig.engine + "\n" +
-					"  Voice:  " + (voiceConfig.engine === "kokoro" ? voiceConfig.kokoroVoice : voiceConfig.deepgramVoice) + "\n" +
-					"  /pompom:voice on|off|kokoro|deepgram|test",
+					"  Voice:  " + voiceName + "\n" +
+					"  /pompom:voice on|off|kokoro|deepgram|elevenlabs|test",
 					"info",
 				);
 			});

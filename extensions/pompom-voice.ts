@@ -18,9 +18,10 @@ interface TTSEngine {
 
 export interface VoiceConfig {
 	enabled: boolean;
-	engine: "kokoro" | "deepgram";
+	engine: "kokoro" | "deepgram" | "elevenlabs";
 	kokoroVoice: string;
 	deepgramVoice: string;
+	elevenlabsVoice: string;
 }
 
 interface AudioPlayer {
@@ -57,6 +58,7 @@ const DEFAULT_CONFIG: VoiceConfig = {
 	engine: "kokoro",
 	kokoroVoice: "af_sky",
 	deepgramVoice: "aura-2-luna-en",
+	elevenlabsVoice: "aria", // warm, friendly female voice
 };
 
 const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
@@ -92,15 +94,20 @@ function loadVoiceConfig(): VoiceConfig {
 			return { ...DEFAULT_CONFIG };
 		}
 		const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as Partial<VoiceConfig>;
+		const validEngines = ["kokoro", "deepgram", "elevenlabs"] as const;
+		const engine = validEngines.includes(parsed.engine as any) ? (parsed.engine as VoiceConfig["engine"]) : DEFAULT_CONFIG.engine;
 		return {
 			enabled: parsed.enabled ?? DEFAULT_CONFIG.enabled,
-			engine: parsed.engine === "deepgram" ? "deepgram" : DEFAULT_CONFIG.engine,
+			engine,
 			kokoroVoice: typeof parsed.kokoroVoice === "string" && parsed.kokoroVoice
 				? parsed.kokoroVoice
 				: DEFAULT_CONFIG.kokoroVoice,
 			deepgramVoice: typeof parsed.deepgramVoice === "string" && parsed.deepgramVoice
 				? parsed.deepgramVoice
 				: DEFAULT_CONFIG.deepgramVoice,
+			elevenlabsVoice: typeof parsed.elevenlabsVoice === "string" && parsed.elevenlabsVoice
+				? parsed.elevenlabsVoice
+				: DEFAULT_CONFIG.elevenlabsVoice,
 		};
 	} catch (error) {
 		console.error("Failed to load Pompom voice config:", error);
@@ -310,22 +317,105 @@ class DeepgramEngine implements TTSEngine {
 	}
 }
 
+class ElevenLabsEngine implements TTSEngine {
+	name = "elevenlabs";
+
+	async synthesize(text: string, voice: string): Promise<{ buffer: Buffer; durationMs: number }> {
+		const apiKey = process.env.ELEVENLABS_API_KEY;
+		if (!apiKey) {
+			throw new Error("ELEVENLABS_API_KEY is not set");
+		}
+
+		// Use the text-to-speech API v1
+		// voice can be a voice ID or a name — the API accepts both
+		const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`;
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				"xi-api-key": apiKey,
+				"Content-Type": "application/json",
+				Accept: "audio/wav",
+			},
+			body: JSON.stringify({
+				text,
+				model_id: "eleven_turbo_v2_5",
+				voice_settings: {
+					stability: 0.5,
+					similarity_boost: 0.75,
+					style: 0.3,
+				},
+				output_format: "pcm_24000",
+			}),
+		});
+
+		if (!response.ok) {
+			const errText = await response.text().catch(() => "");
+			throw new Error(`ElevenLabs TTS failed: HTTP ${response.status} ${errText}`);
+		}
+
+		// ElevenLabs returns raw PCM when output_format is pcm_*
+		// We need to wrap it in a WAV header for playback
+		const pcmBuffer = Buffer.from(await response.arrayBuffer());
+		const wavBuffer = wrapPcmInWav(pcmBuffer, 24000, 1, 16);
+
+		return {
+			buffer: wavBuffer,
+			durationMs: Math.max(1, Math.round((pcmBuffer.length / (24000 * 2)) * 1000)),
+		};
+	}
+
+	async isAvailable(): Promise<boolean> {
+		return Boolean(process.env.ELEVENLABS_API_KEY);
+	}
+}
+
+function wrapPcmInWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
+	const byteRate = sampleRate * channels * (bitsPerSample / 8);
+	const blockAlign = channels * (bitsPerSample / 8);
+	const header = Buffer.alloc(44);
+
+	header.write("RIFF", 0);
+	header.writeUInt32LE(36 + pcm.length, 4);
+	header.write("WAVE", 8);
+	header.write("fmt ", 12);
+	header.writeUInt32LE(16, 16); // chunk size
+	header.writeUInt16LE(1, 20); // PCM format
+	header.writeUInt16LE(channels, 22);
+	header.writeUInt32LE(sampleRate, 24);
+	header.writeUInt32LE(byteRate, 28);
+	header.writeUInt16LE(blockAlign, 32);
+	header.writeUInt16LE(bitsPerSample, 34);
+	header.write("data", 36);
+	header.writeUInt32LE(pcm.length, 40);
+
+	return Buffer.concat([header, pcm]);
+}
+
 const kokoroEngine = new KokoroEngine();
 const deepgramEngine = new DeepgramEngine();
+const elevenlabsEngine = new ElevenLabsEngine();
+
+const engineMap: Record<string, TTSEngine> = {
+	kokoro: kokoroEngine,
+	deepgram: deepgramEngine,
+	elevenlabs: elevenlabsEngine,
+};
 
 async function resolveEngine(): Promise<TTSEngine | null> {
 	try {
-		const preferred = config.engine === "deepgram" ? deepgramEngine : kokoroEngine;
+		const preferred = engineMap[config.engine] || kokoroEngine;
 		if (await preferred.isAvailable()) {
 			return preferred;
 		}
-		const fallback = config.engine === "deepgram" ? kokoroEngine : deepgramEngine;
-		if (await fallback.isAvailable()) {
-			return fallback;
+		// Fallback chain: try all others
+		for (const engine of [kokoroEngine, deepgramEngine, elevenlabsEngine]) {
+			if (engine !== preferred && await engine.isAvailable()) {
+				return engine;
+			}
 		}
 		return null;
-	} catch (error) {
-		console.error("Failed to resolve Pompom voice engine:", error);
+	} catch {
 		return null;
 	}
 }
@@ -345,7 +435,9 @@ async function processQueue(): Promise<void> {
 			if (!engine) {
 				continue;
 			}
-			const voice = engine.name === "kokoro" ? config.kokoroVoice : config.deepgramVoice;
+			const voice = engine.name === "kokoro" ? config.kokoroVoice
+				: engine.name === "elevenlabs" ? config.elevenlabsVoice
+				: config.deepgramVoice;
 			const audio = await engine.synthesize(nextEvent.text, voice);
 			lastSpokenText = nextEvent.text;
 			lastSpeakTime = Date.now();
@@ -449,7 +541,7 @@ export function setVoiceEnabled(enabled: boolean): void {
 	}
 }
 
-export function setVoiceEngine(engine: "kokoro" | "deepgram"): void {
+export function setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): void {
 	try {
 		config.engine = engine;
 		saveVoiceConfig();
