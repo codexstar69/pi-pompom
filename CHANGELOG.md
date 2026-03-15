@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.1] - 2026-03-15
+
+### Patch Changes
+
+- split weather announcement state from render-time weather blending in `extensions/pompom.ts` so agent weather override no longer suppresses random weather progression or trigger the wrong speech bubble
+- keep the star-catch game stable while talking or after reset in `extensions/pompom.ts` by preserving `currentState === "game"` during TTS and clearing game fields in `resetPompom()`
+- harden Pi event handling in `extensions/pompom-extension.ts` and `extensions/pompom-agent.ts` so missing tool event fields do not throw and tool completion can still clear tracked active calls
+
 ## [2.1.0] - 2026-03-15
 
 ### Minor Changes

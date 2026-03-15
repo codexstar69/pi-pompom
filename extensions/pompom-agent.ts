@@ -295,6 +295,23 @@ function getToolCallId(input: { toolCallId?: string; toolName: string }): string
 	return `${input.toolName}-${state.counters.toolCalls + Object.keys(state.activeToolCalls).length + 1}`;
 }
 
+function resolveTrackedToolCallId(input: { toolCallId?: string; toolName: string }): string {
+	if (input.toolCallId && state.activeToolCalls[input.toolCallId]) {
+		return input.toolCallId;
+	}
+	const matchingCalls = Object.entries(state.activeToolCalls)
+		.filter(([, value]) => {
+			return value.toolName === input.toolName;
+		})
+		.sort((left, right) => {
+			return right[1].startedAt - left[1].startedAt;
+		});
+	if (matchingCalls.length > 0) {
+		return matchingCalls[0][0];
+	}
+	return getToolCallId(input);
+}
+
 function pickLine(bucket: CommentaryBucket, toolName?: string): string {
 	const lines = COMMENTARY_LINES[bucket];
 	if (lines.length === 0) {
@@ -383,7 +400,7 @@ export function onToolCall({ toolCallId, toolName }: ToolCallInput): void {
 
 export function onToolResult({ toolCallId, toolName, isError }: ToolResultInput): void {
 	const now = setEventNow();
-	const id = getToolCallId({ toolCallId, toolName });
+	const id = resolveTrackedToolCallId({ toolCallId, toolName });
 	const startedAt = state.activeToolCalls[id]?.startedAt || now;
 	const durationMs = Math.max(0, now - startedAt);
 	delete state.activeToolCalls[id];

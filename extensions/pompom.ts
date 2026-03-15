@@ -200,7 +200,8 @@ let weatherState: Weather = "clear";
 let weatherOverride: Weather | null = null;
 let weatherTimer = 0;
 let lastWeatherChange = 0;
-let lastWeatherState: Weather = "clear";
+let lastAnnouncedWeatherState: Weather = "clear";
+let lastRenderedWeatherState: Weather = "clear";
 let weatherBlend = 0;
 let prevWeatherColors = { rTop: 0, gTop: 0, bTop: 0, rBot: 0, gBot: 0, bBot: 0 };
 
@@ -301,9 +302,9 @@ function getWeatherAndTime() {
 		rBot = rBot * 0.6 + 60; gBot = gBot * 0.6 + 60; bBot = bBot * 0.6 + 70;
 	}
 
-	if (weather !== lastWeatherState) {
+	if (weather !== lastRenderedWeatherState) {
 		weatherBlend = 1.0;
-		lastWeatherState = weather;
+		lastRenderedWeatherState = weather;
 	}
 
 	if (weatherBlend > 0) {
@@ -892,14 +893,14 @@ function updatePhysics(dt: number) {
 		else if (weatherState === "storm") weatherState = "cloudy";
 	}
 
-	if (weatherState !== lastWeatherState) {
-		lastWeatherState = weatherState;
+	if (weatherState !== lastAnnouncedWeatherState) {
+		lastAnnouncedWeatherState = weatherState;
 		let weatherAnnouncement = "";
-		if (lastWeatherState === "cloudy") weatherAnnouncement = "Clouds rolling in...";
-		else if (lastWeatherState === "rain") weatherAnnouncement = "It's starting to rain!";
-		else if (lastWeatherState === "storm") weatherAnnouncement = "A storm is brewing...";
-		else if (lastWeatherState === "snow") weatherAnnouncement = "Snowflakes!";
-		else if (lastWeatherState === "clear") weatherAnnouncement = "The sky is clearing up";
+		if (lastAnnouncedWeatherState === "cloudy") weatherAnnouncement = "Clouds rolling in...";
+		else if (lastAnnouncedWeatherState === "rain") weatherAnnouncement = "It's starting to rain!";
+		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "A storm is brewing...";
+		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "Snowflakes!";
+		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "The sky is clearing up";
 		if (weatherAnnouncement) say(weatherAnnouncement, 3.0, "system", 2, true);
 
 		// Ask for accessories if user hasn't given them yet
@@ -962,7 +963,7 @@ function updatePhysics(dt: number) {
 
 	// State machine
 	// Voice recording override — Pompom rushes to center and talks
-	if (isTalking) {
+	if (isTalking && currentState !== "game") {
 		// Interrupt any current state except sleep
 		if (currentState !== "sleep" || energy > 30) {
 			if (isSleeping) { isSleeping = false; }
@@ -1496,9 +1497,13 @@ export function resetPompom() {
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;
 	isWalking = false; isFlipping = false; isSleeping = false; isTalking = false;
 	talkAudioLevel = 0; flipPhase = 0;
+	gameScore = 0; gameTimer = 0; gameActive = false; gameStars = [];
 	hunger = 100; energy = 100; lastNeedsTick = 0;
 	activeTheme = 0;
 	weatherOverride = null;
+	lastAnnouncedWeatherState = weatherState;
+	lastRenderedWeatherState = getWeather();
+	weatherBlend = 0;
 	agentOverlayActive = false;
 	agentOverlayWeight = 0;
 	agentOverlayLookX = 0;
@@ -1546,3 +1551,12 @@ export function pompomGiveAccessory(item: string): string {
 }
 
 export function pompomGetAccessories(): Accessories { return { ...accessories }; }
+
+export function pompomRestoreAccessories(items: Partial<Accessories>): void {
+	accessories = {
+		umbrella: items.umbrella === true,
+		scarf: items.scarf === true,
+		sunglasses: items.sunglasses === true,
+		hat: items.hat === true,
+	};
+}

@@ -34,6 +34,7 @@ import {
 	pompomGiveAccessory,
 	pompomKeypress,
 	pompomOnSpeech,
+	pompomRestoreAccessories,
 	pompomSay,
 	pompomSetAgentEarBoost,
 	pompomSetAgentLook,
@@ -176,6 +177,32 @@ function getMessageText(message: unknown): string {
 		return "";
 	}
 	return extractTextContent(message.content);
+}
+
+function getEventMessage(event: unknown): unknown {
+	if (!isRecord(event)) {
+		return undefined;
+	}
+	return event.message;
+}
+
+function getToolEventPayload(event: unknown): {
+	toolCallId?: string;
+	toolName: string;
+	isError: boolean;
+	result?: unknown;
+	args?: unknown;
+} {
+	if (!isRecord(event)) {
+		return { toolName: "tool", isError: false };
+	}
+	return {
+		toolCallId: typeof event.toolCallId === "string" ? event.toolCallId : undefined,
+		toolName: typeof event.toolName === "string" && event.toolName.trim() ? event.toolName : "tool",
+		isError: event.isError === true,
+		result: event.result,
+		args: event.args,
+	};
 }
 
 function isModelLike(model: unknown): model is ModelLike {
@@ -460,15 +487,15 @@ export default function (pi: ExtensionAPI) {
 						return { consume: true };
 					}
 
-					const kittyMatch = data.match(/^\x1b\[(\d+);(\d+)u$/);
-					if (kittyMatch) {
-						const mod = parseInt(kittyMatch[2], 10);
-						if ((mod - 1) & 2) {
-							const char = String.fromCharCode(parseInt(kittyMatch[1], 10));
-							if (POMPOM_KEYS.includes(char)) {
-								pompomKeypress(char);
-								return { consume: true };
-							}
+						const kittyMatch = data.match(/^\x1b\[(\d+);(\d+)u$/);
+						if (kittyMatch) {
+							const mod = parseInt(kittyMatch[2], 10);
+							if ((mod - 1) & 2) {
+								const char = String.fromCharCode(parseInt(kittyMatch[1], 10)).toLowerCase();
+								if (POMPOM_KEYS.includes(char)) {
+									pompomKeypress(char);
+									return { consume: true };
+								}
 						}
 					}
 				} catch (error) {
@@ -489,12 +516,7 @@ export default function (pi: ExtensionAPI) {
 			restoreState(latestState);
 		}
 		try {
-			const saved = loadAccessories();
-			for (const [key, value] of Object.entries(saved)) {
-				if (value) {
-					pompomGiveAccessory(key);
-				}
-			}
+			pompomRestoreAccessories(loadAccessories());
 		} catch (error) {
 			console.error("Failed to restore Pompom accessories:", error);
 		}
@@ -741,36 +763,38 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_execution_start", async (event) => {
 		await runSafely("tool_execution_start", () => {
-			onToolCall({ toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
+			const payload = getToolEventPayload(event);
+			onToolCall({ toolCallId: payload.toolCallId, toolName: payload.toolName, args: payload.args });
 			pulseOverlay({ forceOverlay: true, lookX: 0.24, lookY: -0.12, glow: 1, earBoost: 0.85 }, 1800);
-			speakCommentary({ eventName: "tool_call", toolName: event.toolName });
+			speakCommentary({ eventName: "tool_call", toolName: payload.toolName });
 			persistAgentState();
 		});
 	});
 
 	pi.on("tool_execution_end", async (event) => {
 		await runSafely("tool_execution_end", () => {
+			const payload = getToolEventPayload(event);
 			onToolResult({
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				isError: event.isError,
-				result: event.result,
+				toolCallId: payload.toolCallId,
+				toolName: payload.toolName,
+				isError: payload.isError,
+				result: payload.result,
 			});
 			pulseOverlay({
 				forceOverlay: true,
-				lookX: event.isError ? -0.14 : 0.14,
+				lookX: payload.isError ? -0.14 : 0.14,
 				lookY: -0.08,
-				glow: event.isError ? 0.95 : 0.72,
-				earBoost: event.isError ? 0.5 : 0.3,
+				glow: payload.isError ? 0.95 : 0.72,
+				earBoost: payload.isError ? 0.5 : 0.3,
 			}, 1800);
-			speakCommentary({ eventName: "tool_result", toolName: event.toolName, isError: event.isError });
+			speakCommentary({ eventName: "tool_result", toolName: payload.toolName, isError: payload.isError });
 			persistAgentState();
 		});
 	});
 
 	pi.on("message_start", async (event) => {
 		await runSafely("message_start", () => {
-			const role = getMessageRole(event.message);
+			const role = getMessageRole(getEventMessage(event));
 			if (role === "user") {
 				pulseOverlay({ forceOverlay: true, lookX: -0.1, lookY: 0, glow: 0.38, earBoost: 0.25 }, 1200);
 			}
@@ -783,9 +807,10 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_end", async (event) => {
 		await runSafely("message_end", () => {
-			const role = getMessageRole(event.message);
+			const message = getEventMessage(event);
+			const role = getMessageRole(message);
 			if (role === "assistant") {
-				const text = getMessageText(event.message);
+				const text = getMessageText(message);
 				if (text) {
 					pompomSay(sanitizeAscii(text.slice(0, 120)), 4.6, "assistant", 2, true);
 				}
