@@ -16,6 +16,8 @@ interface TTSEngine {
 	isAvailable(): Promise<boolean>;
 }
 
+export type Personality = "quiet" | "normal" | "chatty";
+
 export interface VoiceConfig {
 	enabled: boolean;
 	configured: boolean;
@@ -23,6 +25,7 @@ export interface VoiceConfig {
 	kokoroVoice: string;
 	deepgramVoice: string;
 	elevenlabsVoice: string;
+	personality: Personality;
 }
 
 interface AudioPlayer {
@@ -51,7 +54,7 @@ const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 const CONFIG_DIR = path.join(os.homedir(), ".pi", "pompom");
 const CONFIG_FILE = path.join(CONFIG_DIR, "voice-config.json");
 const TMP_DIR = path.join(process.cwd(), "tmp");
-const MIN_INTERVAL_MS = 5000;
+const MIN_INTERVAL_MS = 12000;
 const MAX_QUEUE = 3;
 const ENGINE_PRIORITY = ["elevenlabs", "deepgram", "kokoro"] as const;
 
@@ -67,7 +70,36 @@ const DEFAULT_CONFIG: VoiceConfig = {
 	engine: "elevenlabs",
 	kokoroVoice: "af_nicole",
 	deepgramVoice: "aura-2-luna-en",
-	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS", // voice ID from ElevenLabs skill
+	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS",
+	personality: "normal",
+};
+
+const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
+	kokoro: [
+		{ name: "Nicole (female)", id: "af_nicole" },
+		{ name: "Sky (female)", id: "af_sky" },
+		{ name: "Bella (female)", id: "af_bella" },
+		{ name: "Nova (female)", id: "af_nova" },
+		{ name: "Sarah (female)", id: "af_sarah" },
+		{ name: "Adam (male)", id: "am_adam" },
+		{ name: "Eric (male)", id: "am_eric" },
+		{ name: "Michael (male)", id: "am_michael" },
+	],
+	deepgram: [
+		{ name: "Luna (female)", id: "aura-2-luna-en" },
+		{ name: "Asteria (female)", id: "aura-asteria-en" },
+		{ name: "Athena (female)", id: "aura-2-athena-en" },
+		{ name: "Orion (male)", id: "aura-2-orion-en" },
+		{ name: "Apollo (male)", id: "aura-2-apollo-en" },
+	],
+	elevenlabs: [
+		{ name: "Default (configured)", id: "1zUSi8LeHs9M2mV8X6YS" },
+		{ name: "Aria (female)", id: "9BWtsMINqrJLrRacOk9x" },
+		{ name: "Rachel (female)", id: "21m00Tcm4TlvDq8ikWAM" },
+		{ name: "Domi (female)", id: "AZnzlk1XvdvUeBnXmlld" },
+		{ name: "Adam (male)", id: "pNInz6obpgDQGcFmaJgB" },
+		{ name: "Sam (male)", id: "yoZ06aMxZJJ28mfd3POQ" },
+	],
 };
 
 const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
@@ -75,6 +107,8 @@ const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
 let config: VoiceConfig = loadVoiceConfig();
 let interactive = false;
 let detectedPlayer: AudioPlayer | null = null;
+let agentBusy = false;
+let agentEndCooldownTimer: ReturnType<typeof setTimeout> | null = null;
 let queue: SpeechEvent[] = [];
 let isProcessingQueue = false;
 let playbackActive = false;
@@ -108,6 +142,9 @@ function loadVoiceConfig(): VoiceConfig {
 		}
 		const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as Partial<VoiceConfig>;
 		const engine = isVoiceEngine(parsed.engine) ? parsed.engine : DEFAULT_CONFIG.engine;
+		const validPersonality = ["quiet", "normal", "chatty"] as const;
+		const personality = validPersonality.includes(parsed.personality as any)
+			? (parsed.personality as Personality) : DEFAULT_CONFIG.personality;
 		return {
 			enabled: parsed.enabled ?? DEFAULT_CONFIG.enabled,
 			configured: parsed.configured ?? DEFAULT_CONFIG.configured,
@@ -121,6 +158,7 @@ function loadVoiceConfig(): VoiceConfig {
 			elevenlabsVoice: typeof parsed.elevenlabsVoice === "string" && parsed.elevenlabsVoice
 				? parsed.elevenlabsVoice
 				: DEFAULT_CONFIG.elevenlabsVoice,
+			personality,
 		};
 	} catch (error) {
 		console.error("Failed to load Pompom voice config:", error);
@@ -479,9 +517,49 @@ export function initVoice(isInteractive: boolean): void {
 	}
 }
 
+export function setAgentBusy(busy: boolean): void {
+	agentBusy = busy;
+	if (!busy) {
+		// After agent finishes, keep quiet for 5s before re-enabling TTS
+		if (agentEndCooldownTimer) clearTimeout(agentEndCooldownTimer);
+		agentEndCooldownTimer = setTimeout(() => { agentEndCooldownTimer = null; }, 5000);
+	}
+}
+
+export function setPersonality(p: Personality): void {
+	config.personality = p;
+	saveVoiceConfig();
+}
+
+export function getVoiceCatalog(): Record<string, { name: string; id: string }[]> {
+	return VOICE_CATALOG;
+}
+
+export function setVoice(voice: string): void {
+	if (config.engine === "kokoro") config.kokoroVoice = voice;
+	else if (config.engine === "deepgram") config.deepgramVoice = voice;
+	else config.elevenlabsVoice = voice;
+	saveVoiceConfig();
+}
+
 export function enqueueSpeech(event: SpeechEvent): void {
 	try {
 		if (!config.enabled || !interactive || !event.allowTts) {
+			return;
+		}
+		// Agent busy gate — suppress TTS audio during agent work (speech bubbles still show)
+		if (agentBusy && event.priority < 3) {
+			return;
+		}
+		// Post-agent cooldown
+		if (agentEndCooldownTimer && event.priority < 3) {
+			return;
+		}
+		// Personality gate
+		if (config.personality === "quiet" && event.priority < 3 && event.source !== "user_action") {
+			return;
+		}
+		if (config.personality === "normal" && event.priority < 2 && event.source === "commentary") {
 			return;
 		}
 		const text = sanitizeSpeechText(event.text);

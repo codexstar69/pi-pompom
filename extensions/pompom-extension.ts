@@ -58,9 +58,14 @@ import {
 	isPlayingTTS,
 	setVoiceEnabled,
 	setVoiceEngine,
+	setAgentBusy,
+	setPersonality,
+	setVoice,
+	getVoiceCatalog,
 	speakTest,
 	stopPlayback,
 	type SpeechEvent,
+	type Personality,
 } from "./pompom-voice";
 
 type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
@@ -848,6 +853,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_start", async () => {
 		await runSafely("agent_start", () => {
 			onAgentStart();
+			setAgentBusy(true);
 			pulseOverlay({ forceOverlay: true, lookX: 0.2, lookY: -0.1, glow: 0.92, earBoost: 0.7 }, 2600);
 			speakCommentary({ eventName: "agent_start" });
 			persistAgentState();
@@ -857,6 +863,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_end", async () => {
 		await runSafely("agent_end", () => {
 			onAgentEnd();
+			setAgentBusy(false);
 			pulseOverlay({ forceOverlay: true, lookX: 0.06, lookY: -0.04, glow: 0.75, earBoost: 0.45 }, 2200);
 			speakCommentary({ eventName: "agent_end" });
 			persistAgentState();
@@ -938,6 +945,20 @@ export default function (pi: ExtensionAPI) {
 		hug: "h",
 		game: "g",
 	};
+
+	// Register keyboard shortcuts via Pi's official API (non-conflicting alt+key only)
+	// Skipped: alt+b (cursorWordLeft), alt+f (cursorWordRight), alt+d (deleteWordForward)
+	const shortcutKeys = ["alt+p", "alt+g", "alt+h", "alt+t", "alt+x", "alt+w", "alt+s", "alt+o", "alt+c", "alt+m"] as const;
+	const shortcutActions = ["p", "g", "h", "t", "x", "w", "s", "o", "c", "m"];
+	for (let i = 0; i < shortcutKeys.length; i++) {
+		const key = shortcutActions[i];
+		try {
+			pi.registerShortcut(shortcutKeys[i] as any, {
+				description: `Pompom action: ${key}`,
+				handler: async () => { if (enabled && companionActive) pompomKeypress(key); },
+			});
+		} catch {}
+	}
 
 	pi.registerCommand("pompom", {
 		description: "Pompom companion — /pompom help for commands",
@@ -1119,6 +1140,49 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify("Speaking test phrase...", "info");
 					return;
 				}
+				if (sub === "voices") {
+					const voiceConfig = getVoiceConfig();
+					const catalog = getVoiceCatalog();
+					const engineVoices = catalog[voiceConfig.engine] || [];
+					const currentVoice = voiceConfig.engine === "kokoro" ? voiceConfig.kokoroVoice
+						: voiceConfig.engine === "elevenlabs" ? voiceConfig.elevenlabsVoice
+						: voiceConfig.deepgramVoice;
+					const list = engineVoices.map(v =>
+						`  ${v.id === currentVoice ? ">" : " "} ${v.name} (${v.id})`
+					).join("\n");
+					commandContext.ui.notify(
+						`Voices for ${voiceConfig.engine}:\n${list}\n\nChange: /pompom:voice set <voice-id>`,
+						"info",
+					);
+					return;
+				}
+				if (sub.startsWith("set ")) {
+					const voiceId = sub.slice(4).trim();
+					if (!voiceId) {
+						commandContext.ui.notify("Usage: /pompom:voice set <voice-id>", "info");
+						return;
+					}
+					setVoice(voiceId);
+					commandContext.ui.notify(`Voice set to: ${voiceId}. Run /pompom:voice test to hear it.`, "info");
+					return;
+				}
+				if (sub === "quiet" || sub === "normal" || sub === "chatty") {
+					setPersonality(sub as Personality);
+					const labels = { quiet: "Quiet (user actions + errors only)", normal: "Normal (moderate)", chatty: "Chatty (frequent)" };
+					commandContext.ui.notify(`Personality: ${labels[sub]}`, "info");
+					return;
+				}
+				if (sub === "personality") {
+					const voiceConfig = getVoiceConfig();
+					commandContext.ui.notify(
+						`Personality: ${voiceConfig.personality}\n` +
+						"  /pompom:voice quiet   — speaks only on user actions and errors\n" +
+						"  /pompom:voice normal  — moderate commentary\n" +
+						"  /pompom:voice chatty  — frequent commentary",
+						"info",
+					);
+					return;
+				}
 
 				const voiceConfig = getVoiceConfig();
 				const voiceName = voiceConfig.engine === "kokoro" ? voiceConfig.kokoroVoice
@@ -1126,11 +1190,14 @@ export default function (pi: ExtensionAPI) {
 					: voiceConfig.deepgramVoice;
 				commandContext.ui.notify(
 					"Pompom Voice\n" +
-					"  Status: " + (voiceConfig.enabled ? "ON" : "OFF") + "\n" +
-					"  Config: " + (voiceConfig.configured ? "configured" : "not configured") + "\n" +
-					"  Engine: " + getVoiceEngineLabel(voiceConfig.engine) + "\n" +
-					"  Voice:  " + voiceName + "\n" +
-					"  /pompom:voice on|off|setup|kokoro|deepgram|elevenlabs|test",
+					"  Status:      " + (voiceConfig.enabled ? "ON" : "OFF") + "\n" +
+					"  Engine:      " + getVoiceEngineLabel(voiceConfig.engine) + "\n" +
+					"  Voice:       " + voiceName + "\n" +
+					"  Personality: " + voiceConfig.personality + "\n" +
+					"  /pompom:voice on|off|setup|test\n" +
+					"  /pompom:voice kokoro|deepgram|elevenlabs\n" +
+					"  /pompom:voice voices|set <id>\n" +
+					"  /pompom:voice quiet|normal|chatty",
 					"info",
 				);
 			});

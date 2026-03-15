@@ -85,21 +85,21 @@ interface ToolResultInput {
 	result?: unknown;
 }
 
-const MIN_COMMENTARY_GAP_MS = 3200;
-const SAME_BUCKET_GAP_MS = 9000;
+const MIN_COMMENTARY_GAP_MS = 8000;
+const SAME_BUCKET_GAP_MS = 20000;
 const RECENT_ACTIVITY_WINDOW_MS = 25000;
 
 const COMMENTARY_CHANCE: Record<CommentaryBucket, number> = {
-	agent_start: 0.9,
-	agent_end: 0.85,
-	tool_call: 0.42,
-	tool_result: 0.38,
-	tool_error: 1,
-	message_start_user: 0.18,
-	message_start_assistant: 0.28,
-	message_end_user: 0.12,
-	message_end_assistant: 0.38,
-	message_end_tool: 0.2,
+	agent_start: 0.25,
+	agent_end: 0.35,
+	tool_call: 0.12,
+	tool_result: 0.08,
+	tool_error: 0.7,
+	message_start_user: 0.05,
+	message_start_assistant: 0.08,
+	message_end_user: 0.04,
+	message_end_assistant: 0.15,
+	message_end_tool: 0.06,
 };
 
 const COMMENTARY_LINES: Record<CommentaryBucket, string[]> = {
