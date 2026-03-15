@@ -409,9 +409,9 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		if (faceR < 0.22) {
 			isOnFace = true;
 			const faceMix = Math.max(0, 1.0 - faceR / 0.22);
-			r = Math.floor(r * (1 - faceMix * 0.6) + 255 * faceMix * 0.6);
-			g = Math.floor(g * (1 - faceMix * 0.6) + 252 * faceMix * 0.6);
-			b = Math.floor(b * (1 - faceMix * 0.6) + 248 * faceMix * 0.6);
+			r = Math.floor(r * (1 - faceMix * 0.8) + 255 * faceMix * 0.8);
+			g = Math.floor(g * (1 - faceMix * 0.8) + 252 * faceMix * 0.8);
+			b = Math.floor(b * (1 - faceMix * 0.8) + 248 * faceMix * 0.8);
 		}
 
 		// ── Blush: big rosy cheeks ──
@@ -420,8 +420,8 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		const blush = Math.exp(-(blx1 * blx1 + bly1 * bly1) * 40) + Math.exp(-(blx2 * blx2 + bly2 * bly2) * 40);
 		if (!isSleeping) {
 			r = Math.floor(r * (1 - blush) + 255 * blush);
-			g = Math.floor(g * (1 - blush) + 70 * blush);
-			b = Math.floor(b * (1 - blush) + 90 * blush);
+			g = Math.floor(g * (1 - blush) + 45 * blush);
+			b = Math.floor(b * (1 - blush) + 65 * blush);
 		}
 
 		// ── Eyes: kawaii style — white sclera → colored iris → dark pupil → highlight ──
@@ -443,7 +443,11 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 			const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
 			const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
 
-			// Layer 1: White sclera (outermost)
+			// Dark eye border ring (outermost)
+			if ((eDist1 >= 0.009 && eDist1 < 0.011) || (eDist2 >= 0.009 && eDist2 < 0.011)) {
+				r = 35; g = 25; b = 40;
+			}
+			// Layer 1: White sclera
 			if (eDist1 < 0.009 || eDist2 < 0.009) {
 				r = 250; g = 250; b = 255;
 
@@ -472,14 +476,14 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 
 		// ── Nose: small dark oval ──
 		const nnx = bdx - effectiveLookX * 0.06, nny = bdy - effectiveLookY * 0.05 - 0.03;
-		if (nnx * nnx * 1.2 + nny * nny < 0.001 && !isSleeping) { r = 40; g = 30; b = 40; }
+		if (nnx * nnx * 1.2 + nny * nny < 0.001 && !isSleeping) { r = 25; g = 15; b = 25; }
 
 		// ── Mouth: clear smile arc ──
 		if (!isSleeping && !hasBall) {
 			const mx = bdx - effectiveLookX * 0.06, my = bdy - effectiveLookY * 0.05 - 0.07;
 			// Smile curves
-			if ((Math.abs(my - (mx - 0.03) ** 2 * 15 + 0.012) < 0.013 && mx > 0 && mx < 0.06) ||
-				(Math.abs(my - (mx + 0.03) ** 2 * 15 + 0.012) < 0.013 && mx < 0 && mx > -0.06)) {
+			if ((Math.abs(my - (mx - 0.03) ** 2 * 15 + 0.012) < 0.017 && mx > 0 && mx < 0.06) ||
+				(Math.abs(my - (mx + 0.03) ** 2 * 15 + 0.012) < 0.017 && mx < 0 && mx > -0.06)) {
 				r = 50; g = 30; b = 40;
 			}
 			// Open mouth when excited/talking
@@ -500,7 +504,7 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 	}
 	// Dark outline — but NOT on the face area (preserves feature contrast)
 	if (hitNz < 0.25 && !isOnFace) {
-		r = Math.floor(r * 0.6); g = Math.floor(g * 0.6); b = Math.floor(b * 0.6);
+		r = Math.floor(r * 0.45); g = Math.floor(g * 0.45); b = Math.floor(b * 0.45);
 	}
 	} else if (hitObj.mat === 2) {
 		r = Math.max(0, th.r - 20); g = Math.max(0, th.g - 15); b = Math.max(0, th.b - 10);
