@@ -142,7 +142,7 @@ function saveAccessories(): void {
 		fs.mkdirSync(SAVE_DIR, { recursive: true });
 		fs.writeFileSync(SAVE_FILE, JSON.stringify(pompomGetAccessories()));
 	} catch (error) {
-		console.error("Failed to save Pompom accessories:", error);
+		/* silent */
 	}
 }
 
@@ -397,7 +397,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			pi.appendEntry(POMPOM_AGENT_STATE_TYPE, serializeState());
 		} catch (error) {
-			console.error("Failed to persist Pompom agent state:", error);
+			/* silent */
 		}
 	}
 
@@ -451,7 +451,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			await fn();
 		} catch (error) {
-			console.error(`Pompom ${label} failed:`, error);
+			/* silent */
 		}
 	}
 
@@ -497,7 +497,7 @@ export default function (pi: ExtensionAPI) {
 					render: safeRender,
 				}), { placement: "aboveEditor" });
 			} catch (error) {
-				console.error("Failed to set Pompom widget:", error);
+				/* silent */
 			}
 		};
 
@@ -549,7 +549,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.setWidget(WIDGET_ID, undefined);
 			}
 		} catch (error) {
-			console.error("Failed to hide Pompom widget:", error);
+			/* silent */
 		}
 	}
 
@@ -605,13 +605,13 @@ export default function (pi: ExtensionAPI) {
 						}
 					}
 				} catch (error) {
-					console.error("Pompom key handler failed:", error);
+					/* silent */
 				}
 
 				return undefined;
 			});
 		} catch (error) {
-			console.error("Failed to set Pompom key handler:", error);
+			/* silent */
 		}
 	}
 
@@ -624,7 +624,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			pompomRestoreAccessories(loadAccessories());
 		} catch (error) {
-			console.error("Failed to restore Pompom accessories:", error);
+			/* silent */
 		}
 		applyAgentVisualState();
 	}

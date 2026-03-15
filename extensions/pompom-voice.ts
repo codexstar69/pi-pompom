@@ -164,7 +164,7 @@ function loadVoiceConfig(): VoiceConfig {
 			volume: typeof parsed.volume === "number" ? Math.max(0, Math.min(100, parsed.volume)) : DEFAULT_CONFIG.volume,
 		};
 	} catch (error) {
-		console.error("Failed to load Pompom voice config:", error);
+		/* silent */
 		return { ...DEFAULT_CONFIG };
 	}
 }
@@ -174,7 +174,7 @@ function saveVoiceConfig(): void {
 		fs.mkdirSync(CONFIG_DIR, { recursive: true });
 		fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, "\t"));
 	} catch (error) {
-		console.error("Failed to save Pompom voice config:", error);
+		/* silent */
 	}
 }
 
@@ -267,7 +267,7 @@ async function playAudio(buffer: Buffer): Promise<void> {
 					fs.unlinkSync(tempFile);
 				} catch (error) {
 					if (fs.existsSync(tempFile)) {
-						console.error("Failed to remove Pompom temp audio file:", error);
+						/* silent */
 					}
 				}
 				currentPlayback = null;
@@ -276,7 +276,7 @@ async function playAudio(buffer: Buffer): Promise<void> {
 
 			child.on("error", (error) => {
 				if (!stopRequested) {
-					console.error("Failed to play Pompom audio:", error);
+					/* silent */
 				}
 				finish();
 			});
@@ -286,7 +286,7 @@ async function playAudio(buffer: Buffer): Promise<void> {
 			});
 		});
 	} catch (error) {
-		console.error("Pompom audio playback failed:", error);
+		/* silent */
 	}
 }
 
@@ -506,7 +506,7 @@ async function processQueue(): Promise<void> {
 		}
 	} catch (error) {
 		playbackActive = false;
-		console.error("Pompom speech queue failed:", error);
+		/* silent */
 	} finally {
 		isProcessingQueue = false;
 	}
@@ -518,7 +518,7 @@ export function initVoice(isInteractive: boolean): void {
 		config = loadVoiceConfig();
 		detectedPlayer = detectPlayer();
 	} catch (error) {
-		console.error("Failed to initialize Pompom voice:", error);
+		/* silent */
 	}
 }
 
@@ -629,7 +629,7 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		});
 		void processQueue();
 	} catch (error) {
-		console.error("Failed to enqueue Pompom speech:", error);
+		/* silent */
 	}
 }
 
@@ -662,7 +662,7 @@ export function setVoiceEnabled(enabled: boolean): void {
 			stopPlayback();
 		}
 	} catch (error) {
-		console.error("Failed to update Pompom voice enabled state:", error);
+		/* silent */
 	}
 }
 
@@ -680,7 +680,7 @@ export function setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): vo
 			saveVoiceConfig();
 		}
 	} catch (error) {
-		console.error("Failed to update Pompom voice engine:", error);
+		/* silent */
 	}
 }
 
@@ -732,7 +732,7 @@ export function speakTest(): void {
 			allowTts: true,
 		});
 	} catch (error) {
-		console.error("Failed to run Pompom voice test:", error);
+		/* silent */
 	}
 }
 
@@ -745,11 +745,11 @@ export function stopPlayback(): void {
 			try {
 				currentPlayback.kill("SIGTERM");
 			} catch (error) {
-				console.error("Failed to stop Pompom playback:", error);
+				/* silent */
 			}
 		}
 		currentPlayback = null;
 	} catch (error) {
-		console.error("Failed to stop Pompom voice playback:", error);
+		/* silent */
 	}
 }

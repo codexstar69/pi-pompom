@@ -123,7 +123,7 @@ function say(
 		try {
 			onSpeechCallback({ text: safeText, source, priority, allowTts });
 		} catch (error) {
-			console.error("Pompom speech callback failed:", error);
+			/* silent */
 		}
 	}
 }
