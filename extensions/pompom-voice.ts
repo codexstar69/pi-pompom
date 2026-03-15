@@ -26,6 +26,7 @@ export interface VoiceConfig {
 	deepgramVoice: string;
 	elevenlabsVoice: string;
 	personality: Personality;
+	volume: number; // 0-100
 }
 
 interface AudioPlayer {
@@ -72,6 +73,7 @@ const DEFAULT_CONFIG: VoiceConfig = {
 	deepgramVoice: "aura-2-luna-en",
 	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS",
 	personality: "normal",
+	volume: 70,
 };
 
 const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
@@ -159,6 +161,7 @@ function loadVoiceConfig(): VoiceConfig {
 				? parsed.elevenlabsVoice
 				: DEFAULT_CONFIG.elevenlabsVoice,
 			personality,
+			volume: typeof parsed.volume === "number" ? Math.max(0, Math.min(100, parsed.volume)) : DEFAULT_CONFIG.volume,
 		};
 	} catch (error) {
 		console.error("Failed to load Pompom voice config:", error);
@@ -192,7 +195,8 @@ function detectPlayer(): AudioPlayer | null {
 		return {
 			command: "afplay",
 			argsForFile(filePath) {
-				return ["-v", "0.3", filePath]; // 30% volume — unobtrusive
+				const vol = (config.volume / 100).toFixed(2);
+				return ["-v", vol, filePath];
 			},
 		};
 	}
@@ -201,7 +205,8 @@ function detectPlayer(): AudioPlayer | null {
 			return {
 				command: "paplay",
 				argsForFile(filePath) {
-					return ["--volume", "19660", filePath]; // ~30% of max (65536)
+					const vol = Math.round((config.volume / 100) * 65536).toString();
+					return ["--volume", vol, filePath];
 				},
 			};
 		}
@@ -533,6 +538,12 @@ export function setPersonality(p: Personality): void {
 
 export function getVoiceCatalog(): Record<string, { name: string; id: string }[]> {
 	return VOICE_CATALOG;
+}
+
+export function setVolume(vol: number): void {
+	config.volume = Math.max(0, Math.min(100, vol));
+	detectedPlayer = detectPlayer(); // re-detect to pick up new volume
+	saveVoiceConfig();
 }
 
 export function setVoice(voice: string): void {

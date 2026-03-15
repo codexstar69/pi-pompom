@@ -61,6 +61,7 @@ import {
 	setAgentBusy,
 	setPersonality,
 	setVoice,
+	setVolume,
 	getVoiceCatalog,
 	speakTest,
 	stopPlayback,
@@ -984,6 +985,7 @@ export default function (pi: ExtensionAPI) {
 						"Change engine",
 						"Change voice model",
 						"Personality mode",
+						"Volume (" + getVoiceConfig().volume + "%)",
 						"Test voice",
 					]);
 					if (!action) return;
@@ -1014,6 +1016,10 @@ export default function (pi: ExtensionAPI) {
 						const p = mode.split(" ")[0] as Personality;
 						setPersonality(p);
 						cmdCtx.ui.notify("Personality: " + p, "info");
+					}
+					else if (action.startsWith("Volume")) {
+						const vol = await cmdCtx.ui.select("Volume", ["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"]);
+						if (vol) { setVolume(parseInt(vol)); cmdCtx.ui.notify("Volume: " + vol, "info"); }
 					}
 					else if (action === "Test voice") { speakTest(); cmdCtx.ui.notify("Speaking...", "info"); }
 				}
@@ -1283,6 +1289,20 @@ export default function (pi: ExtensionAPI) {
 						"  /pompom:voice chatty  — frequent commentary",
 						"info",
 					);
+					return;
+				}
+				if (sub.startsWith("volume ") || sub.startsWith("vol ")) {
+					const val = parseInt(sub.split(" ")[1]);
+					if (isNaN(val) || val < 0 || val > 100) {
+						commandContext.ui.notify("Usage: /pompom:voice volume 0-100", "warning");
+						return;
+					}
+					setVolume(val);
+					commandContext.ui.notify(`Volume: ${val}%`, "info");
+					return;
+				}
+				if (sub === "volume" || sub === "vol") {
+					commandContext.ui.notify(`Volume: ${getVoiceConfig().volume}%\n  /pompom:voice volume <0-100>`, "info");
 					return;
 				}
 
