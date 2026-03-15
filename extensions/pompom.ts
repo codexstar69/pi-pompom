@@ -444,22 +444,42 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 			const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
 			const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
 
-			// Pixel-art rectangular eyes — boxes align with the character grid perfectly
-			const inEye1 = Math.abs(ex1) < 0.055 && Math.abs(ey1) < 0.04 * eyeOpen;
-			const inEye2 = Math.abs(ex2) < 0.055 && Math.abs(ey2) < 0.04 * eyeOpen;
+			// Layered rectangular eyes — white sclera > brown iris > dark pupil > highlight
+			// All layers use box math for grid alignment
+			const eyeW = 0.06, eyeH = 0.045 * eyeOpen;
+			const inEye1 = Math.abs(ex1) < eyeW && Math.abs(ey1) < eyeH;
+			const inEye2 = Math.abs(ex2) < eyeW && Math.abs(ey2) < eyeH;
 			if (inEye1 || inEye2) {
-				// Solid black rectangle
-				r = 8; g = 8; b = 12;
+				// Layer 1: White sclera (outermost box)
+				r = 245; g = 245; b = 250;
 
-				// White highlight block (upper-left corner of each eye)
-				const hl1 = ex1 > -0.05 && ex1 < -0.02 && ey1 > -0.03 && ey1 < -0.005;
-				const hl2 = ex2 > -0.05 && ex2 < -0.02 && ey2 > -0.03 && ey2 < -0.005;
+				// Layer 2: Brown iris (inner box)
+				const irisW = 0.04, irisH = 0.032 * eyeOpen;
+				const inIris1 = Math.abs(ex1) < irisW && Math.abs(ey1) < irisH;
+				const inIris2 = Math.abs(ex2) < irisW && Math.abs(ey2) < irisH;
+				if (inIris1 || inIris2) {
+					r = 60; g = 40; b = 25; // warm brown
+					// Lower iris slightly lighter
+					if ((inIris1 && ey1 > 0.01) || (inIris2 && ey2 > 0.01)) { r = 80; g = 55; b = 35; }
+
+					// Layer 3: Dark pupil (center box)
+					const pupilW = 0.022, pupilH = 0.02 * eyeOpen;
+					const inPupil1 = Math.abs(ex1) < pupilW && Math.abs(ey1) < pupilH;
+					const inPupil2 = Math.abs(ex2) < pupilW && Math.abs(ey2) < pupilH;
+					if (inPupil1 || inPupil2) {
+						r = 10; g = 8; b = 15;
+					}
+				}
+
+				// White highlight block (upper-left of eye)
+				const hl1 = ex1 > -0.055 && ex1 < -0.025 && ey1 > -0.038 && ey1 < -0.01;
+				const hl2 = ex2 > -0.055 && ex2 < -0.025 && ey2 > -0.038 && ey2 < -0.01;
 				if ((hl1 || hl2) && !isTired) { r = 255; g = 255; b = 255; }
 
-				// Small secondary highlight (lower-right)
-				const hl1b = ex1 > 0.01 && ex1 < 0.035 && ey1 > 0.005 && ey1 < 0.025;
-				const hl2b = ex2 > 0.01 && ex2 < 0.035 && ey2 > 0.005 && ey2 < 0.025;
-				if ((hl1b || hl2b) && !isTired) { r = 200; g = 210; b = 240; }
+				// Small warm highlight (lower-right)
+				const hl1b = ex1 > 0.015 && ex1 < 0.04 && ey1 > 0.008 && ey1 < 0.028;
+				const hl2b = ex2 > 0.015 && ex2 < 0.04 && ey2 > 0.008 && ey2 < 0.028;
+				if ((hl1b || hl2b) && !isTired) { r = 220; g = 230; b = 250; }
 			}
 		}
 
