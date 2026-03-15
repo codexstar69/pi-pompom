@@ -2,32 +2,68 @@
 
 ## Current Status
 
-- Implemented the Pompom Intelligent Coding Companion feature.
-- Added `extensions/pompom-agent.ts` for agent state, commentary,
-  session stats, mood-to-weather mapping, and serialization.
-- Extended `extensions/pompom.ts` with additive agent overlay controls:
-  speech, look direction, antenna glow, ear boost, and weather override.
-- Reworked `extensions/pompom-extension.ts` to restore and persist agent
-  state, wire Pi lifecycle events, and add `/pompom:ask` plus
-  `/pompom:recap`.
-- Updated `package.json` to `2.0.2` and added `@mariozechner/pi-ai` as a
-  peer dependency.
-- Added a `CHANGELOG.md` entry for `2.0.2`.
+- Implemented opt-in Pompom TTS voice support.
+- Added `extensions/pompom-voice.ts` with:
+  persisted `~/.pi/pompom/voice-config.json`,
+  Kokoro local synthesis,
+  Deepgram cloud synthesis,
+  native WAV playback through `afplay` / `paplay` / `aplay` /
+  `powershell`,
+  bounded speech queue,
+  and synthetic mouth envelope output.
+- Extended `extensions/pompom.ts` with typed speech events,
+  `pompomOnSpeech`,
+  `pompomSetTalkAudioLevel`,
+  and backward-compatible `pompomSay(...)`.
+- Updated `extensions/pompom.ts` speech lines to ASCII-only text and
+  stopped clearing the bubble when talking starts so TTS lines stay
+  visible during playback.
+- Wired `extensions/pompom-extension.ts` to initialize voice on session
+  start/switch, enqueue speech events, share mouth animation between
+  `pi-listen` recording and TTS playback, show a one-time hint, and add
+  `/pompom:voice on|off|kokoro|deepgram|test`.
+- Updated `.gitignore` to ignore `tmp/`.
+- Bumped `package.json` to `2.1.0` and added optional dependency
+  `kokoro-js`.
+- Added `CHANGELOG.md` entry for `2.1.0`.
+- Added ExecPlan `docs/plans/2026-03-15-pompom-tts-voice.md`.
 
 ## Validation
 
+- Ran `pnpm typecheck`
+- Result: passed
 - Ran `bunx tsc -p tsconfig.json --noEmit`
 - Result: passed
+- Ran `timeout 10 pi --no-input -m "/pompom on" -m "/pompom pet"`
+- Result: no new crash; session rendered and handled commands, then the
+  timeout wrapper exited after 10 seconds
+- Ran export verification with `rg -n "export function ..."` on
+  `extensions/`
+- Result: all requested new exports found
+
+## Notes
+
+- The smoke run still prints the older accessories warning when
+  `~/.pi/pompom/accessories.json` does not exist. That is noisy but did
+  not crash Pi.
+- `kokoro-js` is optional. If it is not installed, Kokoro voice falls
+  back to Deepgram when available, or silently skips playback if no
+  engine is available.
+- Playback temp WAV files now go to local `./tmp`, not `/tmp`, and are
+  removed on player close.
 
 ## Last Prompts
 
-- "You are implementing a major feature for pi-pompom, a Pi CLI virtual
-  pet extension. Read these files first..."
 - "Then implement the full Pompom Intelligent Coding Companion..."
+- "You are reviewing an implementation plan for adding TTS
+  (text-to-speech) voice to pi-pompom..."
+- "You are implementing TTS voice for pi-pompom. Read ALL files first..."
 
 ## Next Checks
 
-- Exercise the extension inside Pi to confirm commentary frequency and
-  overlay intensity feel right in real use.
-- Decide whether `/pompom:ask` answers should also be written into the
-  Pi session as follow-up messages or remain UI-only.
+- In a real interactive Pi session, run `/pompom:voice on` and then
+  `/pompom:voice test` to confirm actual audio playback on this machine.
+- If Kokoro is preferred locally, install `kokoro-js` in the packaged
+  runtime environment used by Pi.
+- Consider softening the missing accessories log in
+  `loadAccessories()` so a first run does not print a full ENOENT stack.

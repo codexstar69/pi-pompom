@@ -1,0 +1,494 @@
+import childProcess from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+export interface SpeechEvent {
+	text: string;
+	source: "reaction" | "commentary" | "assistant" | "user_action" | "system";
+	priority: number;
+	allowTts: boolean;
+}
+
+interface TTSEngine {
+	name: string;
+	synthesize(text: string, voice: string): Promise<{ buffer: Buffer; durationMs: number }>;
+	isAvailable(): Promise<boolean>;
+}
+
+export interface VoiceConfig {
+	enabled: boolean;
+	engine: "kokoro" | "deepgram";
+	kokoroVoice: string;
+	deepgramVoice: string;
+}
+
+interface AudioPlayer {
+	command: string;
+	argsForFile(filePath: string): string[];
+}
+
+interface KokoroAudioLike {
+	toBlob(): Blob;
+}
+
+interface KokoroSynthLike {
+	generate(text: string, options: { voice: string }): Promise<KokoroAudioLike>;
+}
+
+interface KokoroModuleLike {
+	KokoroTTS: {
+		from_pretrained(
+			modelId: string,
+			options: { dtype: "q8"; device: "cpu" },
+		): Promise<KokoroSynthLike>;
+	};
+}
+
+const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
+const CONFIG_DIR = path.join(os.homedir(), ".pi", "pompom");
+const CONFIG_FILE = path.join(CONFIG_DIR, "voice-config.json");
+const TMP_DIR = path.join(process.cwd(), "tmp");
+const MIN_INTERVAL_MS = 5000;
+const MAX_QUEUE = 3;
+
+const DEFAULT_CONFIG: VoiceConfig = {
+	enabled: false,
+	engine: "kokoro",
+	kokoroVoice: "af_sky",
+	deepgramVoice: "aura-2-luna-en",
+};
+
+const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
+
+let config: VoiceConfig = loadVoiceConfig();
+let interactive = false;
+let detectedPlayer: AudioPlayer | null = null;
+let queue: SpeechEvent[] = [];
+let isProcessingQueue = false;
+let playbackActive = false;
+let playbackEnvelopePhase = 0;
+let lastSpokenText = "";
+let lastSpeakTime = 0;
+let currentPlayback: childProcess.ChildProcess | null = null;
+let stopRequested = false;
+
+function sanitizeSpeechText(text: string): string {
+	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+}
+
+function commandExists(cmd: string): boolean {
+	try {
+		const lookupCommand = process.platform === "win32" ? "where" : "which";
+		return childProcess.spawnSync(lookupCommand, [cmd], { stdio: "ignore" }).status === 0;
+	} catch {
+		return false;
+	}
+}
+
+function loadVoiceConfig(): VoiceConfig {
+	try {
+		if (!fs.existsSync(CONFIG_FILE)) {
+			return { ...DEFAULT_CONFIG };
+		}
+		const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as Partial<VoiceConfig>;
+		return {
+			enabled: parsed.enabled ?? DEFAULT_CONFIG.enabled,
+			engine: parsed.engine === "deepgram" ? "deepgram" : DEFAULT_CONFIG.engine,
+			kokoroVoice: typeof parsed.kokoroVoice === "string" && parsed.kokoroVoice
+				? parsed.kokoroVoice
+				: DEFAULT_CONFIG.kokoroVoice,
+			deepgramVoice: typeof parsed.deepgramVoice === "string" && parsed.deepgramVoice
+				? parsed.deepgramVoice
+				: DEFAULT_CONFIG.deepgramVoice,
+		};
+	} catch (error) {
+		console.error("Failed to load Pompom voice config:", error);
+		return { ...DEFAULT_CONFIG };
+	}
+}
+
+function saveVoiceConfig(): void {
+	try {
+		fs.mkdirSync(CONFIG_DIR, { recursive: true });
+		fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, "\t"));
+	} catch (error) {
+		console.error("Failed to save Pompom voice config:", error);
+	}
+}
+
+function estimateDurationMs(buffer: Buffer): number {
+	return Math.max(1, Math.round((buffer.length / (24000 * 2)) * 1000));
+}
+
+function detectPlayer(): AudioPlayer | null {
+	if (process.platform === "darwin" && commandExists("afplay")) {
+		return {
+			command: "afplay",
+			argsForFile(filePath) {
+				return [filePath];
+			},
+		};
+	}
+	if (process.platform === "linux") {
+		if (commandExists("paplay")) {
+			return {
+				command: "paplay",
+				argsForFile(filePath) {
+					return [filePath];
+				},
+			};
+		}
+		if (commandExists("aplay")) {
+			return {
+				command: "aplay",
+				argsForFile(filePath) {
+					return [filePath];
+				},
+			};
+		}
+	}
+	if (process.platform === "win32" && commandExists("powershell")) {
+		return {
+			command: "powershell",
+			argsForFile(filePath) {
+				const escapedPath = filePath.replace(/'/g, "''");
+				return [
+					"-NoProfile",
+					"-Command",
+					`$player = New-Object Media.SoundPlayer '${escapedPath}'; $player.PlaySync()`,
+				];
+			},
+		};
+	}
+	return null;
+}
+
+async function playAudio(buffer: Buffer): Promise<void> {
+		try {
+			if (!detectedPlayer) {
+				return;
+			}
+			const player = detectedPlayer;
+			fs.mkdirSync(TMP_DIR, { recursive: true });
+		const tempFile = path.join(
+			TMP_DIR,
+			`pompom-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`,
+		);
+		fs.writeFileSync(tempFile, buffer);
+
+			await new Promise<void>((resolve) => {
+				stopRequested = false;
+				const child = childProcess.spawn(
+					player.command,
+					player.argsForFile(tempFile),
+					{ stdio: "ignore" },
+				);
+			currentPlayback = child;
+			let finished = false;
+
+			const finish = () => {
+				if (finished) {
+					return;
+				}
+				finished = true;
+				try {
+					fs.unlinkSync(tempFile);
+				} catch (error) {
+					if (fs.existsSync(tempFile)) {
+						console.error("Failed to remove Pompom temp audio file:", error);
+					}
+				}
+				currentPlayback = null;
+				resolve();
+			};
+
+			child.on("error", (error) => {
+				if (!stopRequested) {
+					console.error("Failed to play Pompom audio:", error);
+				}
+				finish();
+			});
+
+			child.on("close", () => {
+				finish();
+			});
+		});
+	} catch (error) {
+		console.error("Pompom audio playback failed:", error);
+	}
+}
+
+class KokoroEngine implements TTSEngine {
+	name = "kokoro";
+	private synth: KokoroSynthLike | null = null;
+	private synthPromise: Promise<KokoroSynthLike> | null = null;
+
+	private async getSynth(): Promise<KokoroSynthLike> {
+		if (this.synth) {
+			return this.synth;
+		}
+		if (!this.synthPromise) {
+			this.synthPromise = (async () => {
+				const moduleName = "kokoro-js";
+				const kokoroModule = await import(moduleName) as KokoroModuleLike;
+				const synth = await kokoroModule.KokoroTTS.from_pretrained(MODEL_ID, {
+					dtype: "q8",
+					device: "cpu",
+				});
+				this.synth = synth;
+				return synth;
+			})();
+		}
+		return this.synthPromise;
+	}
+
+	async synthesize(text: string, voice: string): Promise<{ buffer: Buffer; durationMs: number }> {
+		const cacheKey = `${voice}:${text}`;
+		const cached = kokoroCache.get(cacheKey);
+		if (cached) {
+			return cached;
+		}
+		const synth = await this.getSynth();
+		const audio = await synth.generate(text, { voice });
+		const blob = audio.toBlob();
+		const arrayBuffer = await blob.arrayBuffer();
+		const buffer = Buffer.from(arrayBuffer);
+		const result = {
+			buffer,
+			durationMs: estimateDurationMs(buffer),
+		};
+		kokoroCache.set(cacheKey, result);
+		return result;
+	}
+
+	async isAvailable(): Promise<boolean> {
+		try {
+			const moduleName = "kokoro-js";
+			await import(moduleName);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+}
+
+class DeepgramEngine implements TTSEngine {
+	name = "deepgram";
+
+	async synthesize(text: string, voice: string): Promise<{ buffer: Buffer; durationMs: number }> {
+		const apiKey = process.env.DEEPGRAM_API_KEY;
+		if (!apiKey) {
+			throw new Error("DEEPGRAM_API_KEY is not set");
+		}
+		const url = new URL("https://api.deepgram.com/v1/speak");
+		url.searchParams.set("model", voice);
+		url.searchParams.set("encoding", "linear16");
+		url.searchParams.set("container", "wav");
+
+		const response = await fetch(url.toString(), {
+			method: "POST",
+			headers: {
+				Authorization: `Token ${apiKey}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ text }),
+		});
+		if (!response.ok) {
+			throw new Error(`Deepgram TTS failed: HTTP ${response.status}`);
+		}
+		const arrayBuffer = await response.arrayBuffer();
+		const buffer = Buffer.from(arrayBuffer);
+		return {
+			buffer,
+			durationMs: estimateDurationMs(buffer),
+		};
+	}
+
+	async isAvailable(): Promise<boolean> {
+		return Boolean(process.env.DEEPGRAM_API_KEY);
+	}
+}
+
+const kokoroEngine = new KokoroEngine();
+const deepgramEngine = new DeepgramEngine();
+
+async function resolveEngine(): Promise<TTSEngine | null> {
+	try {
+		const preferred = config.engine === "deepgram" ? deepgramEngine : kokoroEngine;
+		if (await preferred.isAvailable()) {
+			return preferred;
+		}
+		const fallback = config.engine === "deepgram" ? kokoroEngine : deepgramEngine;
+		if (await fallback.isAvailable()) {
+			return fallback;
+		}
+		return null;
+	} catch (error) {
+		console.error("Failed to resolve Pompom voice engine:", error);
+		return null;
+	}
+}
+
+async function processQueue(): Promise<void> {
+	if (isProcessingQueue) {
+		return;
+	}
+	isProcessingQueue = true;
+	try {
+		while (queue.length > 0 && config.enabled && interactive) {
+			const nextEvent = queue.shift();
+			if (!nextEvent) {
+				continue;
+			}
+			const engine = await resolveEngine();
+			if (!engine) {
+				continue;
+			}
+			const voice = engine.name === "kokoro" ? config.kokoroVoice : config.deepgramVoice;
+			const audio = await engine.synthesize(nextEvent.text, voice);
+			lastSpokenText = nextEvent.text;
+			lastSpeakTime = Date.now();
+			playbackActive = true;
+			playbackEnvelopePhase = 0;
+			await playAudio(audio.buffer);
+			playbackActive = false;
+		}
+	} catch (error) {
+		playbackActive = false;
+		console.error("Pompom speech queue failed:", error);
+	} finally {
+		isProcessingQueue = false;
+	}
+}
+
+export function initVoice(isInteractive: boolean): void {
+	try {
+		interactive = isInteractive;
+		config = loadVoiceConfig();
+		detectedPlayer = detectPlayer();
+	} catch (error) {
+		console.error("Failed to initialize Pompom voice:", error);
+	}
+}
+
+export function enqueueSpeech(event: SpeechEvent): void {
+	try {
+		if (!config.enabled || !interactive || !event.allowTts) {
+			return;
+		}
+		const text = sanitizeSpeechText(event.text);
+		if (text.length < 5) {
+			return;
+		}
+		if (text === lastSpokenText && Date.now() - lastSpeakTime < 30000) {
+			return;
+		}
+		if (queue.some((queued) => queued.text === text)) {
+			return;
+		}
+		if (event.priority === 1 && Math.random() > 0.25) {
+			return;
+		}
+		if (Date.now() - lastSpeakTime < MIN_INTERVAL_MS && event.priority < 3) {
+			return;
+		}
+
+		const nextEvent: SpeechEvent = {
+			...event,
+			text,
+		};
+
+		if (queue.length >= MAX_QUEUE) {
+			let lowestIndex = -1;
+			let lowestPriority = Number.POSITIVE_INFINITY;
+			queue.forEach((queued, index) => {
+				if (queued.priority < lowestPriority) {
+					lowestPriority = queued.priority;
+					lowestIndex = index;
+				}
+			});
+			if (lowestIndex >= 0 && queue[lowestIndex].priority < nextEvent.priority) {
+				queue.splice(lowestIndex, 1);
+			} else {
+				return;
+			}
+		}
+
+		queue.push(nextEvent);
+		queue.sort((left, right) => {
+			return right.priority - left.priority;
+		});
+		void processQueue();
+	} catch (error) {
+		console.error("Failed to enqueue Pompom speech:", error);
+	}
+}
+
+export function getTTSAudioLevel(): number {
+	if (!playbackActive) {
+		return 0;
+	}
+	playbackEnvelopePhase += 0.15;
+	return 0.3 + Math.abs(Math.sin(playbackEnvelopePhase * 4)) * 0.5;
+}
+
+export function isPlayingTTS(): boolean {
+	return playbackActive;
+}
+
+export function setVoiceEnabled(enabled: boolean): void {
+	try {
+		config.enabled = enabled;
+		saveVoiceConfig();
+		if (!enabled) {
+			stopPlayback();
+		}
+	} catch (error) {
+		console.error("Failed to update Pompom voice enabled state:", error);
+	}
+}
+
+export function setVoiceEngine(engine: "kokoro" | "deepgram"): void {
+	try {
+		config.engine = engine;
+		saveVoiceConfig();
+	} catch (error) {
+		console.error("Failed to update Pompom voice engine:", error);
+	}
+}
+
+export function getVoiceConfig(): VoiceConfig {
+	return { ...config };
+}
+
+export function speakTest(): void {
+	try {
+		enqueueSpeech({
+			text: "Hello. I am Pompom. Voice test ready.",
+			source: "system",
+			priority: 3,
+			allowTts: true,
+		});
+	} catch (error) {
+		console.error("Failed to run Pompom voice test:", error);
+	}
+}
+
+export function stopPlayback(): void {
+	try {
+		queue = [];
+		playbackActive = false;
+		stopRequested = true;
+		if (currentPlayback) {
+			try {
+				currentPlayback.kill("SIGTERM");
+			} catch (error) {
+				console.error("Failed to stop Pompom playback:", error);
+			}
+		}
+		currentPlayback = null;
+	} catch (error) {
+		console.error("Failed to stop Pompom voice playback:", error);
+	}
+}

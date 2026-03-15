@@ -1,6 +1,6 @@
 {
   "name": "@codexstar/pi-pompom",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "description": "A 3D raymarched virtual pet companion for Pi CLI",
   "type": "module",
   "author": "codexstar69 <engazedigital@gmail.com>",
@@ -39,6 +39,9 @@
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*"
+  },
+  "optionalDependencies": {
+    "kokoro-js": "*"
   },
   "engines": {
     "node": ">=18"

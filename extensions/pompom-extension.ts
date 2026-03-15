@@ -33,17 +33,31 @@ import {
 	pompomGetAccessories,
 	pompomGiveAccessory,
 	pompomKeypress,
+	pompomOnSpeech,
 	pompomSay,
 	pompomSetAgentEarBoost,
 	pompomSetAgentLook,
 	pompomSetAgentOverlay,
 	pompomSetAntennaGlow,
+	pompomSetTalkAudioLevel,
 	pompomSetTalking,
 	pompomSetWeatherOverride,
 	pompomStatus,
 	renderPompom,
 	resetPompom,
 } from "./pompom";
+import {
+	enqueueSpeech,
+	getTTSAudioLevel,
+	getVoiceConfig,
+	initVoice,
+	isPlayingTTS,
+	setVoiceEnabled,
+	setVoiceEngine,
+	speakTest,
+	stopPlayback,
+	type SpeechEvent,
+} from "./pompom-voice";
 
 type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
 
@@ -82,6 +96,7 @@ const SAVE_DIR = path.join(process.env.HOME || "~", ".pi", "pompom");
 const SAVE_FILE = path.join(SAVE_DIR, "accessories.json");
 const WIDGET_ID = "codexstar-pompom-companion";
 const POMPOM_AGENT_STATE_TYPE = "pompom-agent-state";
+let loadedVoiceHintShown = false;
 
 const emptyUsage = {
 	input: 0,
@@ -107,9 +122,8 @@ function sanitizeAscii(text: string): string {
 function loadAccessories(): Record<string, boolean> {
 	try {
 		return JSON.parse(fs.readFileSync(SAVE_FILE, "utf-8")) as Record<string, boolean>;
-	} catch (error) {
-		console.error("Failed to load Pompom accessories:", error);
-		return {};
+	} catch {
+		return {}; // File doesn't exist yet — that's fine
 	}
 }
 
@@ -296,7 +310,7 @@ export default function (pi: ExtensionAPI) {
 			applyAgentVisualState();
 			return;
 		}
-		pompomSay({ text: commentary, duration: 4.6 });
+		pompomSay(commentary, 4.6, "commentary", 1, true);
 		applyAgentVisualState();
 	}
 
@@ -306,6 +320,19 @@ export default function (pi: ExtensionAPI) {
 		} catch (error) {
 			console.error(`Pompom ${label} failed:`, error);
 		}
+	}
+
+	function showVoiceHint() {
+		const voiceConfig = getVoiceConfig();
+		if (voiceConfig.enabled || loadedVoiceHintShown || !ctx?.hasUI) {
+			return;
+		}
+		loadedVoiceHintShown = true;
+		setTimeout(() => {
+			if (ctx?.hasUI) {
+				ctx.ui.notify("Tip: Give Pompom a voice! /pompom:voice on", "info");
+			}
+		}, 5000);
 	}
 
 	function safeRender(width: number): string[] {
@@ -352,8 +379,20 @@ export default function (pi: ExtensionAPI) {
 		}
 		voiceCheckTimer = setInterval(() => {
 			const piListen = getPiListenState();
-			pompomSetTalking(Boolean(piListen.recording));
-		}, 100);
+			const isRecording = piListen.recording === true;
+			const isPlaying = isPlayingTTS();
+			pompomSetTalking(isRecording || isPlaying);
+
+			if (isPlaying) {
+				pompomSetTalkAudioLevel(getTTSAudioLevel());
+				return;
+			}
+			if (isRecording) {
+				pompomSetTalkAudioLevel(piListen.audioLevel || 0);
+				return;
+			}
+			pompomSetTalkAudioLevel(0);
+		}, 50);
 	}
 
 	function hideCompanion() {
@@ -367,6 +406,7 @@ export default function (pi: ExtensionAPI) {
 			voiceCheckTimer = null;
 		}
 		pompomSetTalking(false);
+		pompomSetTalkAudioLevel(0);
 		pompomSetAgentOverlay({ active: false });
 		pompomSetAntennaGlow({ intensity: 0 });
 		pompomSetAgentEarBoost({ amount: 0 });
@@ -489,7 +529,7 @@ export default function (pi: ExtensionAPI) {
 		const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
 
 		pulseOverlay({ forceOverlay: true, lookX: 0.16, lookY: -0.1, glow: 0.95, earBoost: 0.75 }, 5000);
-		pompomSay({ text: "Let me think that through.", duration: 4.2 });
+		pompomSay("Let me think that through.", 4.2, "commentary", 1, true);
 
 		let answer = "";
 		let lastBubbleUpdate = 0;
@@ -519,7 +559,7 @@ export default function (pi: ExtensionAPI) {
 						lastBubbleUpdate = now;
 						const snippet = sanitizeAscii(answer.slice(-100));
 						if (snippet) {
-							pompomSay({ text: snippet, duration: 4.0 });
+							pompomSay(snippet, 4.0, "assistant", 2, true);
 						}
 					}
 					continue;
@@ -528,7 +568,7 @@ export default function (pi: ExtensionAPI) {
 					const now = Date.now();
 					if (now - lastBubbleUpdate > 900) {
 						lastBubbleUpdate = now;
-						pompomSay({ text: "Thinking through the session...", duration: 3.6 });
+						pompomSay("Thinking through the session...", 3.6, "commentary", 1, true);
 					}
 					continue;
 				}
@@ -543,11 +583,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			pompomSay({ text: sanitizeAscii(finalAnswer.slice(0, 140)), duration: 6.0 });
+			pompomSay(sanitizeAscii(finalAnswer.slice(0, 140)), 6.0, "assistant", 3, true);
 			commandContext.ui.notify(`Pompom: ${finalAnswer}`, "info");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unknown error";
-			pompomSay({ text: "I hit a snag while thinking.", duration: 4.2 });
+			pompomSay("I hit a snag while thinking.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:ask error - ${message}`, "error");
 		} finally {
 			overlayHint = null;
@@ -596,7 +636,7 @@ export default function (pi: ExtensionAPI) {
 		].join("\n");
 
 		pulseOverlay({ forceOverlay: true, lookX: 0.08, lookY: -0.06, glow: 0.8, earBoost: 0.55 }, 3600);
-		pompomSay({ text: "I am wrapping up the session.", duration: 4.2 });
+		pompomSay("I am wrapping up the session.", 4.2, "commentary", 1, true);
 
 		try {
 			const response = await completeSimple(
@@ -614,11 +654,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			pompomSay({ text: sanitizeAscii(summary.slice(0, 140)), duration: 6.0 });
+			pompomSay(sanitizeAscii(summary.slice(0, 140)), 6.0, "assistant", 3, true);
 			commandContext.ui.notify(`Pompom recap:\n${summary}`, "info");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unknown error";
-			pompomSay({ text: "Recap failed. I need another try.", duration: 4.2 });
+			pompomSay("Recap failed. I need another try.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:recap error - ${message}`, "error");
 		} finally {
 			overlayHint = null;
@@ -630,17 +670,26 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, startCtx) => {
 		await runSafely("session_start", async () => {
 			ctx = startCtx;
+			initVoice(Boolean(startCtx.hasUI));
+			pompomOnSpeech((event: SpeechEvent) => {
+				if (event.allowTts) {
+					enqueueSpeech(event);
+				}
+			});
 			restoreCompanionState(startCtx);
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
 			}
+			showVoiceHint();
 		});
 	});
 
 	pi.on("session_shutdown", async () => {
 		await runSafely("session_shutdown", () => {
 			persistAgentState();
+			stopPlayback();
+			pompomOnSpeech(null);
 			hideCompanion();
 			resetPompom();
 			resetAgentState();
@@ -653,14 +702,22 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_switch", async (_event, switchCtx) => {
 		await runSafely("session_switch", () => {
+			stopPlayback();
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
+			initVoice(Boolean(switchCtx.hasUI));
+			pompomOnSpeech((event: SpeechEvent) => {
+				if (event.allowTts) {
+					enqueueSpeech(event);
+				}
+			});
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
 			}
+			showVoiceHint();
 		});
 	});
 
@@ -730,7 +787,7 @@ export default function (pi: ExtensionAPI) {
 			if (role === "assistant") {
 				const text = getMessageText(event.message);
 				if (text) {
-					pompomSay({ text: sanitizeAscii(text.slice(0, 120)), duration: 4.6 });
+					pompomSay(sanitizeAscii(text.slice(0, 120)), 4.6, "assistant", 2, true);
 				}
 			}
 			speakCommentary({ eventName: "message_end", role });
@@ -803,6 +860,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom status       Check mood and stats\n` +
 						`  /pompom give <item>  Give umbrella, scarf, sunglasses, or hat\n` +
 						`  /pompom inventory    See Pompom's bag\n` +
+						`  /pompom:voice        Voice on|off|kokoro|deepgram|test\n` +
 						`  /pompom:ask <q>      Ask Pompom about the session\n` +
 						`  /pompom:recap        Summarize the session`,
 						"info"
@@ -893,6 +951,56 @@ export default function (pi: ExtensionAPI) {
 			await runSafely("pompom:ask", async () => {
 				ctx = commandContext;
 				await runPompomAsk(args, commandContext);
+			});
+		},
+	});
+
+	pi.registerCommand("pompom:voice", {
+		description: "Manage Pompom's voice - on/off/kokoro/deepgram/test",
+		handler: async (args, commandContext) => {
+			await runSafely("pompom:voice", async () => {
+				ctx = commandContext;
+				const sub = (args || "").trim().toLowerCase();
+				if (sub === "on") {
+					setVoiceEnabled(true);
+					commandContext.ui.notify("Pompom voice enabled! Use /pompom:voice test to hear her.", "info");
+					return;
+				}
+				if (sub === "off") {
+					setVoiceEnabled(false);
+					stopPlayback();
+					commandContext.ui.notify("Pompom voice disabled.", "info");
+					return;
+				}
+				if (sub === "kokoro") {
+					setVoiceEngine("kokoro");
+					commandContext.ui.notify("Switched to Kokoro (local TTS). Run /pompom:voice test", "info");
+					return;
+				}
+				if (sub === "deepgram") {
+					if (!process.env.DEEPGRAM_API_KEY) {
+						commandContext.ui.notify("DEEPGRAM_API_KEY not set. Add it to your .env or shell config.", "warning");
+						return;
+					}
+					setVoiceEngine("deepgram");
+					commandContext.ui.notify("Switched to Deepgram (cloud TTS). Run /pompom:voice test", "info");
+					return;
+				}
+				if (sub === "test") {
+					speakTest();
+					commandContext.ui.notify("Speaking test phrase...", "info");
+					return;
+				}
+
+				const voiceConfig = getVoiceConfig();
+				commandContext.ui.notify(
+					"Pompom Voice\n" +
+					"  Status: " + (voiceConfig.enabled ? "ON" : "OFF") + "\n" +
+					"  Engine: " + voiceConfig.engine + "\n" +
+					"  Voice:  " + (voiceConfig.engine === "kokoro" ? voiceConfig.kokoroVoice : voiceConfig.deepgramVoice) + "\n" +
+					"  /pompom:voice on|off|kokoro|deepgram|test",
+					"info",
+				);
 			});
 		},
 	});

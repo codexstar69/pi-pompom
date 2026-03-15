@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-03-15
+
+### Minor Changes
+
+- opt-in TTS voice queue in `extensions/pompom-voice.ts` with Kokoro local synthesis, Deepgram cloud synthesis, native WAV playback, and persisted voice config
+- typed speech events in `extensions/pompom.ts` so weather, commentary, assistant replies, and user-triggered reactions can drive voice without making `say()` async
+- `/pompom:voice on|off|kokoro|deepgram|test` plus shared mouth animation for `pi-listen` recording and active TTS playback in `extensions/pompom-extension.ts`
+
 ## [2.0.2] - 2026-03-15
 
 ### Patch Changes
