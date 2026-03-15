@@ -10,7 +10,7 @@ import type { SpeechEvent } from "./pompom-voice";
 // ─── Rendering Config ────────────────────────────────────────────────────────
 // Widget dimensions — set once, used by renderPompom
 let W = 50;
-let H = 10; // character rows — compact, secondary addon
+let H = 13; // character rows — visible but not dominant
 const VIEW_OFFSET_Y = 0.22; // shift camera down so ground is visible in compact mode
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
@@ -1303,7 +1303,7 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	// Adapt dimensions — compact: secondary addon, must not dominate the terminal
 	if (width !== W && width > 10) {
 		W = width;
-		H = Math.max(8, Math.min(10, Math.floor(W * 0.13)));
+		H = Math.max(10, Math.min(14, Math.floor(W * 0.18)));
 		allocBuffers();
 	}
 
