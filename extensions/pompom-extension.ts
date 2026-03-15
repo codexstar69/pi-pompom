@@ -48,9 +48,12 @@ import {
 	resetPompom,
 } from "./pompom";
 import {
+	autoDetectEngine,
 	enqueueSpeech,
+	getVoiceAvailability,
 	getTTSAudioLevel,
 	getVoiceConfig,
+	hasVoiceBeenConfigured,
 	initVoice,
 	isPlayingTTS,
 	setVoiceEnabled,
@@ -140,6 +143,103 @@ function saveAccessories(): void {
 function getPiListenState(): { audioLevel?: number; recording?: boolean } {
 	const globalValue = globalThis as { __piListen?: { audioLevel?: number; recording?: boolean } };
 	return globalValue.__piListen || {};
+}
+
+function getVoiceEngineLabel(engine: "kokoro" | "deepgram" | "elevenlabs"): string {
+	if (engine === "elevenlabs") {
+		return "ElevenLabs";
+	}
+	if (engine === "deepgram") {
+		return "Deepgram";
+	}
+	return "Kokoro local";
+}
+
+function getVoiceSetupMessage(availability: {
+	engines: Record<"kokoro" | "deepgram" | "elevenlabs", boolean>;
+}): string {
+	const lines: string[] = [
+		"Pompom Voice Setup",
+		"",
+		"Nothing usable is configured yet.",
+		"",
+		"Best quality: set ELEVENLABS_API_KEY in your shell, then run /pompom:voice on",
+		"Good quality: set DEEPGRAM_API_KEY in your shell, then run /pompom:voice on",
+	];
+	if (!availability.engines.kokoro) {
+		lines.push("Free local: install kokoro-js, then run /pompom:voice on");
+	} else {
+		lines.push("Free local: Kokoro is already installed and can be enabled with /pompom:voice kokoro");
+	}
+	lines.push("", "Optional: run /pompom:voice setup to pick an engine manually.");
+	return lines.join("\n");
+}
+
+async function enableAutoDetectedVoice(commandContext: ExtensionContext): Promise<void> {
+	const voiceConfig = getVoiceConfig();
+	const preferredEngine = hasVoiceBeenConfigured() ? voiceConfig.engine : undefined;
+	const selectedEngine = await autoDetectEngine({ preferredEngine });
+	if (!selectedEngine) {
+		const availability = await getVoiceAvailability();
+		commandContext.ui.notify(getVoiceSetupMessage(availability), "warning");
+		return;
+	}
+
+	setVoiceEngine(selectedEngine);
+	setVoiceEnabled(true);
+	commandContext.ui.notify(`Pompom voice ON (${getVoiceEngineLabel(selectedEngine)}).`, "info");
+}
+
+async function runVoiceSetup(commandContext: ExtensionContext): Promise<void> {
+	const availability = await getVoiceAvailability();
+	if (availability.availableEngines.length === 0) {
+		commandContext.ui.notify(getVoiceSetupMessage(availability), "warning");
+		return;
+	}
+
+	if (!commandContext.hasUI || availability.availableEngines.length === 1) {
+		const selectedEngine = availability.bestEngine;
+		if (!selectedEngine) {
+			commandContext.ui.notify(getVoiceSetupMessage(availability), "warning");
+			return;
+		}
+		setVoiceEngine(selectedEngine);
+		setVoiceEnabled(true);
+		commandContext.ui.notify(`Pompom voice ON (${getVoiceEngineLabel(selectedEngine)}).`, "info");
+		return;
+	}
+
+	const labels = availability.availableEngines.map((engine) => {
+		const recommended = engine === availability.bestEngine ? "recommended" : "available";
+		return `${getVoiceEngineLabel(engine)} (${recommended})`;
+	});
+	const selectedLabel = await commandContext.ui.select("Choose Pompom's voice engine:", labels);
+	if (!selectedLabel) {
+		commandContext.ui.notify("Voice setup cancelled.", "info");
+		return;
+	}
+	const selectedIndex = labels.indexOf(selectedLabel);
+	const selectedEngine = availability.availableEngines[selectedIndex];
+	if (!selectedEngine) {
+		commandContext.ui.notify("Could not resolve the selected voice engine.", "error");
+		return;
+	}
+	setVoiceEngine(selectedEngine);
+	setVoiceEnabled(true);
+	commandContext.ui.notify(`Pompom voice ON (${getVoiceEngineLabel(selectedEngine)}).`, "info");
+}
+
+async function switchVoiceEngine(
+	commandContext: ExtensionContext,
+	engine: "kokoro" | "deepgram" | "elevenlabs",
+): Promise<void> {
+	const availability = await getVoiceAvailability();
+	if (!availability.engines[engine]) {
+		commandContext.ui.notify(getVoiceSetupMessage(availability), "warning");
+		return;
+	}
+	setVoiceEngine(engine);
+	commandContext.ui.notify(`Switched to ${getVoiceEngineLabel(engine)}. Run /pompom:voice test`, "info");
 }
 
 function extractTextContent(content: unknown): string {
@@ -351,13 +451,13 @@ export default function (pi: ExtensionAPI) {
 
 	function showVoiceHint() {
 		const voiceConfig = getVoiceConfig();
-		if (voiceConfig.enabled || loadedVoiceHintShown || !ctx?.hasUI) {
+		if (voiceConfig.enabled || voiceConfig.configured || loadedVoiceHintShown || !ctx?.hasUI) {
 			return;
 		}
 		loadedVoiceHintShown = true;
 		setTimeout(() => {
 			if (ctx?.hasUI) {
-				ctx.ui.notify("Tip: Give Pompom a voice! /pompom:voice on", "info");
+				ctx.ui.notify("Tip: Give Pompom a voice with /pompom:voice on or /pompom:voice setup", "info");
 			}
 		}, 5000);
 	}
@@ -692,6 +792,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, startCtx) => {
 		await runSafely("session_start", async () => {
 			ctx = startCtx;
+			loadedVoiceHintShown = false;
 			initVoice(Boolean(startCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
@@ -728,6 +829,7 @@ export default function (pi: ExtensionAPI) {
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
+			loadedVoiceHintShown = false;
 			initVoice(Boolean(switchCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
@@ -885,7 +987,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom status       Check mood and stats\n` +
 						`  /pompom give <item>  Give umbrella, scarf, sunglasses, or hat\n` +
 						`  /pompom inventory    See Pompom's bag\n` +
-						`  /pompom:voice        Voice on|off|kokoro|deepgram|test\n` +
+						`  /pompom:voice        Voice on|off|setup|kokoro|deepgram|elevenlabs|test\n` +
 						`  /pompom:ask <q>      Ask Pompom about the session\n` +
 						`  /pompom:recap        Summarize the session`,
 						"info"
@@ -981,14 +1083,13 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("pompom:voice", {
-		description: "Manage Pompom's voice - on/off/kokoro/deepgram/test",
+		description: "Manage Pompom's voice - on/off/setup/kokoro/deepgram/elevenlabs/test",
 		handler: async (args, commandContext) => {
 			await runSafely("pompom:voice", async () => {
 				ctx = commandContext;
 				const sub = (args || "").trim().toLowerCase();
 				if (sub === "on") {
-					setVoiceEnabled(true);
-					commandContext.ui.notify("Pompom voice enabled! Use /pompom:voice test to hear her.", "info");
+					await enableAutoDetectedVoice(commandContext);
 					return;
 				}
 				if (sub === "off") {
@@ -997,27 +1098,20 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify("Pompom voice disabled.", "info");
 					return;
 				}
+				if (sub === "setup") {
+					await runVoiceSetup(commandContext);
+					return;
+				}
 				if (sub === "kokoro") {
-					setVoiceEngine("kokoro");
-					commandContext.ui.notify("Switched to Kokoro (local TTS). Run /pompom:voice test", "info");
+					await switchVoiceEngine(commandContext, "kokoro");
 					return;
 				}
 				if (sub === "deepgram") {
-					if (!process.env.DEEPGRAM_API_KEY) {
-						commandContext.ui.notify("DEEPGRAM_API_KEY not set. Add it to your .env or shell config.", "warning");
-						return;
-					}
-					setVoiceEngine("deepgram");
-					commandContext.ui.notify("Switched to Deepgram (cloud TTS). Run /pompom:voice test", "info");
+					await switchVoiceEngine(commandContext, "deepgram");
 					return;
 				}
 				if (sub === "elevenlabs" || sub === "eleven" || sub === "11labs") {
-					if (!process.env.ELEVENLABS_API_KEY) {
-						commandContext.ui.notify("ELEVENLABS_API_KEY not set. Add it to your .env or shell config.", "warning");
-						return;
-					}
-					setVoiceEngine("elevenlabs");
-					commandContext.ui.notify("Switched to ElevenLabs (cloud TTS). Run /pompom:voice test", "info");
+					await switchVoiceEngine(commandContext, "elevenlabs");
 					return;
 				}
 				if (sub === "test") {
@@ -1033,9 +1127,10 @@ export default function (pi: ExtensionAPI) {
 				commandContext.ui.notify(
 					"Pompom Voice\n" +
 					"  Status: " + (voiceConfig.enabled ? "ON" : "OFF") + "\n" +
-					"  Engine: " + voiceConfig.engine + "\n" +
+					"  Config: " + (voiceConfig.configured ? "configured" : "not configured") + "\n" +
+					"  Engine: " + getVoiceEngineLabel(voiceConfig.engine) + "\n" +
 					"  Voice:  " + voiceName + "\n" +
-					"  /pompom:voice on|off|kokoro|deepgram|elevenlabs|test",
+					"  /pompom:voice on|off|setup|kokoro|deepgram|elevenlabs|test",
 					"info",
 				);
 			});

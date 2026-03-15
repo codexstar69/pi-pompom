@@ -18,6 +18,7 @@ interface TTSEngine {
 
 export interface VoiceConfig {
 	enabled: boolean;
+	configured: boolean;
 	engine: "kokoro" | "deepgram" | "elevenlabs";
 	kokoroVoice: string;
 	deepgramVoice: string;
@@ -52,10 +53,18 @@ const CONFIG_FILE = path.join(CONFIG_DIR, "voice-config.json");
 const TMP_DIR = path.join(process.cwd(), "tmp");
 const MIN_INTERVAL_MS = 5000;
 const MAX_QUEUE = 3;
+const ENGINE_PRIORITY = ["elevenlabs", "deepgram", "kokoro"] as const;
+
+export interface VoiceAvailability {
+	bestEngine: VoiceConfig["engine"] | null;
+	availableEngines: VoiceConfig["engine"][];
+	engines: Record<VoiceConfig["engine"], boolean>;
+}
 
 const DEFAULT_CONFIG: VoiceConfig = {
 	enabled: false,
-	engine: "kokoro",
+	configured: false,
+	engine: "elevenlabs",
 	kokoroVoice: "af_nicole",
 	deepgramVoice: "aura-2-luna-en",
 	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS", // voice ID from ElevenLabs skill
@@ -79,6 +88,10 @@ function sanitizeSpeechText(text: string): string {
 	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
 }
 
+function isVoiceEngine(value: unknown): value is VoiceConfig["engine"] {
+	return value === "elevenlabs" || value === "deepgram" || value === "kokoro";
+}
+
 function commandExists(cmd: string): boolean {
 	try {
 		const lookupCommand = process.platform === "win32" ? "where" : "which";
@@ -94,10 +107,10 @@ function loadVoiceConfig(): VoiceConfig {
 			return { ...DEFAULT_CONFIG };
 		}
 		const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as Partial<VoiceConfig>;
-		const validEngines = ["kokoro", "deepgram", "elevenlabs"] as const;
-		const engine = validEngines.includes(parsed.engine as any) ? (parsed.engine as VoiceConfig["engine"]) : DEFAULT_CONFIG.engine;
+		const engine = isVoiceEngine(parsed.engine) ? parsed.engine : DEFAULT_CONFIG.engine;
 		return {
 			enabled: parsed.enabled ?? DEFAULT_CONFIG.enabled,
+			configured: parsed.configured ?? DEFAULT_CONFIG.configured,
 			engine,
 			kokoroVoice: typeof parsed.kokoroVoice === "string" && parsed.kokoroVoice
 				? parsed.kokoroVoice
@@ -126,6 +139,14 @@ function saveVoiceConfig(): void {
 
 function estimateDurationMs(buffer: Buffer): number {
 	return Math.max(1, Math.round((buffer.length / (24000 * 2)) * 1000));
+}
+
+function markVoiceConfigured(): boolean {
+	if (config.configured) {
+		return false;
+	}
+	config.configured = true;
+	return true;
 }
 
 function detectPlayer(): AudioPlayer | null {
@@ -404,17 +425,11 @@ const engineMap: Record<string, TTSEngine> = {
 
 async function resolveEngine(): Promise<TTSEngine | null> {
 	try {
-		const preferred = engineMap[config.engine] || kokoroEngine;
-		if (await preferred.isAvailable()) {
-			return preferred;
+		const preferredEngine = await autoDetectEngine({ preferredEngine: config.engine });
+		if (!preferredEngine) {
+			return null;
 		}
-		// Fallback chain: try all others
-		for (const engine of [kokoroEngine, deepgramEngine, elevenlabsEngine]) {
-			if (engine !== preferred && await engine.isAvailable()) {
-				return engine;
-			}
-		}
-		return null;
+		return engineMap[preferredEngine] || null;
 	} catch {
 		return null;
 	}
@@ -531,8 +546,17 @@ export function isPlayingTTS(): boolean {
 
 export function setVoiceEnabled(enabled: boolean): void {
 	try {
-		config.enabled = enabled;
-		saveVoiceConfig();
+		let shouldSave = false;
+		if (config.enabled !== enabled) {
+			config.enabled = enabled;
+			shouldSave = true;
+		}
+		if (markVoiceConfigured()) {
+			shouldSave = true;
+		}
+		if (shouldSave) {
+			saveVoiceConfig();
+		}
 		if (!enabled) {
 			stopPlayback();
 		}
@@ -543,8 +567,17 @@ export function setVoiceEnabled(enabled: boolean): void {
 
 export function setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): void {
 	try {
-		config.engine = engine;
-		saveVoiceConfig();
+		let shouldSave = false;
+		if (config.engine !== engine) {
+			config.engine = engine;
+			shouldSave = true;
+		}
+		if (markVoiceConfigured()) {
+			shouldSave = true;
+		}
+		if (shouldSave) {
+			saveVoiceConfig();
+		}
 	} catch (error) {
 		console.error("Failed to update Pompom voice engine:", error);
 	}
@@ -552,6 +585,41 @@ export function setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): vo
 
 export function getVoiceConfig(): VoiceConfig {
 	return { ...config };
+}
+
+export function hasVoiceBeenConfigured(): boolean {
+	return config.configured;
+}
+
+export async function getVoiceAvailability(): Promise<VoiceAvailability> {
+	const [elevenlabs, deepgram, kokoro] = await Promise.all([
+		elevenlabsEngine.isAvailable(),
+		deepgramEngine.isAvailable(),
+		kokoroEngine.isAvailable(),
+	]);
+	const engines: VoiceAvailability["engines"] = {
+		elevenlabs,
+		deepgram,
+		kokoro,
+	};
+	const availableEngines = ENGINE_PRIORITY.filter((engine) => {
+		return engines[engine];
+	});
+	return {
+		bestEngine: availableEngines[0] || null,
+		availableEngines,
+		engines,
+	};
+}
+
+export async function autoDetectEngine(options?: {
+	preferredEngine?: VoiceConfig["engine"];
+}): Promise<VoiceConfig["engine"] | null> {
+	const availability = await getVoiceAvailability();
+	if (options?.preferredEngine && availability.engines[options.preferredEngine]) {
+		return options.preferredEngine;
+	}
+	return availability.bestEngine;
 }
 
 export function speakTest(): void {

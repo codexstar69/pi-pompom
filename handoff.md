@@ -2,52 +2,32 @@
 
 ## Current Status
 
-- Reviewed `extensions/pompom.ts`,
-  `extensions/pompom-extension.ts`,
-  `extensions/pompom-agent.ts`,
-  `extensions/pompom-voice.ts`,
-  and `package.json`.
-- Confirmed `bunx tsc -p tsconfig.json --noEmit` passes.
-- Fixed weather state separation so agent weather override no longer
-  collides with random weather announcements or sky blending.
-- Fixed game stability so TTS or recording does not kick Pompom out of
-  `/pompom game`, and `resetPompom()` now clears all game fields.
-- Hardened tool/message event handling so missing Pi event fields do not
-  throw, and tool completion can still clear tracked active calls even
-  when `toolCallId` is missing.
-- Bumped package version to `2.1.1` and added a `CHANGELOG.md` entry.
+- Reviewed the current voice queue, engine fallback, and `/pompom:voice`
+  command flow.
+- Added frictionless voice onboarding so `/pompom:voice on` now
+  auto-detects the best usable engine, and `/pompom:voice setup` offers
+  an explicit picker when more than one engine is available.
+- Added persisted `configured` state to the voice config so the session
+  hint only appears before voice has been configured once.
+- Changed engine priority to ElevenLabs, then Deepgram, then Kokoro.
 
 ## Validation
 
-- Ran `bunx tsc -p tsconfig.json --noEmit`
+- Ran `pnpm typecheck`
 - Result: passed
-- Ran `timeout 10 pi --no-input -m "/pompom on" -m "/pompom pet"`
-- Result: no crash observed; timeout exited after 10 seconds
-- Ran `timeout 10 pi --no-input -m "/pompom on" -m "/pompom game"`
-- Result: no crash observed; timeout exited after 10 seconds
-
-## Notes
-
-- `loadAccessories()` does not log on missing file anymore. It still
-  returns `{}` on read/parse failure.
-- Keyboard shortcut wiring is still through `ctx.ui.onTerminalInput(...)`
-  and now also lowercases Kitty keyboard chars before matching.
-- TTS mouth animation is still driven from `getTTSAudioLevel()` while
-  playback is active, with `pi-listen` audio only used when recording.
+- Ran `timeout 5 pi -e ./extensions/pompom-extension.ts --no-input -m "/pompom:voice on"`
+- Result: timeout exited after 5 seconds, but the captured log showed
+  `Pompom voice ON (Deepgram).` and no onboarding-flow errors
 
 ## Last Prompts
 
-- "Review the complete pi-pompom codebase for bugs, edge cases, and
-  issues."
-- "Run smoke tests:
-  - bunx tsc -p tsconfig.json --noEmit
-  - timeout 10 pi --no-input -m \"/pompom on\" -m \"/pompom pet\"
-  - timeout 10 pi --no-input -m \"/pompom on\" -m \"/pompom game\""
+- "Review and improve this voice onboarding plan for pi-pompom. Read
+  the current code first..."
+- "After review, implement the changes, run typecheck, and smoke test."
 
 ## Next Checks
 
-- In a real interactive Pi session with voice enabled, run
-  `/pompom:voice on` then `/pompom game` to confirm gameplay still feels
-  good while TTS is active.
-- If Pi later changes its event payload shape again, keep using the
-  defensive event parsing added in `extensions/pompom-extension.ts`.
+- In a real interactive Pi session, run `/pompom:voice setup` when more
+  than one engine is available to confirm the picker wording feels good.
+- If Pi later exposes a cleaner headless mode, replace the timeout-based
+  smoke run with that flow so logs stay smaller.

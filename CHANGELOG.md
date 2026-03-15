@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-03-15
+
+### Patch Changes
+
+- frictionless voice onboarding in `extensions/pompom-extension.ts` so `/pompom:voice on` auto-picks the best usable engine, `/pompom:voice setup` offers a guided picker, and the session hint only shows before voice is configured once
+- engine priority and persisted onboarding state in `extensions/pompom-voice.ts` so ElevenLabs becomes the default preference, previous manual choices are kept when still usable, and fallback selection stays consistent
+
 ## [2.1.1] - 2026-03-15
 
 ### Patch Changes

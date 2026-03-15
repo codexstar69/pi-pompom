@@ -41,6 +41,15 @@ while playback is active.
 - [x] 2026-03-15 22:17 IST Ran `pnpm typecheck`,
       `bunx tsc -p tsconfig.json --noEmit`, the `pi` smoke run, and
       export verification.
+- [x] 2026-03-15 23:05 IST Reviewed the first-pass voice command flow
+      against the current code and the Pi UI docs, then decided to keep
+      `/pompom:voice on` zero-friction while moving manual choice into a
+      guided `/pompom:voice setup` flow.
+- [x] 2026-03-15 23:18 IST Updated `extensions/pompom-voice.ts`,
+      `extensions/pompom-extension.ts`, package metadata, changelog, and
+      handoff docs for frictionless onboarding, then reran `pnpm
+      typecheck` and an explicit Pi smoke test with
+      `pi -e ./extensions/pompom-extension.ts`.
 
 ## Surprises & Discoveries
 
@@ -64,6 +73,13 @@ while playback is active.
   exited with code `124` from the timeout wrapper after rendering the
   widget and handling both commands; the only stack trace was the older
   `ENOENT` from `loadAccessories()`.
+
+- Observation: the current runtime fallback order does not match the
+  stated "best available engine" goal once the preferred engine is
+  missing.
+  Evidence: `resolveEngine()` falls back in the hard-coded order
+  Kokoro, Deepgram, ElevenLabs, so a saved or default cloud preference
+  can still land on Kokoro before Deepgram.
 
 ## Decision Log
 
@@ -89,6 +105,20 @@ while playback is active.
   change would hide the line that Pompom is currently speaking.
   Date/Author: 2026-03-15 / Codex
 
+- Decision: treat `/pompom:voice on` as consent to auto-enable the best
+  usable engine and reserve `ctx.ui.select()` for `/pompom:voice setup`.
+  Rationale: the command itself is explicit intent, and adding a picker
+  to the default path would add friction without solving a real
+  ambiguity. Users who want control still have a dedicated guided path.
+  Date/Author: 2026-03-15 / Codex
+
+- Decision: persist whether voice has ever been configured and only show
+  the session hint while that flag is false.
+  Rationale: using only `enabled` is too weak because users who turned
+  voice off, switched engines manually, or hit setup once would still
+  look "unconfigured" to the current hint logic.
+  Date/Author: 2026-03-15 / Codex
+
 ## Outcomes & Retrospective
 
 The feature is implemented. Pompom now has an opt-in voice controller,
@@ -98,6 +128,12 @@ The main tradeoff is that runtime playback still depends on a native
 audio player and, for Deepgram, an API key. That failure mode is handled
 gracefully by leaving voice disabled or by silently skipping playback if
 no player or engine is available.
+
+The follow-up onboarding pass makes the feature discoverable instead of
+expecting users to learn the engine setup sequence first. The remaining
+goal for future work is only UX polish. This pass verified that the new
+command flow typechecks, keeps earlier choices when possible, and
+chooses a usable engine in the explicit smoke run.
 
 ## Context and Orientation
 
@@ -228,8 +264,11 @@ At the end of this work, these exports must exist:
   - `getTTSAudioLevel(): number`
   - `isPlayingTTS(): boolean`
   - `setVoiceEnabled(enabled: boolean): void`
-  - `setVoiceEngine(engine: "kokoro" | "deepgram"): void`
+  - `setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): void`
   - `getVoiceConfig(): VoiceConfig`
+  - `hasVoiceBeenConfigured(): boolean`
+  - `getVoiceAvailability(): Promise<VoiceAvailability>`
+  - `autoDetectEngine(options?: { preferredEngine?: "kokoro" | "deepgram" | "elevenlabs" }): Promise<"kokoro" | "deepgram" | "elevenlabs" | null>`
   - `speakTest(): void`
   - `stopPlayback(): void`
 
@@ -237,6 +276,12 @@ At the end of this work, these exports must exist:
   - `pompomOnSpeech(cb: ((event: SpeechEvent) => void) | null): void`
   - `pompomSetTalkAudioLevel(level: number): void`
   - `pompomSay(...)` with backward compatibility for the old object form
+
+Plan revision note: 2026-03-15 23:05 IST. Expanded the original TTS
+ExecPlan to cover frictionless voice onboarding after reviewing the new
+voice code and the Pi `ctx.ui` helpers. This revision records the new
+decision to keep `/pompom:voice on` automatic, add `/pompom:voice
+setup`, and persist onboarding state separately from the enabled flag.
 
 Revision note: created before implementation so the TTS work has a
 living, self-contained plan in the format required by `PLANS.md`.
