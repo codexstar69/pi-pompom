@@ -1028,6 +1028,9 @@ export default function (pi: ExtensionAPI) {
 						"quiet — only speaks on your actions and errors",
 						"normal — moderate, casual commentary",
 						"chatty — frequent commentary",
+						"professional — errors, milestones, and direct actions only",
+						"mentor — guides on errors and completions, skips routine chatter",
+						"zen — near-silent, speaks only when you interact directly",
 					]);
 					if (!mode) return;
 					setPersonality(mode.split(" ")[0] as Personality);
@@ -1274,19 +1277,30 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify(`Voice set to: ${voiceId}. Run /pompom:voice test to hear it.`, "info");
 					return;
 				}
-				if (sub === "quiet" || sub === "normal" || sub === "chatty") {
+				const personalityOptions = ["quiet", "normal", "chatty", "professional", "mentor", "zen"];
+				if (personalityOptions.includes(sub)) {
 					setPersonality(sub as Personality);
-					const labels = { quiet: "Quiet (user actions + errors only)", normal: "Normal (moderate)", chatty: "Chatty (frequent)" };
+					const labels: Record<string, string> = {
+						quiet: "Quiet — user actions + errors only",
+						normal: "Normal — moderate, casual",
+						chatty: "Chatty — frequent commentary",
+						professional: "Professional — errors, milestones, direct actions",
+						mentor: "Mentor — guides on errors and completions",
+						zen: "Zen — near-silent, speaks only when addressed",
+					};
 					commandContext.ui.notify(`Personality: ${labels[sub]}`, "info");
 					return;
 				}
 				if (sub === "personality") {
 					const voiceConfig = getVoiceConfig();
 					commandContext.ui.notify(
-						`Personality: ${voiceConfig.personality}\n` +
-						"  /pompom:voice quiet   — speaks only on user actions and errors\n" +
-						"  /pompom:voice normal  — moderate commentary\n" +
-						"  /pompom:voice chatty  — frequent commentary",
+						`Personality: ${voiceConfig.personality}\n\n` +
+						"  /pompom:voice quiet          user actions + errors only\n" +
+						"  /pompom:voice normal         moderate, casual\n" +
+						"  /pompom:voice chatty         frequent commentary\n" +
+						"  /pompom:voice professional   errors, milestones, direct actions\n" +
+						"  /pompom:voice mentor         guides on errors and completions\n" +
+						"  /pompom:voice zen            near-silent, only when addressed",
 						"info",
 					);
 					return;

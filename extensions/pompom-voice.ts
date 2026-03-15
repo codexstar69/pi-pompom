@@ -16,7 +16,7 @@ interface TTSEngine {
 	isAvailable(): Promise<boolean>;
 }
 
-export type Personality = "quiet" | "normal" | "chatty";
+export type Personality = "quiet" | "normal" | "chatty" | "professional" | "mentor" | "zen";
 
 export interface VoiceConfig {
 	enabled: boolean;
@@ -144,7 +144,7 @@ function loadVoiceConfig(): VoiceConfig {
 		}
 		const parsed = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8")) as Partial<VoiceConfig>;
 		const engine = isVoiceEngine(parsed.engine) ? parsed.engine : DEFAULT_CONFIG.engine;
-		const validPersonality = ["quiet", "normal", "chatty"] as const;
+		const validPersonality = ["quiet", "normal", "chatty", "professional", "mentor", "zen"] as const;
 		const personality = validPersonality.includes(parsed.personality as any)
 			? (parsed.personality as Personality) : DEFAULT_CONFIG.personality;
 		return {
@@ -571,6 +571,18 @@ export function enqueueSpeech(event: SpeechEvent): void {
 			return;
 		}
 		if (config.personality === "normal" && event.priority < 2 && event.source === "commentary") {
+			return;
+		}
+		// Professional: speaks only on errors, milestones, and direct user actions. No idle chatter.
+		if (config.personality === "professional" && event.source === "commentary" && event.priority < 3) {
+			return;
+		}
+		// Mentor: speaks on errors and completion summaries. Skips routine tool commentary.
+		if (config.personality === "mentor" && event.source === "commentary" && event.priority < 2) {
+			return;
+		}
+		// Zen: almost silent. Only speaks when directly addressed (user_action priority 3).
+		if (config.personality === "zen" && event.priority < 3) {
 			return;
 		}
 		const text = sanitizeSpeechText(event.text);
