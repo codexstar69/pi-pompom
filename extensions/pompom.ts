@@ -572,9 +572,11 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 	const amb = 0.45;
 
 	let ao = 1.0;
-	if (hitObj.id === "earL" || hitObj.id === "earR") ao = 0.8;
-	if (hitObj.id === "pawL" || hitObj.id === "pawR") ao = 0.7;
-	if (hitObj.id === "body" && hitNy > 0.5) ao = 0.6;
+	if (hitObj.id === "earL" || hitObj.id === "earR") ao = 0.75;
+	if (hitObj.id === "pawL" || hitObj.id === "pawR") ao = 0.65;
+	if (hitObj.id === "body" && hitNy > 0.5) ao = 0.55;
+	// Contact shadow where body meets ground (underside gets darker)
+	if (hitObj.id === "body" && hitNy > 0.3) ao *= 0.8 + 0.2 * (1.0 - hitNy);
 	if (hitObj.id === "pillow" && isSleeping) {
 		const bodyDist = Math.sqrt((px - posX) ** 2 + (py - posY) ** 2);
 		if (bodyDist < 0.4) ao = 0.5 + (bodyDist / 0.4) * 0.5;
@@ -588,9 +590,16 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 	const fdiff = Math.max(0, hitNx * fnx + hitNy * fny + hitNz * fnz);
 	const fatten = 1.0 / (1.0 + fDistSq * 20.0);
 
-	let lightR = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 2.0;
-	let lightG = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 3.0;
-	let lightB = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 2.5;
+	// Rim lighting — bright edge on the side opposite the main light (adds depth)
+	const rim = Math.pow(1.0 - Math.max(0, hitNz), 3) * 0.4;
+	const rimR = rim * 0.6, rimG = rim * 0.7, rimB = rim * 1.0; // cool blue-white rim
+
+	// Subsurface scattering approximation — warm light bleeds through thin areas
+	const sss = (hitObj.mat === 1 || hitObj.mat === 2) ? Math.pow(Math.max(0, -hitNx * lx - hitNy * ly + hitNz * lz), 2) * 0.15 : 0;
+
+	let lightR = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 2.0 + rimR + sss * 1.2;
+	let lightG = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 3.0 + rimG + sss * 0.4;
+	let lightB = (diff * 0.5 + wrap * 0.3 + amb) * ao + fdiff * fatten * 2.5 + rimB + sss * 0.3;
 
 	// Antenna glow
 	if (hitObj.id === "body") {
