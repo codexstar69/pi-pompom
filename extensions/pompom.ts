@@ -10,7 +10,7 @@ import type { SpeechEvent } from "./pompom-voice";
 // ─── Rendering Config ────────────────────────────────────────────────────────
 // Widget dimensions — set once, used by renderPompom
 let W = 50;
-let H = 14; // character rows (each = 2 logical pixels via half-block)
+let H = 10; // character rows — compact, secondary addon
 const VIEW_OFFSET_Y = 0.2; // shift camera down so ground is visible in compact mode
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
@@ -129,7 +129,7 @@ function say(
 }
 
 function project2D(x: number, y: number): [number, number] {
-	const effectDim = Math.max(40, Math.min(W, H * 4));
+	const effectDim = Math.max(40, Math.min(W, H * 3));
 	const scale = 2.0 / effectDim;
 	const cx = (x / scale) + (W / 2.0);
 	const cy = ((y - VIEW_OFFSET_Y) / scale + H) / 2.0;
@@ -623,14 +623,14 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		let fr = Math.floor((wr - grad * 10) * shadow);
 		let fg = Math.floor((wg - grad * 10) * shadow);
 		let fb = Math.floor((wb - grad * 10) * shadow);
-		// Floor reflection
+		// Floor reflection — subtle hint, not a full mirror
 		const refPy = 1.2 - py;
 		const refHit = getObjHit(px, refPy, objects);
 		if (refHit.hitObj) {
 			const refC = shadeObject(refHit, px, refPy, objects);
-			fr = Math.floor(fr * 0.7 + refC[0] * 0.3);
-			fg = Math.floor(fg * 0.7 + refC[1] * 0.3);
-			fb = Math.floor(fb * 0.7 + refC[2] * 0.3);
+			fr = Math.floor(fr * 0.85 + refC[0] * 0.15);
+			fg = Math.floor(fg * 0.85 + refC[1] * 0.15);
+			fb = Math.floor(fb * 0.85 + refC[2] * 0.15);
 		}
 		return [fr, fg, fb];
 	}
@@ -726,15 +726,15 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		const sunDx = px - 0.5;
 		const sunDy = py - (-0.3);
 		const sunDist = Math.sqrt(sunDx * sunDx + sunDy * sunDy);
-		if (sunDist < 0.2) {
-			if (sunDist < 0.04) {
-				bgR = 255; bgG = 250; bgB = 220;
+		if (sunDist < 0.1) {
+			if (sunDist < 0.02) {
+				bgR = 255; bgG = 250; bgB = 230;
 			} else {
-				const halo = 1.0 - (sunDist / 0.2);
-				const hIntensity = halo * halo;
-				bgR = Math.min(255, bgR + hIntensity * 100);
-				bgG = Math.min(255, bgG + hIntensity * 90);
-				bgB = Math.min(255, bgB + hIntensity * 60);
+				const halo = 1.0 - (sunDist / 0.1);
+				const hIntensity = halo * halo * 0.5; // subtle glow, not a beam
+				bgR = Math.min(255, bgR + Math.floor(hIntensity * 50));
+				bgG = Math.min(255, bgG + Math.floor(hIntensity * 45));
+				bgB = Math.min(255, bgB + Math.floor(hIntensity * 30));
 			}
 		}
 	}
@@ -858,7 +858,7 @@ function buildObjects(): RenderObj[] {
 }
 
 function getScreenEdgeX(): number {
-	const effectDim = Math.max(40, Math.min(W, H * 4));
+	const effectDim = Math.max(40, Math.min(W, H * 3));
 	const scale = 2.0 / effectDim;
 	return (W / 2.0) * scale;
 }
@@ -936,7 +936,7 @@ function updatePhysics(dt: number) {
 
 	// Weather particles
 	const weather = getWeather();
-	const effectDim = Math.max(40, Math.min(W, H * 4));
+	const effectDim = Math.max(40, Math.min(W, H * 3));
 	const wScale = 2.0 / effectDim;
 	if (weather === "rain" && Math.random() < 0.4) {
 		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.15, vy: 2.5 + Math.random(), char: "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
@@ -1204,7 +1204,7 @@ function updatePhysics(dt: number) {
 }
 
 function renderToBuffers() {
-	const effectDim = Math.max(40, Math.min(W, H * 4));
+	const effectDim = Math.max(40, Math.min(W, H * 3));
 	const scale = 2.0 / effectDim;
 	const objects = buildObjects();
 	const skyColors = getWeatherAndTime();
@@ -1300,10 +1300,10 @@ function renderToBuffers() {
  * @returns string[] of H lines, each with ANSI color codes
  */
 export function renderPompom(width: number, audioLevel: number, dt: number): string[] {
-	// Adapt dimensions — balanced: compact but sharp
+	// Adapt dimensions — compact: secondary addon, must not dominate the terminal
 	if (width !== W && width > 10) {
 		W = width;
-		H = Math.max(14, Math.min(18, Math.floor(W * 0.24)));
+		H = Math.max(8, Math.min(10, Math.floor(W * 0.13)));
 		allocBuffers();
 	}
 
