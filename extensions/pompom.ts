@@ -431,44 +431,50 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		const ex2 = bdx - effectiveLookX * 0.08 - 0.11, ey2 = bdy - effectiveLookY * 0.05 + 0.02;
 
 		if (isSleeping || currentState === "singing") {
-			// Closed eyes — thick horizontal lines, very dark
+			// Closed eyes — flat horizontal dark bars (pixel-art)
 			if (isSleeping) {
-				if ((Math.abs(ey1) < 0.016 && Math.abs(ex1) < 0.07) || (Math.abs(ey2) < 0.016 && Math.abs(ex2) < 0.07)) { r = 10; g = 8; b = 15; }
+				if ((Math.abs(ey1) < 0.012 && Math.abs(ex1) < 0.055) || (Math.abs(ey2) < 0.012 && Math.abs(ex2) < 0.055)) { r = 10; g = 8; b = 15; }
 			} else {
-				// Happy squint arcs — thick, dark
-				if ((Math.abs(ey1 + ex1 * ex1 * 10) < 0.022 && Math.abs(ex1) < 0.08 && ey1 > -ex1 * ex1 * 10) ||
-					(Math.abs(ey2 + ex2 * ex2 * 10) < 0.022 && Math.abs(ex2) < 0.08 && ey2 > -ex2 * ex2 * 10)) { r = 10; g = 8; b = 15; }
+				// Happy squint — flat bars with slight upward curve at edges
+				const sq1 = Math.abs(ey1 + Math.abs(ex1) * Math.abs(ex1) * 8) < 0.015 && Math.abs(ex1) < 0.065;
+				const sq2 = Math.abs(ey2 + Math.abs(ex2) * Math.abs(ex2) * 8) < 0.015 && Math.abs(ex2) < 0.065;
+				if (sq1 || sq2) { r = 10; g = 8; b = 15; }
 			}
 		} else {
 			const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
 			const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
 
-			// Big solid black eyes with white highlight — pixel art style, max visibility
-			if (eDist1 < 0.01 || eDist2 < 0.01) {
-				// Entire eye is BLACK — maximum contrast against face plate
+			// Pixel-art rectangular eyes — boxes align with the character grid perfectly
+			const inEye1 = Math.abs(ex1) < 0.055 && Math.abs(ey1) < 0.04 * eyeOpen;
+			const inEye2 = Math.abs(ex2) < 0.055 && Math.abs(ey2) < 0.04 * eyeOpen;
+			if (inEye1 || inEye2) {
+				// Solid black rectangle
 				r = 8; g = 8; b = 12;
 
-				// Large white highlight (upper-left) — the "life" in the eye
-				if ((ex1 + 0.025) ** 2 + (ey1 + 0.02) ** 2 < 0.002 || (ex2 + 0.025) ** 2 + (ey2 + 0.02) ** 2 < 0.002) {
-					if (!isTired) { r = 255; g = 255; b = 255; }
-				}
+				// White highlight block (upper-left corner of each eye)
+				const hl1 = ex1 > -0.05 && ex1 < -0.02 && ey1 > -0.03 && ey1 < -0.005;
+				const hl2 = ex2 > -0.05 && ex2 < -0.02 && ey2 > -0.03 && ey2 < -0.005;
+				if ((hl1 || hl2) && !isTired) { r = 255; g = 255; b = 255; }
+
 				// Small secondary highlight (lower-right)
-				if ((ex1 - 0.018) ** 2 + (ey1 - 0.018) ** 2 < 0.0008 || (ex2 - 0.018) ** 2 + (ey2 - 0.018) ** 2 < 0.0008) {
-					if (!isTired) { r = 220; g = 230; b = 255; }
-				}
+				const hl1b = ex1 > 0.01 && ex1 < 0.035 && ey1 > 0.005 && ey1 < 0.025;
+				const hl2b = ex2 > 0.01 && ex2 < 0.035 && ey2 > 0.005 && ey2 < 0.025;
+				if ((hl1b || hl2b) && !isTired) { r = 200; g = 210; b = 240; }
 			}
 		}
 
 		// ── Nose: small dark oval ──
 		const nnx = bdx - effectiveLookX * 0.06, nny = bdy - effectiveLookY * 0.05 - 0.03;
-		if (nnx * nnx * 1.0 + nny * nny < 0.0015 && !isSleeping) { r = 15; g = 8; b = 15; }
+		// Pixel-art rectangular nose — small dark block
+		if (Math.abs(nnx) < 0.02 && Math.abs(nny) < 0.018 && !isSleeping) { r = 15; g = 8; b = 15; }
 
 		// ── Mouth: clear smile arc ──
 		if (!isSleeping && !hasBall) {
 			const mx = bdx - effectiveLookX * 0.06, my = bdy - effectiveLookY * 0.05 - 0.07;
-			// Smile curves — dark, wide, clearly visible
-			if ((Math.abs(my - (mx - 0.035) ** 2 * 12 + 0.015) < 0.02 && mx > 0 && mx < 0.07) ||
-				(Math.abs(my - (mx + 0.035) ** 2 * 12 + 0.015) < 0.02 && mx < 0 && mx > -0.07)) {
+			// Pixel-art smile — flat dark line, slightly curved via step
+			const smileWidth = 0.06;
+			const smileY = -0.008 + Math.abs(mx) * Math.abs(mx) * 3; // slight upward curve at edges
+			if (Math.abs(mx) < smileWidth && Math.abs(my - smileY) < 0.012) {
 				r = 20; g = 10; b = 20;
 			}
 			// Open mouth when excited/talking
