@@ -192,7 +192,7 @@ function detectPlayer(): AudioPlayer | null {
 		return {
 			command: "afplay",
 			argsForFile(filePath) {
-				return [filePath];
+				return ["-v", "0.3", filePath]; // 30% volume — unobtrusive
 			},
 		};
 	}
@@ -201,7 +201,7 @@ function detectPlayer(): AudioPlayer | null {
 			return {
 				command: "paplay",
 				argsForFile(filePath) {
-					return [filePath];
+					return ["--volume", "19660", filePath]; // ~30% of max (65536)
 				},
 			};
 		}
