@@ -13,14 +13,22 @@ const VIEW_OFFSET_Y = 0.2; // shift camera down so ground is visible in compact 
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
 
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+function sanitizeSpeechText(text: string): string {
+	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+}
+
 // ─── Pet State ───────────────────────────────────────────────────────────────
 type State = "idle" | "walk" | "flip" | "sleep" | "excited" | "chasing" | "fetching" | "singing" | "offscreen" | "peek" | "dance" | "game";
 
 const idleSpeech = [
-	"What are we building? 🤔", "This is fun! ✨", "Boop! 🐾",
-	"I love it here! 💕", "Need a break? ☕", "Pom pom pom! 🎈",
-	"You're doing great! 🌈", "*wiggles ears*", "Hmm... 🌟",
-	"Hey! Look at me! 👋", "Tra la la~ 🎵", "*happy bounce*",
+	"What are we building?", "This is fun!", "Boop!",
+	"I love it here!", "Need a break?", "Pom pom pom!",
+	"You're doing great!", "*wiggles ears*", "Hmm...",
+	"Hey! Look at me!", "Tra la la~", "*happy bounce*",
 ];
 let currentState: State = "idle";
 let gameScore = 0;
@@ -99,7 +107,7 @@ interface RenderObj {
 }
 
 function say(text: string, duration = 4.0) {
-	speechText = text;
+	speechText = sanitizeSpeechText(text);
 	speechTimer = duration;
 }
 
@@ -172,14 +180,42 @@ function getTimeOfDay(): TimeOfDay {
 }
 
 let weatherState: Weather = "clear";
+let weatherOverride: Weather | null = null;
 let weatherTimer = 0;
 let lastWeatherChange = 0;
 let lastWeatherState: Weather = "clear";
 let weatherBlend = 0;
 let prevWeatherColors = { rTop: 0, gTop: 0, bTop: 0, rBot: 0, gBot: 0, bBot: 0 };
 
+let agentOverlayActive = false;
+let agentOverlayWeight = 0;
+let agentOverlayLookX = 0;
+let agentOverlayLookY = 0;
+let agentOverlayTargetLookX = 0;
+let agentOverlayTargetLookY = 0;
+let agentOverlayBounce = 0;
+let agentAntennaGlow = 0;
+let agentAntennaGlowTarget = 0;
+let agentEarBoost = 0;
+let agentEarBoostTarget = 0;
+
 function getWeather(): Weather {
+	if (weatherOverride) {
+		return weatherOverride;
+	}
 	return weatherState;
+}
+
+function getEffectiveLookX(): number {
+	return clamp(lookX + agentOverlayLookX, -0.9, 0.9);
+}
+
+function getEffectiveLookY(): number {
+	return clamp(lookY + agentOverlayLookY, -0.7, 0.7);
+}
+
+function getEffectiveBounceY(): number {
+	return bounceY + agentOverlayBounce;
 }
 
 function getWeatherAndTime() {
@@ -328,6 +364,8 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 
 	let r = 255, g = 255, b = 255, gloss = 0;
 	const th = themes[activeTheme];
+	const effectiveLookX = getEffectiveLookX();
+	const effectiveLookY = getEffectiveLookY();
 
 	if (hitObj.mat === 1) {
 		r = th.r; g = th.g; b = th.b;
@@ -371,8 +409,8 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		// ── Eyes: kawaii style — white sclera → colored iris → dark pupil → highlight ──
 		const isTired = (energy < 20 || hunger < 30) && !isSleeping;
 		const eyeOpen = isSleeping ? 0.05 : (isTired ? 0.4 : 1.0) - blinkFade;
-		const ex1 = bdx - lookX * 0.08 + 0.11, ey1 = bdy - lookY * 0.05 + 0.02;
-		const ex2 = bdx - lookX * 0.08 - 0.11, ey2 = bdy - lookY * 0.05 + 0.02;
+		const ex1 = bdx - effectiveLookX * 0.08 + 0.11, ey1 = bdy - effectiveLookY * 0.05 + 0.02;
+		const ex2 = bdx - effectiveLookX * 0.08 - 0.11, ey2 = bdy - effectiveLookY * 0.05 + 0.02;
 
 		if (isSleeping || currentState === "singing") {
 			// Closed eyes — horizontal lines
@@ -415,12 +453,12 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		}
 
 		// ── Nose: small dark oval ──
-		const nnx = bdx - lookX * 0.06, nny = bdy - lookY * 0.05 - 0.03;
+		const nnx = bdx - effectiveLookX * 0.06, nny = bdy - effectiveLookY * 0.05 - 0.03;
 		if (nnx * nnx * 1.2 + nny * nny < 0.001 && !isSleeping) { r = 40; g = 30; b = 40; }
 
 		// ── Mouth: clear smile arc ──
 		if (!isSleeping && !hasBall) {
-			const mx = bdx - lookX * 0.06, my = bdy - lookY * 0.05 - 0.07;
+			const mx = bdx - effectiveLookX * 0.06, my = bdy - effectiveLookY * 0.05 - 0.07;
 			// Smile curves
 			if ((Math.abs(my - (mx - 0.03) ** 2 * 15 + 0.012) < 0.013 && mx > 0 && mx < 0.06) ||
 				(Math.abs(my - (mx + 0.03) ** 2 * 15 + 0.012) < 0.013 && mx < 0 && mx > -0.06)) {
@@ -458,8 +496,13 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 	} else if (hitObj.mat === 7) {
 		r = 120; g = 130; b = 140;
 	} else if (hitObj.mat === 8) {
-		const pulse = Math.sin(time * 6) * 0.5 + 0.5;
-		return [255, Math.floor(100 + pulse * 150), Math.floor(150 + pulse * 105)];
+		const glowBoost = clamp(agentAntennaGlow, 0, 1);
+		const pulse = Math.sin(time * (6 + glowBoost * 12)) * 0.5 + 0.5;
+		return [
+			Math.floor(235 + glowBoost * 20),
+			Math.floor(100 + pulse * 150 + glowBoost * 35),
+			Math.floor(150 + pulse * 105 + glowBoost * 45),
+		];
 	} else if (hitObj.mat === 9) {
 		r = 255; g = 60; b = 80;
 		const curve = Math.abs(hitNx * 0.7 - hitNy * 0.7);
@@ -523,7 +566,10 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 			const antDx = px - antObj.x, antDy = py - antObj.y;
 			const antDist = Math.sqrt(antDx * antDx + antDy * antDy);
 			const antAtten = 1.0 / (1.0 + antDist * antDist * 40.0);
-			lightR += antAtten * 1.5; lightG += antAtten * 0.5; lightB += antAtten * 0.8;
+			const glowScale = 1 + agentAntennaGlow * 2.2;
+			lightR += antAtten * 1.5 * glowScale;
+			lightG += antAtten * 0.5 * glowScale;
+			lightB += antAtten * 0.8 * glowScale;
 		}
 	}
 
@@ -713,21 +759,24 @@ function buildObjects(): RenderObj[] {
 	if (currentState === "excited" || currentState === "fetching" || currentState === "singing") earWave = Math.sin(time * 15) * 0.2;
 	if (isTalking) earWave = Math.sin(time * 12 + talkAudioLevel * 5) * 0.15;
 	if (isWalking) earWave += Math.sin(time * 10) * 0.1;
+	earWave += agentEarBoost * (0.08 + Math.sin(time * 14) * 0.06);
 	const pawSwing = (isWalking || currentState === "chasing" || currentState === "fetching" || currentState === "peek") ? Math.sin(time * 12) * 0.08 : 0;
 	const antRot = Math.sin(time * 2.5) * 0.15 + (isWalking || currentState === "fetching" ? Math.sin(time * 12) * 0.3 : 0);
+	const effectiveBounceY = getEffectiveBounceY();
+	const baseY = posY + effectiveBounceY + breathe;
 
 	const objects: RenderObj[] = [];
 	if (isSleeping) objects.push({ id: "pillow", mat: 10, x: 0, y: 0.65, rx: 0.6, ry: 0.15, z: posZ - 0.1 });
 
 	objects.push(
-		{ id: "antenna_stalk", mat: 7, x: posX + Math.sin(antRot) * 0.08, y: posY + bounceY + breathe - 0.35, rx: 0.012, ry: 0.08, rot: antRot, z: 0.05 },
-		{ id: "antenna_bulb", mat: 8, x: posX + Math.sin(antRot) * 0.16, y: posY + bounceY + breathe - 0.42, r: 0.035, z: 0.08 },
-		{ id: "body", mat: 1, x: posX, y: posY + bounceY + breathe, r: 0.32, z: 0 },
-		{ id: "earL", mat: 1, x: posX - 0.28, y: posY + bounceY + breathe - 0.05, rx: 0.08, ry: 0.22, rot: 0.5 + earWave, z: 0.1 },
-		{ id: "earR", mat: 1, x: posX + 0.28, y: posY + bounceY + breathe - 0.05, rx: 0.08, ry: 0.22, rot: -0.5 - earWave, z: 0.1 },
-		{ id: "pawL", mat: 2, x: posX - 0.14, y: posY + bounceY + breathe + 0.22, r: 0.05, z: 0.2 + pawSwing },
-		{ id: "pawR", mat: 2, x: posX + 0.14, y: posY + bounceY + breathe + 0.22, r: 0.05, z: 0.2 - pawSwing },
-		{ id: "tail", mat: 3, x: posX + Math.cos(time * 2) * 0.35, y: posY + bounceY + breathe - 0.05, r: 0.06, z: Math.sin(time * 2) * 0.4 },
+		{ id: "antenna_stalk", mat: 7, x: posX + Math.sin(antRot) * 0.08, y: baseY - 0.35, rx: 0.012, ry: 0.08, rot: antRot, z: 0.05 },
+		{ id: "antenna_bulb", mat: 8, x: posX + Math.sin(antRot) * 0.16, y: baseY - 0.42, r: 0.035, z: 0.08 },
+		{ id: "body", mat: 1, x: posX, y: baseY, r: 0.32, z: 0 },
+		{ id: "earL", mat: 1, x: posX - 0.28, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: 0.5 + earWave, z: 0.1 },
+		{ id: "earR", mat: 1, x: posX + 0.28, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: -0.5 - earWave, z: 0.1 },
+		{ id: "pawL", mat: 2, x: posX - 0.14, y: baseY + 0.22, r: 0.05, z: 0.2 + pawSwing },
+		{ id: "pawR", mat: 2, x: posX + 0.14, y: baseY + 0.22, r: 0.05, z: 0.2 - pawSwing },
+		{ id: "tail", mat: 3, x: posX + Math.cos(time * 2) * 0.35, y: baseY - 0.05, r: 0.06, z: Math.sin(time * 2) * 0.4 },
 		{ id: "firefly", mat: 5, x: ffX, y: ffY, r: 0.015, z: ffZ },
 	);
 
@@ -742,7 +791,7 @@ function buildObjects(): RenderObj[] {
 	}
 
 	if (ballY !== -10) {
-		if (hasBall) objects.push({ id: "ball", mat: 9, x: posX + lookX * 0.05, y: posY + bounceY + 0.05, r: 0.035, z: posZ + 0.15 });
+		if (hasBall) objects.push({ id: "ball", mat: 9, x: posX + getEffectiveLookX() * 0.05, y: posY + effectiveBounceY + 0.05, r: 0.035, z: posZ + 0.15 });
 		else objects.push({ id: "ball", mat: 9, x: ballX, y: ballY, r: 0.035, z: 0.15 });
 	}
 
@@ -762,24 +811,24 @@ function buildObjects(): RenderObj[] {
 	if ((weather === "rain" || weather === "storm") && accessories.umbrella) {
 		objects.push(
 			// Umbrella handle (thin stick above head)
-			{ id: "umbrella_handle", mat: 7, x: posX + 0.05, y: posY + bounceY + breathe - 0.38, rx: 0.008, ry: 0.12, z: 0.15 },
+			{ id: "umbrella_handle", mat: 7, x: posX + 0.05, y: baseY - 0.38, rx: 0.008, ry: 0.12, z: 0.15 },
 			// Umbrella canopy (wide flat ellipse)
-			{ id: "umbrella_top", mat: 11, x: posX + 0.05, y: posY + bounceY + breathe - 0.50, rx: 0.18, ry: 0.04, z: 0.2 }
+			{ id: "umbrella_top", mat: 11, x: posX + 0.05, y: baseY - 0.50, rx: 0.18, ry: 0.04, z: 0.2 }
 		);
 	}
 
 	// Scarf — when snowing and user gave one
 	if (weather === "snow" && accessories.scarf) {
 		objects.push(
-			{ id: "scarf", mat: 12, x: posX, y: posY + bounceY + breathe + 0.18, rx: 0.15, ry: 0.035, z: 0.25 }
+			{ id: "scarf", mat: 12, x: posX, y: baseY + 0.18, rx: 0.15, ry: 0.035, z: 0.25 }
 		);
 	}
 
 	// Sunglasses — during bright day
 	if (tod === "day" && weather === "clear" && accessories.sunglasses) {
 		objects.push(
-			{ id: "sunglasses", mat: 13, x: posX - 0.07, y: posY + bounceY + breathe + 0.02, r: 0.035, z: 0.3 },
-			{ id: "sunglasses", mat: 13, x: posX + 0.07, y: posY + bounceY + breathe + 0.02, r: 0.035, z: 0.3 }
+			{ id: "sunglasses", mat: 13, x: posX - 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 },
+			{ id: "sunglasses", mat: 13, x: posX + 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 }
 		);
 	}
 
@@ -826,8 +875,8 @@ function updatePhysics(dt: number) {
 		else if (weatherState === "storm") weatherState = "cloudy";
 	}
 
-	if (getWeather() !== lastWeatherState) {
-		lastWeatherState = getWeather();
+	if (weatherState !== lastWeatherState) {
+		lastWeatherState = weatherState;
 		let weatherAnnouncement = "";
 		if (lastWeatherState === "cloudy") weatherAnnouncement = "Clouds rolling in...";
 		else if (lastWeatherState === "rain") weatherAnnouncement = "It's starting to rain!";
@@ -837,14 +886,14 @@ function updatePhysics(dt: number) {
 		if (weatherAnnouncement) say(weatherAnnouncement, 3.0);
 
 		// Ask for accessories if user hasn't given them yet
-		const weather = getWeather();
+		const weather = weatherState;
 		if (weather === "rain" && !accessories.umbrella && !accessoryAsked.umbrella) {
 			accessoryAsked.umbrella = true;
-			setTimeout(() => { if (getWeather() === "rain" || getWeather() === "storm") say("I wish I had an umbrella... /pompom give umbrella", 5.0); }, 3000);
+			setTimeout(() => { if (weatherState === "rain" || weatherState === "storm") say("I wish I had an umbrella... /pompom give umbrella", 5.0); }, 3000);
 		}
 		if (weather === "snow" && !accessories.scarf && !accessoryAsked.scarf) {
 			accessoryAsked.scarf = true;
-			setTimeout(() => { if (getWeather() === "snow") say("Brrr! A scarf would be nice... /pompom give scarf", 5.0); }, 3000);
+			setTimeout(() => { if (weatherState === "snow") say("Brrr! A scarf would be nice... /pompom give scarf", 5.0); }, 3000);
 		}
 		if (weather === "storm" && !accessories.umbrella && !accessoryAsked.umbrella) {
 			accessoryAsked.umbrella = true;
@@ -916,6 +965,21 @@ function updatePhysics(dt: number) {
 			//  modifying the earWave base in the existing code)
 		}
 	}
+
+	const overlayWeightTarget = agentOverlayActive ? 1 : 0;
+	agentOverlayWeight += (overlayWeightTarget - agentOverlayWeight) * dt * 6.0;
+	const overlayLookTargetX = agentOverlayTargetLookX * agentOverlayWeight;
+	const overlayLookTargetY = agentOverlayTargetLookY * agentOverlayWeight;
+	agentOverlayLookX += (overlayLookTargetX - agentOverlayLookX) * dt * 7.0;
+	agentOverlayLookY += (overlayLookTargetY - agentOverlayLookY) * dt * 7.0;
+	const glowTarget = agentOverlayActive ? agentAntennaGlowTarget : 0;
+	agentAntennaGlow += (glowTarget - agentAntennaGlow) * dt * 8.0;
+	const earBoostTarget = agentOverlayActive ? agentEarBoostTarget : 0;
+	agentEarBoost += (earBoostTarget - agentEarBoost) * dt * 8.0;
+	const overlayBounceTarget = agentOverlayActive
+		? Math.sin(time * (6 + agentEarBoost * 10)) * (0.015 + agentAntennaGlow * 0.03)
+		: 0;
+	agentOverlayBounce += (overlayBounceTarget - agentOverlayBounce) * dt * 8.0;
 
 	if (currentState === "game") {
 		gameTimer -= dt;
@@ -1192,7 +1256,7 @@ function renderToBuffers() {
 
 	// Speech bubble
 	if (speechTimer > 0 && speechText !== "") {
-		const [scX, scY] = project2D(posX, posY + bounceY - 0.6);
+		const [scX, scY] = project2D(posX, posY + getEffectiveBounceY() - 0.6);
 		drawSpeechBubble(speechText, scX, Math.floor(scY / 2));
 	}
 }
@@ -1310,6 +1374,31 @@ export function pompomSetTalking(active: boolean) {
 	}
 }
 
+export function pompomSay({ text, duration = 4.0 }: { text: string; duration?: number }) {
+	say(text, duration);
+}
+
+export function pompomSetAgentOverlay({ active }: { active: boolean }) {
+	agentOverlayActive = active;
+}
+
+export function pompomSetAgentLook({ x, y }: { x: number; y: number }) {
+	agentOverlayTargetLookX = clamp(x, -0.9, 0.9);
+	agentOverlayTargetLookY = clamp(y, -0.7, 0.7);
+}
+
+export function pompomSetAntennaGlow({ intensity }: { intensity: number }) {
+	agentAntennaGlowTarget = clamp(intensity, 0, 1);
+}
+
+export function pompomSetAgentEarBoost({ amount }: { amount: number }) {
+	agentEarBoostTarget = clamp(amount, 0, 1);
+}
+
+export function pompomSetWeatherOverride({ weather }: { weather: Weather | null }) {
+	weatherOverride = weather;
+}
+
 /** Handle a user keypress command */
 export function pompomKeypress(key: string) {
 	if (key === "p") { currentState = "excited"; actionTimer = 2.5; isSleeping = false; say("Purrrrr... ♥"); }
@@ -1350,6 +1439,18 @@ export function resetPompom() {
 	talkAudioLevel = 0; flipPhase = 0;
 	hunger = 100; energy = 100; lastNeedsTick = 0;
 	activeTheme = 0;
+	weatherOverride = null;
+	agentOverlayActive = false;
+	agentOverlayWeight = 0;
+	agentOverlayLookX = 0;
+	agentOverlayLookY = 0;
+	agentOverlayTargetLookX = 0;
+	agentOverlayTargetLookY = 0;
+	agentOverlayBounce = 0;
+	agentAntennaGlow = 0;
+	agentAntennaGlowTarget = 0;
+	agentEarBoost = 0;
+	agentEarBoostTarget = 0;
 	accessoryAsked = {};
 	ballX = -10; ballY = -10; ballVx = 0; ballVy = 0; ballVz = 0; hasBall = false;
 	ffX = 0; ffY = 0; ffZ = 0;

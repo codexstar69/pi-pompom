@@ -9,25 +9,231 @@ import type {
 	ExtensionAPI,
 	ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import {
+	completeSimple,
+	streamSimple,
+	type Message,
+} from "@mariozechner/pi-ai";
+import fs from "node:fs";
+import path from "node:path";
+import {
+	getAgentWeather,
+	getCommentary,
+	getSessionStats,
+	onAgentEnd,
+	onAgentStart,
+	onToolCall,
+	onToolResult,
+	resetAgentState,
+	restoreState,
+	serializeState,
+	shouldUseAgentWeather,
+} from "./pompom-agent";
+import {
+	pompomGetAccessories,
+	pompomGiveAccessory,
+	pompomKeypress,
+	pompomSay,
+	pompomSetAgentEarBoost,
+	pompomSetAgentLook,
+	pompomSetAgentOverlay,
+	pompomSetAntennaGlow,
+	pompomSetTalking,
+	pompomSetWeatherOverride,
+	pompomStatus,
+	renderPompom,
+	resetPompom,
+} from "./pompom";
 
-import { renderPompom, resetPompom, pompomSetTalking, pompomKeypress, pompomStatus, pompomGiveAccessory, pompomGetAccessories } from "./pompom";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
 
-// Persist accessories across sessions
-const SAVE_DIR = join(process.env.HOME || "~", ".pi", "pompom");
-const SAVE_FILE = join(SAVE_DIR, "accessories.json");
+interface SessionEntryLike {
+	type?: string;
+	customType?: string;
+	timestamp?: string;
+	message?: unknown;
+	data?: unknown;
+}
+
+interface ModelLike {
+	id: string;
+	provider: string;
+}
+
+interface MessageLike {
+	role?: string;
+	content?: unknown;
+	model?: string;
+	provider?: string;
+	api?: string;
+	usage?: unknown;
+	timestamp?: number;
+}
+
+interface OverlayHint {
+	forceOverlay: boolean;
+	lookX: number;
+	lookY: number;
+	glow: number;
+	earBoost: number;
+}
+
+const SAVE_DIR = path.join(process.env.HOME || "~", ".pi", "pompom");
+const SAVE_FILE = path.join(SAVE_DIR, "accessories.json");
+const WIDGET_ID = "codexstar-pompom-companion";
+const POMPOM_AGENT_STATE_TYPE = "pompom-agent-state";
+
+const emptyUsage = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+function sanitizeAscii(text: string): string {
+	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+}
 
 function loadAccessories(): Record<string, boolean> {
-	try { return JSON.parse(readFileSync(SAVE_FILE, "utf-8")); } catch { return {}; }
+	try {
+		return JSON.parse(fs.readFileSync(SAVE_FILE, "utf-8")) as Record<string, boolean>;
+	} catch (error) {
+		console.error("Failed to load Pompom accessories:", error);
+		return {};
+	}
 }
 
-function saveAccessories() {
-	try { mkdirSync(SAVE_DIR, { recursive: true }); writeFileSync(SAVE_FILE, JSON.stringify(pompomGetAccessories())); } catch {}
+function saveAccessories(): void {
+	try {
+		fs.mkdirSync(SAVE_DIR, { recursive: true });
+		fs.writeFileSync(SAVE_FILE, JSON.stringify(pompomGetAccessories()));
+	} catch (error) {
+		console.error("Failed to save Pompom accessories:", error);
+	}
 }
 
-// Namespaced widget ID — prevents collision with any other extension
-const WIDGET_ID = "codexstar-pompom-companion";
+function getPiListenState(): { audioLevel?: number; recording?: boolean } {
+	const globalValue = globalThis as { __piListen?: { audioLevel?: number; recording?: boolean } };
+	return globalValue.__piListen || {};
+}
+
+function extractTextContent(content: unknown): string {
+	if (typeof content === "string") {
+		return content;
+	}
+	if (!Array.isArray(content)) {
+		return "";
+	}
+	const texts: string[] = [];
+	for (const part of content) {
+		if (!isRecord(part)) {
+			continue;
+		}
+		if (part.type !== "text" || typeof part.text !== "string") {
+			continue;
+		}
+		texts.push(part.text);
+	}
+	return texts.join("\n").trim();
+}
+
+function getMessageRole(message: unknown): MessageRole {
+	if (!isRecord(message) || typeof message.role !== "string") {
+		return "unknown";
+	}
+	if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
+		return message.role;
+	}
+	return "unknown";
+}
+
+function getMessageText(message: unknown): string {
+	if (!isRecord(message)) {
+		return "";
+	}
+	return extractTextContent(message.content);
+}
+
+function isModelLike(model: unknown): model is ModelLike {
+	return isRecord(model) && typeof model.id === "string" && typeof model.provider === "string";
+}
+
+function createUserMessage(text: string): Message {
+	return {
+		role: "user",
+		content: [{ type: "text", text }],
+		timestamp: Date.now(),
+	};
+}
+
+function createAssistantMessage(text: string, model: ModelLike, messageLike: MessageLike): Message {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		model: typeof messageLike.model === "string" ? messageLike.model : model.id,
+		provider: typeof messageLike.provider === "string" ? messageLike.provider : model.provider,
+		api: typeof messageLike.api === "string" ? messageLike.api : "",
+		usage: emptyUsage,
+		stopReason: "stop",
+		timestamp: typeof messageLike.timestamp === "number" ? messageLike.timestamp : Date.now(),
+	};
+}
+
+function buildRecentSessionMessages(currentContext: ExtensionContext): Message[] {
+	const model = currentContext.model;
+	if (!isModelLike(model)) {
+		return [];
+	}
+
+	const messages: Message[] = [];
+	for (const entry of currentContext.sessionManager.getBranch() as SessionEntryLike[]) {
+		if (entry.type !== "message" || !isRecord(entry.message)) {
+			continue;
+		}
+		const messageLike = entry.message as MessageLike;
+		const role = getMessageRole(messageLike);
+		const text = getMessageText(messageLike);
+		if (!text) {
+			continue;
+		}
+		if (role === "user") {
+			messages.push(createUserMessage(text));
+			continue;
+		}
+		if (role === "assistant") {
+			messages.push(createAssistantMessage(text, model, messageLike));
+		}
+	}
+
+	return messages.slice(-12);
+}
+
+function findLatestSerializedState(currentContext: ExtensionContext) {
+	let latestState: ReturnType<typeof serializeState> | null = null;
+	let latestTimestamp = 0;
+	for (const entry of currentContext.sessionManager.getBranch() as SessionEntryLike[]) {
+		if (entry.type !== "custom" || entry.customType !== POMPOM_AGENT_STATE_TYPE || !entry.data || !entry.timestamp) {
+			continue;
+		}
+		const timestamp = Date.parse(entry.timestamp) || 0;
+		if (timestamp < latestTimestamp) {
+			continue;
+		}
+		latestTimestamp = timestamp;
+		latestState = entry.data as ReturnType<typeof serializeState>;
+	}
+	return latestState;
+}
 
 export default function (pi: ExtensionAPI) {
 	let ctx: ExtensionContext | null = null;
@@ -37,52 +243,116 @@ export default function (pi: ExtensionAPI) {
 	let lastRenderTime = Date.now();
 	let terminalInputUnsub: (() => void) | null = null;
 	let enabled = true;
+	let overlayHint: OverlayHint | null = null;
+	let overlayHintUntil = 0;
 
-	// ─── Safe render wrapper — never lets an error crash the TUI ─────────
+	function persistAgentState() {
+		try {
+			pi.appendEntry(POMPOM_AGENT_STATE_TYPE, serializeState());
+		} catch (error) {
+			console.error("Failed to persist Pompom agent state:", error);
+		}
+	}
+
+	function currentOverlayHint(): OverlayHint | null {
+		if (!overlayHint || Date.now() >= overlayHintUntil) {
+			return null;
+		}
+		return overlayHint;
+	}
+
+	function applyAgentVisualState() {
+		const stats = getSessionStats();
+		const hint = currentOverlayHint();
+		const overlayActive = Boolean(hint?.forceOverlay || stats.isAgentActive || stats.activeToolCount > 0);
+		const glow = hint ? hint.glow : overlayActive ? Math.min(1, 0.35 + stats.activeToolCount * 0.22) : 0;
+		const earBoost = hint ? hint.earBoost : overlayActive ? Math.min(1, 0.2 + stats.activeToolCount * 0.18) : 0;
+		const lookX = hint ? hint.lookX : overlayActive ? 0.18 : 0;
+		const lookY = hint ? hint.lookY : overlayActive ? -0.08 : 0;
+
+		pompomSetAgentOverlay({ active: overlayActive });
+		pompomSetAgentLook({ x: lookX, y: lookY });
+		pompomSetAntennaGlow({ intensity: glow });
+		pompomSetAgentEarBoost({ amount: earBoost });
+		pompomSetWeatherOverride({ weather: shouldUseAgentWeather() ? getAgentWeather() : null });
+	}
+
+	function pulseOverlay(hint: OverlayHint, durationMs: number) {
+		overlayHint = hint;
+		overlayHintUntil = Date.now() + durationMs;
+		applyAgentVisualState();
+		setTimeout(() => {
+			if (Date.now() < overlayHintUntil) {
+				return;
+			}
+			overlayHint = null;
+			applyAgentVisualState();
+		}, durationMs + 80);
+	}
+
+	function speakCommentary(request: Parameters<typeof getCommentary>[0]) {
+		const commentary = getCommentary(request);
+		if (!commentary) {
+			applyAgentVisualState();
+			return;
+		}
+		pompomSay({ text: commentary, duration: 4.6 });
+		applyAgentVisualState();
+	}
+
+	async function runSafely(label: string, fn: () => Promise<void> | void) {
+		try {
+			await fn();
+		} catch (error) {
+			console.error(`Pompom ${label} failed:`, error);
+		}
+	}
 
 	function safeRender(width: number): string[] {
 		try {
 			const now = Date.now();
 			const dt = Math.min(0.1, (now - lastRenderTime) / 1000);
 			lastRenderTime = now;
-			const piListen = (globalThis as any).__piListen;
-			return renderPompom(Math.max(40, width), piListen?.audioLevel || 0, dt);
+			const piListen = getPiListenState();
+			return renderPompom(Math.max(40, width), piListen.audioLevel || 0, dt);
 		} catch {
-			// If rendering fails, return a minimal placeholder so the TUI doesn't crash
 			return [" ".repeat(Math.max(1, width))];
 		}
 	}
 
-	// ─── Widget management ──────────────────────────────────────────────
-
 	function showCompanion() {
-		if (companionActive) return;
-		if (!ctx?.hasUI) return;
+		if (companionActive || !ctx?.hasUI) {
+			return;
+		}
 		companionActive = true;
 		lastRenderTime = Date.now();
 
 		const setWidget = () => {
-			if (!ctx?.hasUI) return;
+			if (!ctx?.hasUI) {
+				return;
+			}
 			try {
 				ctx.ui.setWidget(WIDGET_ID, (_tui, _theme) => ({
 					invalidate() {},
 					render: safeRender,
 				}), { placement: "aboveEditor" });
-			} catch {
-				// Widget slot may be unavailable — don't crash
+			} catch (error) {
+				console.error("Failed to set Pompom widget:", error);
 			}
 		};
 
 		setWidget();
-		// Re-set widget on interval for animation. Defensive: clear any stale timer first.
-		if (companionTimer) clearInterval(companionTimer);
+		if (companionTimer) {
+			clearInterval(companionTimer);
+		}
 		companionTimer = setInterval(setWidget, 150);
-		
-		if (voiceCheckTimer) clearInterval(voiceCheckTimer);
+
+		if (voiceCheckTimer) {
+			clearInterval(voiceCheckTimer);
+		}
 		voiceCheckTimer = setInterval(() => {
-			const piListen = (globalThis as any).__piListen;
-			const voiceRecording = piListen?.recording === true;
-			pompomSetTalking(voiceRecording);
+			const piListen = getPiListenState();
+			pompomSetTalking(Boolean(piListen.recording));
 		}, 100);
 	}
 
@@ -97,16 +367,19 @@ export default function (pi: ExtensionAPI) {
 			voiceCheckTimer = null;
 		}
 		pompomSetTalking(false);
+		pompomSetAgentOverlay({ active: false });
+		pompomSetAntennaGlow({ intensity: 0 });
+		pompomSetAgentEarBoost({ amount: 0 });
+		pompomSetWeatherOverride({ weather: null });
 		try {
-			if (ctx?.hasUI) ctx.ui.setWidget(WIDGET_ID, undefined);
-		} catch {
-			// Ignore — widget may already be gone
+			if (ctx?.hasUI) {
+				ctx.ui.setWidget(WIDGET_ID, undefined);
+			}
+		} catch (error) {
+			console.error("Failed to hide Pompom widget:", error);
 		}
 	}
 
-	// ─── Keyboard input ─────────────────────────────────────────────────
-
-	// macOS Option+key Unicode map (only fires when macos-option-as-alt is off)
 	const optionUnicodeMap: Record<string, string> = {
 		"π": "p", "ƒ": "f", "∫": "b", "µ": "m", "ç": "c",
 		"∂": "d", "ß": "s", "∑": "w", "ø": "o",
@@ -116,203 +389,521 @@ export default function (pi: ExtensionAPI) {
 	const POMPOM_KEYS = "pfbmcdswoxthg";
 
 	function setupKeyHandler() {
-		if (!ctx?.hasUI) return;
-		// Always clean up previous handler first — prevents double-binding
-		if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+		if (!ctx?.hasUI) {
+			return;
+		}
+		if (terminalInputUnsub) {
+			terminalInputUnsub();
+			terminalInputUnsub = null;
+		}
 
 		try {
 			terminalInputUnsub = ctx.ui.onTerminalInput((data: string) => {
-				if (!enabled || !companionActive) return undefined;
+				if (!enabled || !companionActive) {
+					return undefined;
+				}
 
 				try {
-					// 1. Ghostty keybind prefix \x1d + letter
 					if (data.length === 2 && data[0] === "\x1d" && POMPOM_KEYS.includes(data[1])) {
 						pompomKeypress(data[1]);
 						return { consume: true };
 					}
 
-					// 2. ESC prefix — Alt+key on Windows/Linux, Option-as-Meta on macOS
 					if (data.length === 2 && data[0] === "\x1b" && POMPOM_KEYS.includes(data[1])) {
 						pompomKeypress(data[1]);
 						return { consume: true };
 					}
 
-					// 3. macOS Unicode chars
 					const mapped = optionUnicodeMap[data];
 					if (mapped) {
 						pompomKeypress(mapped);
 						return { consume: true };
 					}
 
-					// 4. Kitty keyboard protocol
 					const kittyMatch = data.match(/^\x1b\[(\d+);(\d+)u$/);
 					if (kittyMatch) {
-						const mod = parseInt(kittyMatch[2]);
+						const mod = parseInt(kittyMatch[2], 10);
 						if ((mod - 1) & 2) {
-							const char = String.fromCharCode(parseInt(kittyMatch[1]));
+							const char = String.fromCharCode(parseInt(kittyMatch[1], 10));
 							if (POMPOM_KEYS.includes(char)) {
 								pompomKeypress(char);
 								return { consume: true };
 							}
 						}
 					}
-				} catch {
-					// Never let a key handler error propagate to the TUI
+				} catch (error) {
+					console.error("Pompom key handler failed:", error);
 				}
 
 				return undefined;
 			});
-		} catch {
-			// onTerminalInput may not be available — gracefully degrade (commands still work)
+		} catch (error) {
+			console.error("Failed to set Pompom key handler:", error);
 		}
 	}
 
-	// ─── Lifecycle — defensive against load-order issues ────────────────
-
-	pi.on("session_start", async (_event, startCtx) => {
-		ctx = startCtx;
-		// Restore saved accessories from previous sessions
+	function restoreCompanionState(startContext: ExtensionContext) {
+		resetAgentState();
+		const latestState = findLatestSerializedState(startContext);
+		if (latestState) {
+			restoreState(latestState);
+		}
 		try {
 			const saved = loadAccessories();
-			for (const [k, v] of Object.entries(saved)) { if (v) pompomGiveAccessory(k); }
-		} catch {}
-		if (enabled) {
-			showCompanion();
-			setupKeyHandler();
+			for (const [key, value] of Object.entries(saved)) {
+				if (value) {
+					pompomGiveAccessory(key);
+				}
+			}
+		} catch (error) {
+			console.error("Failed to restore Pompom accessories:", error);
 		}
+		applyAgentVisualState();
+	}
+
+	async function runPompomAsk(commandArgs: string, commandContext: ExtensionContext) {
+		const question = commandArgs.trim();
+		if (!question) {
+			commandContext.ui.notify("Usage: /pompom:ask <question>", "warning");
+			return;
+		}
+		const model = commandContext.model;
+		if (!isModelLike(model)) {
+			commandContext.ui.notify("No model selected", "error");
+			return;
+		}
+
+		const apiKey = await commandContext.modelRegistry.getApiKey(model);
+		if (!apiKey) {
+			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+			return;
+		}
+
+		const stats = getSessionStats();
+		const recentMessages = buildRecentSessionMessages(commandContext);
+		const promptMessages = [
+			...recentMessages,
+			createUserMessage(question),
+		];
+		const thinkingLevel = pi.getThinkingLevel();
+		const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
+
+		pulseOverlay({ forceOverlay: true, lookX: 0.16, lookY: -0.1, glow: 0.95, earBoost: 0.75 }, 5000);
+		pompomSay({ text: "Let me think that through.", duration: 4.2 });
+
+		let answer = "";
+		let lastBubbleUpdate = 0;
+
+		try {
+			const stream = streamSimple(
+				model,
+				{
+					systemPrompt: [
+						"You are Pompom, a coding companion living inside Pi CLI.",
+						"Answer in plain English with a warm but practical tone.",
+						"Be concise, useful, and honest about uncertainty.",
+						"Use the session messages as context for the current work.",
+						`Current session mood: ${stats.mood}.`,
+						`Recent tool calls: ${stats.toolCalls}.`,
+					].join("\n"),
+					messages: promptMessages,
+				},
+				{ apiKey, reasoning }
+			);
+
+			for await (const event of stream) {
+				if (event.type === "text_delta") {
+					answer += event.delta;
+					const now = Date.now();
+					if (now - lastBubbleUpdate > 450 && answer.trim()) {
+						lastBubbleUpdate = now;
+						const snippet = sanitizeAscii(answer.slice(-100));
+						if (snippet) {
+							pompomSay({ text: snippet, duration: 4.0 });
+						}
+					}
+					continue;
+				}
+				if (event.type === "thinking_delta" && !answer) {
+					const now = Date.now();
+					if (now - lastBubbleUpdate > 900) {
+						lastBubbleUpdate = now;
+						pompomSay({ text: "Thinking through the session...", duration: 3.6 });
+					}
+					continue;
+				}
+				if (event.type === "error") {
+					throw event.error;
+				}
+			}
+
+			const finalAnswer = answer.trim();
+			if (!finalAnswer) {
+				commandContext.ui.notify("Pompom did not return any text.", "warning");
+				return;
+			}
+
+			pompomSay({ text: sanitizeAscii(finalAnswer.slice(0, 140)), duration: 6.0 });
+			commandContext.ui.notify(`Pompom: ${finalAnswer}`, "info");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unknown error";
+			pompomSay({ text: "I hit a snag while thinking.", duration: 4.2 });
+			commandContext.ui.notify(`pompom:ask error - ${message}`, "error");
+		} finally {
+			overlayHint = null;
+			overlayHintUntil = 0;
+			applyAgentVisualState();
+		}
+	}
+
+	async function runPompomRecap(commandContext: ExtensionContext) {
+		const model = commandContext.model;
+		if (!isModelLike(model)) {
+			commandContext.ui.notify("No model selected", "error");
+			return;
+		}
+
+		const apiKey = await commandContext.modelRegistry.getApiKey(model);
+		if (!apiKey) {
+			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+			return;
+		}
+
+		const stats = getSessionStats();
+		const recentMessages = buildRecentSessionMessages(commandContext);
+		if (recentMessages.length === 0) {
+			commandContext.ui.notify("No session context to recap yet.", "warning");
+			return;
+		}
+
+		const recapPrompt = [
+			"You are Pompom, a coding companion summarizing the current Pi session.",
+			"Summarize the recent session in plain English.",
+			"Keep it short and useful.",
+			"Cover current task, important changes, open risk, and next step.",
+			"",
+			`Mood: ${stats.mood}`,
+			`Agent starts: ${stats.agentStarts}`,
+			`Tool calls: ${stats.toolCalls}`,
+			`Tool failures: ${stats.toolFailures}`,
+			"",
+			"<recent-session>",
+			recentMessages.map((message) => {
+				const text = extractTextContent(message.content);
+				return `${message.role.toUpperCase()}: ${text}`;
+			}).join("\n\n"),
+			"</recent-session>",
+		].join("\n");
+
+		pulseOverlay({ forceOverlay: true, lookX: 0.08, lookY: -0.06, glow: 0.8, earBoost: 0.55 }, 3600);
+		pompomSay({ text: "I am wrapping up the session.", duration: 4.2 });
+
+		try {
+			const response = await completeSimple(
+				model,
+				{
+					messages: [createUserMessage(recapPrompt)],
+				},
+				{ apiKey, reasoning: "low" }
+			);
+
+			const summary = extractTextContent(response.content);
+
+			if (!summary) {
+				commandContext.ui.notify("Pompom could not build a recap.", "warning");
+				return;
+			}
+
+			pompomSay({ text: sanitizeAscii(summary.slice(0, 140)), duration: 6.0 });
+			commandContext.ui.notify(`Pompom recap:\n${summary}`, "info");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "Unknown error";
+			pompomSay({ text: "Recap failed. I need another try.", duration: 4.2 });
+			commandContext.ui.notify(`pompom:recap error - ${message}`, "error");
+		} finally {
+			overlayHint = null;
+			overlayHintUntil = 0;
+			applyAgentVisualState();
+		}
+	}
+
+	pi.on("session_start", async (_event, startCtx) => {
+		await runSafely("session_start", async () => {
+			ctx = startCtx;
+			restoreCompanionState(startCtx);
+			if (enabled) {
+				showCompanion();
+				setupKeyHandler();
+			}
+		});
 	});
 
 	pi.on("session_shutdown", async () => {
-		hideCompanion();
-		resetPompom();
-		if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+		await runSafely("session_shutdown", () => {
+			persistAgentState();
+			hideCompanion();
+			resetPompom();
+			resetAgentState();
+			if (terminalInputUnsub) {
+				terminalInputUnsub();
+				terminalInputUnsub = null;
+			}
+		});
 	});
 
 	pi.on("session_switch", async (_event, switchCtx) => {
-		hideCompanion();
-		resetPompom();
-		ctx = switchCtx;
-		if (enabled) {
-			showCompanion();
-			setupKeyHandler();
-		}
+		await runSafely("session_switch", () => {
+			hideCompanion();
+			resetPompom();
+			ctx = switchCtx;
+			restoreCompanionState(switchCtx);
+			if (enabled) {
+				showCompanion();
+				setupKeyHandler();
+			}
+		});
 	});
 
-	// ─── /pompom command ────────────────────────────────────────────────
+	pi.on("agent_start", async () => {
+		await runSafely("agent_start", () => {
+			onAgentStart();
+			pulseOverlay({ forceOverlay: true, lookX: 0.2, lookY: -0.1, glow: 0.92, earBoost: 0.7 }, 2600);
+			speakCommentary({ eventName: "agent_start" });
+			persistAgentState();
+		});
+	});
+
+	pi.on("agent_end", async () => {
+		await runSafely("agent_end", () => {
+			onAgentEnd();
+			pulseOverlay({ forceOverlay: true, lookX: 0.06, lookY: -0.04, glow: 0.75, earBoost: 0.45 }, 2200);
+			speakCommentary({ eventName: "agent_end" });
+			persistAgentState();
+		});
+	});
+
+	pi.on("tool_execution_start", async (event) => {
+		await runSafely("tool_execution_start", () => {
+			onToolCall({ toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
+			pulseOverlay({ forceOverlay: true, lookX: 0.24, lookY: -0.12, glow: 1, earBoost: 0.85 }, 1800);
+			speakCommentary({ eventName: "tool_call", toolName: event.toolName });
+			persistAgentState();
+		});
+	});
+
+	pi.on("tool_execution_end", async (event) => {
+		await runSafely("tool_execution_end", () => {
+			onToolResult({
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				isError: event.isError,
+				result: event.result,
+			});
+			pulseOverlay({
+				forceOverlay: true,
+				lookX: event.isError ? -0.14 : 0.14,
+				lookY: -0.08,
+				glow: event.isError ? 0.95 : 0.72,
+				earBoost: event.isError ? 0.5 : 0.3,
+			}, 1800);
+			speakCommentary({ eventName: "tool_result", toolName: event.toolName, isError: event.isError });
+			persistAgentState();
+		});
+	});
+
+	pi.on("message_start", async (event) => {
+		await runSafely("message_start", () => {
+			const role = getMessageRole(event.message);
+			if (role === "user") {
+				pulseOverlay({ forceOverlay: true, lookX: -0.1, lookY: 0, glow: 0.38, earBoost: 0.25 }, 1200);
+			}
+			if (role === "assistant") {
+				pulseOverlay({ forceOverlay: true, lookX: 0.12, lookY: -0.08, glow: 0.55, earBoost: 0.35 }, 1400);
+			}
+			speakCommentary({ eventName: "message_start", role });
+		});
+	});
+
+	pi.on("message_end", async (event) => {
+		await runSafely("message_end", () => {
+			const role = getMessageRole(event.message);
+			if (role === "assistant") {
+				const text = getMessageText(event.message);
+				if (text) {
+					pompomSay({ text: sanitizeAscii(text.slice(0, 120)), duration: 4.6 });
+				}
+			}
+			speakCommentary({ eventName: "message_end", role });
+			persistAgentState();
+		});
+	});
 
 	const pompomCommands: Record<string, string> = {
-		pet: "p", feed: "f", ball: "b", music: "m", color: "c", theme: "c",
-		sleep: "s", wake: "w", flip: "d", hide: "o",
-		dance: "x", treat: "t", hug: "h", game: "g",
+		pet: "p",
+		feed: "f",
+		ball: "b",
+		music: "m",
+		color: "c",
+		theme: "c",
+		sleep: "s",
+		wake: "w",
+		flip: "d",
+		hide: "o",
+		dance: "x",
+		treat: "t",
+		hug: "h",
+		game: "g",
 	};
 
 	pi.registerCommand("pompom", {
 		description: "Pompom companion — /pompom help for commands",
-		handler: async (args, cmdCtx) => {
-			ctx = cmdCtx;
-			const sub = (args || "").trim().toLowerCase();
+		handler: async (args, commandContext) => {
+			await runSafely("pompom command", async () => {
+				ctx = commandContext;
+				const sub = (args || "").trim().toLowerCase();
 
-			if (sub === "on") {
-				enabled = true;
-				showCompanion();
-				setupKeyHandler();
-				cmdCtx.ui.notify("Pompom companion enabled 🐾", "info");
-				return;
-			}
-
-			if (sub === "off") {
-				enabled = false;
-				hideCompanion();
-				resetPompom();
-				if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
-				cmdCtx.ui.notify("Pompom companion hidden.", "info");
-				return;
-			}
-
-			if (sub === "help" || sub === "?") {
-				const m = process.platform === "darwin" ? "⌥" : "Alt+";
-				cmdCtx.ui.notify(
-					`🐾 Pompom Commands\n` +
-					`  /pompom on|off     Toggle companion\n` +
-					`  /pompom pet        Pet Pompom          ${m}p\n` +
-					`  /pompom feed       Drop food            ${m}f\n` +
-					`  /pompom treat      Special treat        ${m}t\n` +
-					`  /pompom hug        Give a hug           ${m}h\n` +
-					`  /pompom ball       Throw a ball         ${m}b\n` +
-					`  /pompom dance      Dance!               ${m}x\n` +
-					`  /pompom music      Sing a song          ${m}m\n` +
-					`  /pompom flip       Do a flip            ${m}d\n` +
-					`  /pompom sleep      Nap time             ${m}s\n` +
-					`  /pompom wake       Wake up              ${m}w\n` +
-					`  /pompom theme      Cycle color          ${m}c\n` +
-					`  /pompom hide       Wander off           ${m}o\n` +
-					`  /pompom game       Catch the stars!      ${m}g\n` +
-					`  /pompom status     Check mood & stats\n` +
-					`  /pompom give <item>  Give accessory (umbrella, scarf, sunglasses, hat)\n` +
-					`  /pompom inventory  See Pompom's bag`, "info"
-				);
-				return;
-			}
-
-			if (sub === "status") {
-				if (!companionActive) {
-					cmdCtx.ui.notify("Pompom is not active. Use /pompom on first.", "info");
-					return;
-				}
-				const s = pompomStatus();
-				const bar = (v: number) => "█".repeat(Math.round(v / 10)) + "░".repeat(10 - Math.round(v / 10));
-				cmdCtx.ui.notify(
-					`🐾 Pompom Status\n` +
-					`  Mood:   ${s.mood}\n` +
-					`  Hunger: ${bar(s.hunger)} ${s.hunger}%\n` +
-					`  Energy: ${bar(s.energy)} ${s.energy}%\n` +
-					`  Theme:  ${s.theme}`, "info"
-				);
-				return;
-			}
-
-			if (sub.startsWith("give ") || sub.startsWith("give\t")) {
-				const item = sub.slice(5).trim();
-				if (!item) { cmdCtx.ui.notify("Usage: /pompom give <umbrella|scarf|sunglasses|hat>", "info"); return; }
-				const result = pompomGiveAccessory(item);
-				saveAccessories();
-				cmdCtx.ui.notify(result, "info");
-				return;
-			}
-
-			if (sub === "inventory" || sub === "inv") {
-				const acc = pompomGetAccessories();
-				const items = Object.entries(acc).filter(([, v]) => v).map(([k]) => k);
-				cmdCtx.ui.notify(items.length ? `🎒 Pompom's bag: ${items.join(", ")}` : "🎒 Pompom has no accessories yet. Try /pompom give umbrella", "info");
-				return;
-			}
-
-			if (pompomCommands[sub]) {
-				if (!companionActive) {
+				if (sub === "on") {
 					enabled = true;
 					showCompanion();
 					setupKeyHandler();
+					commandContext.ui.notify("Pompom companion enabled.", "info");
+					return;
 				}
-				pompomKeypress(pompomCommands[sub]);
-				return;
-			}
 
-			// No args: toggle. Unknown: error.
-			if (sub === "") {
-				if (companionActive) {
+				if (sub === "off") {
 					enabled = false;
 					hideCompanion();
 					resetPompom();
-					cmdCtx.ui.notify("Pompom companion hidden.", "info");
-				} else {
-					enabled = true;
-					showCompanion();
-					setupKeyHandler();
-					cmdCtx.ui.notify("Pompom companion enabled 🐾 — /pompom help for commands", "info");
+					if (terminalInputUnsub) {
+						terminalInputUnsub();
+						terminalInputUnsub = null;
+					}
+					commandContext.ui.notify("Pompom companion hidden.", "info");
+					return;
 				}
-			} else {
-				cmdCtx.ui.notify(`Unknown command: ${sub}. Try /pompom help`, "warning");
-			}
+
+				if (sub === "help" || sub === "?") {
+					const modifier = process.platform === "darwin" ? "⌥" : "Alt+";
+					commandContext.ui.notify(
+						`Pompom Commands\n` +
+						`  /pompom on|off       Toggle companion\n` +
+						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
+						`  /pompom feed         Drop food           ${modifier}f\n` +
+						`  /pompom treat        Special treat       ${modifier}t\n` +
+						`  /pompom hug          Give a hug          ${modifier}h\n` +
+						`  /pompom ball         Throw a ball        ${modifier}b\n` +
+						`  /pompom dance        Dance               ${modifier}x\n` +
+						`  /pompom music        Sing a song         ${modifier}m\n` +
+						`  /pompom flip         Do a flip           ${modifier}d\n` +
+						`  /pompom sleep        Nap time            ${modifier}s\n` +
+						`  /pompom wake         Wake up             ${modifier}w\n` +
+						`  /pompom theme        Cycle color         ${modifier}c\n` +
+						`  /pompom hide         Wander off          ${modifier}o\n` +
+						`  /pompom game         Catch the stars     ${modifier}g\n` +
+						`  /pompom status       Check mood and stats\n` +
+						`  /pompom give <item>  Give umbrella, scarf, sunglasses, or hat\n` +
+						`  /pompom inventory    See Pompom's bag\n` +
+						`  /pompom:ask <q>      Ask Pompom about the session\n` +
+						`  /pompom:recap        Summarize the session`,
+						"info"
+					);
+					return;
+				}
+
+				if (sub === "status") {
+					if (!companionActive) {
+						commandContext.ui.notify("Pompom is not active. Use /pompom on first.", "info");
+						return;
+					}
+					const status = pompomStatus();
+					const agentStats = getSessionStats();
+					const bar = (value: number) => "█".repeat(Math.round(value / 10)) + "░".repeat(10 - Math.round(value / 10));
+					commandContext.ui.notify(
+						`Pompom Status\n` +
+						`  Mood:   ${status.mood}\n` +
+						`  Hunger: ${bar(status.hunger)} ${status.hunger}%\n` +
+						`  Energy: ${bar(status.energy)} ${status.energy}%\n` +
+						`  Theme:  ${status.theme}\n` +
+						`  Agent:  ${agentStats.mood}\n` +
+						`  Tools:  ${agentStats.toolCalls} total, ${agentStats.activeToolCount} active`,
+						"info"
+					);
+					return;
+				}
+
+				if (sub.startsWith("give ") || sub.startsWith("give\t")) {
+					const item = sub.slice(5).trim();
+					if (!item) {
+						commandContext.ui.notify("Usage: /pompom give <umbrella|scarf|sunglasses|hat>", "info");
+						return;
+					}
+					const result = pompomGiveAccessory(item);
+					saveAccessories();
+					commandContext.ui.notify(result, "info");
+					return;
+				}
+
+				if (sub === "inventory" || sub === "inv") {
+					const accessories = pompomGetAccessories();
+					const items = Object.entries(accessories)
+						.filter(([, value]) => value)
+						.map(([key]) => key);
+					commandContext.ui.notify(
+						items.length
+							? `Pompom's bag: ${items.join(", ")}`
+							: "Pompom has no accessories yet. Try /pompom give umbrella",
+						"info"
+					);
+					return;
+				}
+
+				if (pompomCommands[sub]) {
+					if (!companionActive) {
+						enabled = true;
+						showCompanion();
+						setupKeyHandler();
+					}
+					pompomKeypress(pompomCommands[sub]);
+					return;
+				}
+
+				if (sub === "") {
+					if (companionActive) {
+						enabled = false;
+						hideCompanion();
+						resetPompom();
+						commandContext.ui.notify("Pompom companion hidden.", "info");
+					} else {
+						enabled = true;
+						showCompanion();
+						setupKeyHandler();
+						commandContext.ui.notify("Pompom companion enabled. Use /pompom help for commands.", "info");
+					}
+					return;
+				}
+
+				commandContext.ui.notify(`Unknown command: ${sub}. Try /pompom help`, "warning");
+			});
+		},
+	});
+
+	pi.registerCommand("pompom:ask", {
+		description: "Ask Pompom about the current session using the selected model",
+		handler: async (args, commandContext) => {
+			await runSafely("pompom:ask", async () => {
+				ctx = commandContext;
+				await runPompomAsk(args, commandContext);
+			});
+		},
+	});
+
+	pi.registerCommand("pompom:recap", {
+		description: "Ask Pompom for a concise recap of the current session",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:recap", async () => {
+				ctx = commandContext;
+				await runPompomRecap(commandContext);
+			});
 		},
 	});
 }

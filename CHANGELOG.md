@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2] - 2026-03-15
+
+### Patch Changes
+
+- intelligent coding companion state in `extensions/pompom-agent.ts` with commentary pools, session stats, mood-to-weather mapping, and serialized restore support
+- additive agent overlay controls in `extensions/pompom.ts` for speech, look direction, antenna glow, ear boost, and weather override without replacing the pet state machine
+- Pi lifecycle wiring plus `/pompom:ask` and `/pompom:recap` commands in `extensions/pompom-extension.ts` using `@mariozechner/pi-ai`
+
 ## [2.0.0] - 2026-03-14
 
 ### Added
