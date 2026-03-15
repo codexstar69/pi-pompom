@@ -1,6 +1,6 @@
 {
   "name": "@codexstar/pi-pompom",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A 3D raymarched virtual pet companion for Pi CLI",
   "type": "module",
   "author": "codexstar69 <engazedigital@gmail.com>",
@@ -49,10 +49,14 @@
   "pi": {
     "extensions": [
       "./extensions/pompom-extension.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "files": [
     "extensions",
+    "skills",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",

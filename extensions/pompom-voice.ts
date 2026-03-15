@@ -56,9 +56,9 @@ const MAX_QUEUE = 3;
 const DEFAULT_CONFIG: VoiceConfig = {
 	enabled: false,
 	engine: "kokoro",
-	kokoroVoice: "af_sky",
+	kokoroVoice: "af_nicole",
 	deepgramVoice: "aura-2-luna-en",
-	elevenlabsVoice: "aria", // warm, friendly female voice
+	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS", // voice ID from ElevenLabs skill
 };
 
 const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
@@ -330,22 +330,22 @@ class ElevenLabsEngine implements TTSEngine {
 		// voice can be a voice ID or a name — the API accepts both
 		const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`;
 
-		const response = await fetch(url, {
+		const response = await fetch(url + "?enable_logging=false&output_format=pcm_24000", {
 			method: "POST",
 			headers: {
 				"xi-api-key": apiKey,
+				"xi-no-log": "true",
 				"Content-Type": "application/json",
-				Accept: "audio/wav",
 			},
 			body: JSON.stringify({
 				text,
-				model_id: "eleven_turbo_v2_5",
+				model_id: "eleven_v3",
 				voice_settings: {
 					stability: 0.5,
-					similarity_boost: 0.75,
-					style: 0.3,
+					similarity_boost: 0.8,
+					style: 0.7,
+					use_speaker_boost: true,
 				},
-				output_format: "pcm_24000",
 			}),
 		});
 
