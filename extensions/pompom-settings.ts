@@ -661,7 +661,9 @@ export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSet
 			if (m?.id) return String(m.id);
 			return "";
 		}).filter(Boolean);
-	} catch {
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-settings] Failed to load model list: ${msg}`);
 		panel.modelList = [];
 	}
 

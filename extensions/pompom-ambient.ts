@@ -509,12 +509,18 @@ async function generateSfx(name: SfxName): Promise<boolean> {
 			}),
 			signal: AbortSignal.timeout(20000),
 		});
-		if (!response.ok) return false;
+		if (!response.ok) {
+			const errText = await response.text().catch(() => "");
+			console.error(`[pompom-ambient] SFX generation failed for ${name}: HTTP ${response.status} ${errText.slice(0, 200)}`);
+			return false;
+		}
 		const buffer = Buffer.from(await response.arrayBuffer());
 		fs.mkdirSync(SFX_DIR, { recursive: true });
 		fs.writeFileSync(sfxPath(name), buffer);
 		return true;
-	} catch {
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-ambient] generateSfx(${name}) failed: ${msg}`);
 		return false;
 	}
 }
@@ -543,7 +549,10 @@ function playSfxFile(filePath: string): void {
 	});
 	sfxProcess = child;
 	child.on("close", () => { if (sfxProcess === child) sfxProcess = null; });
-	child.on("error", () => { if (sfxProcess === child) sfxProcess = null; });
+	child.on("error", (err) => {
+		console.error(`[pompom-ambient] SFX playback error: ${err instanceof Error ? err.message : String(err)}`);
+		if (sfxProcess === child) sfxProcess = null;
+	});
 }
 
 /** Play a one-shot sound effect by name. Generates on first use.

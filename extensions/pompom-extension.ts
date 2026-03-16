@@ -431,7 +431,8 @@ export default function (pi: ExtensionAPI) {
 		try {
 			pi.appendEntry(POMPOM_AGENT_STATE_TYPE, serializeState());
 		} catch (error) {
-			// Non-fatal: agent state persistence is best-effort
+			const msg = error instanceof Error ? error.message : String(error);
+			console.error(`[pompom] persistAgentState failed: ${msg}`);
 		}
 	}
 
@@ -543,8 +544,9 @@ export default function (pi: ExtensionAPI) {
 			if (ttsPlaying && !wasTTSPlaying) duckAmbient();
 			else if (!ttsPlaying && wasTTSPlaying) unduckAmbient();
 			wasTTSPlaying = ttsPlaying;
-		} catch {
-			// Non-fatal
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			console.error(`[pompom] syncAmbientWeather failed: ${msg}`);
 		}
 	}
 
@@ -1813,7 +1815,10 @@ export default function (pi: ExtensionAPI) {
 				}
 			},
 		});
-	} catch { /* silent — shortcut may already exist */ }
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[pompom] registerShortcut ${CHAT_SHORTCUT} failed: ${msg}`);
+	}
 
 	async function openPompomChat(commandContext: ExtensionContext) {
 		if (chatOpenInProgress || chatOverlayHandle) return;

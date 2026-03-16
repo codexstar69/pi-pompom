@@ -1423,7 +1423,7 @@ function updatePhysics(dt: number) {
 		lastAnnouncedWeatherState = weatherState;
 		let weatherAnnouncement = "";
 		if (lastAnnouncedWeatherState === "cloudy") weatherAnnouncement = "[curious] Clouds rolling in...";
-		else if (lastAnnouncedWeatherState === "rain") weatherAnnouncement = "It's starting to rain!";
+		else if (lastAnnouncedWeatherState === "rain") weatherAnnouncement = "[curious] It's starting to rain!";
 		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "[concerned] A storm is brewing...";
 		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "[excited] Snowflakes!";
 		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "[happy] The sky is clearing up!";
@@ -1450,7 +1450,9 @@ function updatePhysics(dt: number) {
 		if (weather === "storm" && !accessories.umbrella && !accessoryAsked.umbrella) {
 			accessoryAsked.umbrella = true;
 			setTimeout(() => {
-				say("This storm is scary! /pompom give umbrella", 5.0, "system", 2, true);
+				if (weatherState === "storm") {
+					say("This storm is scary! /pompom give umbrella", 5.0, "system", 2, true);
+				}
 			}, 2000);
 		}
 	}
@@ -2161,6 +2163,7 @@ export function pompomSetAgentMood(mood: string) {
 
 /** Handle a user keypress command */
 export function pompomKeypress(key: string) {
+	if (isFlipping && key !== "d") { isFlipping = false; flipPhase = 0; }
 	const nowMs = Date.now();
 	// Track any interaction for boredom detection
 	lastInteractionAt = nowMs;
@@ -2342,7 +2345,9 @@ export function resetPompom() {
 	lastMilestoneCheckAt = 0;
 	activeTheme = 0;
 	weatherOverride = null;
-	lastAnnouncedWeatherState = weatherState;
+	weatherState = "clear";
+	lastAnnouncedWeatherState = "clear";
+	weatherTimer = 1800 + Math.random() * 5400;
 	lastRenderedWeatherState = getWeather();
 	weatherBlend = 0;
 	agentOverlayActive = false;
