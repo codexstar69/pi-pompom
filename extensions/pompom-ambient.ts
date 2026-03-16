@@ -151,32 +151,41 @@ function startPlayback(weather: Weather): void {
 	stopCurrent();
 
 	if (process.platform !== "darwin") {
-		// afplay looping is macOS-only; other platforms would need a different approach
 		console.error("[pompom-ambient] Looping playback only supported on macOS (afplay)");
 		return;
 	}
 
-	const vol = effectiveVolume().toFixed(2);
-	const child = childProcess.spawn("afplay", ["-v", vol, "-l", "0", file], {
-		stdio: "ignore",
-		detached: false,
-	});
+	// afplay doesn't support -l (loop) on modern macOS — loop manually by restarting on close
+	function spawnPlayer(): childProcess.ChildProcess {
+		const vol = effectiveVolume().toFixed(2);
+		const child = childProcess.spawn("afplay", ["-v", vol, file], {
+			stdio: "ignore",
+			detached: false,
+		});
 
-	child.on("error", (err) => {
-		const msg = err instanceof Error ? err.message : String(err);
-		console.error(`[pompom-ambient] playback error: ${msg}`);
-		currentProcess = null;
-	});
+		child.on("error", (err) => {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[pompom-ambient] playback error: ${msg}`);
+			currentProcess = null;
+		});
 
-	child.on("close", () => {
-		if (currentProcess === child) currentProcess = null;
-	});
+		child.on("close", () => {
+			// If this child is still the active one, loop by spawning again
+			if (currentProcess === child && currentWeather === weather && config.enabled) {
+				currentProcess = spawnPlayer();
+			} else if (currentProcess === child) {
+				currentProcess = null;
+			}
+		});
 
-	currentProcess = child;
+		return child;
+	}
+
+	currentProcess = spawnPlayer();
 }
 
 function restartWithVolume(): void {
-	if (!currentWeather || !currentProcess) return;
+	if (!currentWeather) return;
 	// afplay doesn't support runtime volume changes — restart with new volume
 	startPlayback(currentWeather);
 }
