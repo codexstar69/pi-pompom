@@ -577,9 +577,9 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				try {
-					// Ghostty keybind: \x1b[P<key> (custom CSI that passes through Pi's TUI)
-					if (data.length === 4 && data[0] === "\x1b" && data[1] === "[" && data[2] === "P" && POMPOM_KEYS.includes(data[3])) {
-						pompomKeypress(data[3]);
+					// Ghostty keybind: \x1d (GS) prefix + key
+					if (data.length === 2 && data[0] === "\x1d" && POMPOM_KEYS.includes(data[1])) {
+						pompomKeypress(data[1]);
 						return { consume: true };
 					}
 
