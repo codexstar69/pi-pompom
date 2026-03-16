@@ -1595,13 +1595,22 @@ function updatePhysics(dt: number) {
 		else blinkFade = Math.max(0, blinkFade - dt * 6.0);
 		bounceY += (0 - bounceY) * dt * 5.0;
 		lookX += (0 - lookX) * dt * 3.0;
-		if (ballY !== -10 && !hasBall) { currentState = "fetching"; say("[excited] Ball incoming!", 2.0, "reaction", 2, true); }
+		if (ballY !== -10 && !hasBall) {
+			currentState = "fetching";
+			const fetchLines = ["[excited] Ball! I got it I got it!", "[excited] Ooh, ball incoming!", "[happy] Here I come!", "[excited] Mine mine mine!"];
+			say(fetchLines[Math.floor(Math.random() * fetchLines.length)], 2.0, "reaction", 2, true);
+		}
 		else if (Math.random() < 0.005) {
 			if (Math.random() < 0.15) targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); // occasional sneaky walk — stays 20-30% visible
 			else targetX = (Math.random() - 0.5) * (getScreenEdgeX() * 0.6);
 			currentState = "walk"; isWalking = true;
 		}
-		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("[excited] Wheee!", 4.0, "reaction", 1, true); emitSfx("flip_whoosh"); }
+		else if (Math.random() < 0.003) {
+			currentState = "flip"; isFlipping = true; flipPhase = 0;
+			const flipLines = ["[excited] Wheee!", "[laughs] Watch this!", "[excited] Flip time!", "[happy] Boing!"];
+			say(flipLines[Math.floor(Math.random() * flipLines.length)], 4.0, "reaction", 1, true);
+			emitSfx("flip_whoosh");
+		}
 		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
 			// Only pick idle speech when in a non-negative state
@@ -1643,7 +1652,10 @@ function updatePhysics(dt: number) {
 		} else {
 			isWalking = false; posX = targetX; bounceY = 0;
 			lookX = -Math.sign(posX) * 0.6 + Math.sin(time * 2) * 0.2;
-			if (actionTimer < 3.0 && speechTimer <= 0 && Math.random() < 0.05) say("[mischievously] Peekaboo!", 2.0, "reaction", 1, true);
+			if (actionTimer < 3.0 && speechTimer <= 0 && Math.random() < 0.05) {
+				const peekLines = ["[mischievously] Peekaboo!", "[laughs] Did you miss me?", "[mischievously] Bet you didn't see me sneak back!", "[happy] I'm baaack!"];
+				say(peekLines[Math.floor(Math.random() * peekLines.length)], 2.0, "reaction", 1, true);
+			}
 			if (actionTimer <= 0) { currentState = "walk"; targetX = 0; isWalking = true; }
 		}
 	}
@@ -1670,8 +1682,13 @@ function updatePhysics(dt: number) {
 		if (actionTimer <= 0) {
 			currentState = "idle"; isSleeping = false;
 			lastRestedAt = Date.now();
-			if (hunger < 30) say("[sighs] Good nap... but I'm hungry now!", 4.0, "reaction", 1, true);
-			else say("[sighs] What a nice nap! [laughs] I feel great!", 4.0, "reaction", 1, true);
+			if (hunger < 30) {
+				const hungryWake = ["[sighs] Good nap... but I'm hungry now!", "[sad] I slept well but... my tummy...", "[sighs] Rested but starving..."];
+				say(hungryWake[Math.floor(Math.random() * hungryWake.length)], 4.0, "reaction", 1, true);
+			} else {
+				const happyWake = ["[sighs] What a lovely nap!", "[happy] I feel SO refreshed!", "[laughs] Best nap ever! What did I miss?", "[excited] I'm recharged and ready!"];
+				say(happyWake[Math.floor(Math.random() * happyWake.length)], 4.0, "reaction", 1, true);
+			}
 		}
 	}
 	if (currentState === "excited") {
@@ -1706,7 +1723,11 @@ function updatePhysics(dt: number) {
 			posX += dir * dt * 1.5;
 			bounceY = -Math.abs(Math.sin(time * 18)) * 0.15;
 			lookX = dir * 0.5;
-			if (Math.abs(posX - ballX) < 0.15 && Math.abs(posY + bounceY - ballY) < 0.3) { hasBall = true; say("[excited] Got it!", 4.0, "reaction", 2, true); }
+			if (Math.abs(posX - ballX) < 0.15 && Math.abs(posY + bounceY - ballY) < 0.3) {
+					hasBall = true;
+					const catchLines = ["[excited] Got it!", "[laughs] Caught it!", "[excited] Ha! Too fast for me? Never!", "[happy] Mine!"];
+					say(catchLines[Math.floor(Math.random() * catchLines.length)], 4.0, "reaction", 2, true);
+				}
 		} else {
 			const dir = Math.sign(0 - posX);
 			posX += dir * dt * 0.8;
@@ -1714,7 +1735,9 @@ function updatePhysics(dt: number) {
 			lookX = dir * 0.5;
 			if (Math.abs(posX) < 0.08) {
 				hasBall = false; ballX = posX + 0.15; ballY = 0.5; ballVx = 0.8; ballVy = -1.5;
-				currentState = "excited"; actionTimer = 2.0; say("[happy] Here you go!", 4.0, "reaction", 2, true);
+				currentState = "excited"; actionTimer = 2.0;
+					const returnLines = ["[happy] Here you go!", "[excited] Catch! Throw it again!", "[happy] I brought it back!", "[laughs] Again again again!"];
+					say(returnLines[Math.floor(Math.random() * returnLines.length)], 4.0, "reaction", 2, true);
 			}
 		}
 	}
@@ -1733,9 +1756,16 @@ function updatePhysics(dt: number) {
 			const wasHungry = hunger < 30;
 			hunger = Math.min(100, hunger + 20);
 			lastFedAt = Date.now();
-			if (wasStarving) say("[crying] Oh my gosh... FOOD! Thank you so much!", 3.0, "user_action", 3, true);
-			else if (wasHungry) say("[excited] Yum! That hit the spot!", 3.0, "user_action", 3, true);
-			else say("[happy] Yum!", 2.0, "user_action", 3, true);
+			if (wasStarving) {
+				const starvingFed = ["[crying] Oh my gosh... FOOD! Thank you so much!", "[crying] FINALLY! I thought I'd never eat again!", "[excited] Food food FOOD! You saved me!"];
+				say(starvingFed[Math.floor(Math.random() * starvingFed.length)], 3.0, "user_action", 3, true);
+			} else if (wasHungry) {
+				const hungryFed = ["[excited] Yum! That hit the spot!", "[happy] Mmm, delicious!", "[excited] Nom nom nom!", "[happy] Just what I needed!"];
+				say(hungryFed[Math.floor(Math.random() * hungryFed.length)], 3.0, "user_action", 3, true);
+			} else {
+				const contentFed = ["[happy] Yum!", "[happy] Ooh, a snack!", "[chuckles] Don't mind if I do!", "[happy] Tasty!"];
+				say(contentFed[Math.floor(Math.random() * contentFed.length)], 2.0, "user_action", 3, true);
+			}
 			foods.splice(i, 1);
 		}
 	}
@@ -1897,29 +1927,125 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	const accC = "\x1b[38;5;153m";
 	const mod = process.platform === "darwin" ? "⌥" : "Alt+";
 
-	// State message — descriptive so users know what's happening & what to do
+	// State message — varied and character-rich, rotates with time
+	const pick = (arr: string[]) => arr[Math.floor((time * 0.1) % arr.length)];
 	let stateMsg = "";
-	if (hunger < 30) stateMsg = `Pompom is starving! Drop a treat with ${mod}f`;
-	else if (energy < 20 && !isSleeping) stateMsg = `Pompom looks exhausted... put them to sleep with ${mod}s`;
-	else if (currentState === "excited") stateMsg = "Pompom is bouncing with joy!";
-	else if (isSleeping) stateMsg = "Shhh... Pompom is napping on a cozy pillow";
-	else if (currentState === "walk") stateMsg = "Pompom is out for a little stroll";
-	else if (currentState === "chasing") stateMsg = "Pompom spotted a firefly and is chasing it!";
-	else if (currentState === "fetching") stateMsg = hasBall ? "Pompom grabbed the ball! Bringing it back" : "Pompom dashes after the ball!";
-	else if (currentState === "singing") stateMsg = "Pompom is humming a little melody";
-	else if (currentState === "dance") stateMsg = "Pompom is busting out some moves!";
-	else if (currentState === "peek") stateMsg = "Pompom is peeking back in... hi!";
-	else if (currentState === "offscreen") stateMsg = "Pompom wandered off... they'll be back";
-	else if (isTalking) stateMsg = "Pompom is talking with you";
+	if (hunger < 15) stateMsg = pick([
+		`Pompom's tummy won't stop growling... ${mod}e to feed`,
+		`Pompom is desperately hungry... please feed her ${mod}e`,
+		`Pompom can't focus... she needs food ${mod}e`,
+	]);
+	else if (hunger < 30) stateMsg = pick([
+		`Pompom could use a snack right now... ${mod}e`,
+		`Pompom's tummy is rumbling... feed her ${mod}e`,
+		`Pompom keeps glancing at the food bowl... ${mod}e`,
+	]);
+	else if (energy < 15 && !isSleeping) stateMsg = pick([
+		`Pompom can barely keep her eyes open... ${mod}s to nap`,
+		`Pompom is swaying with exhaustion... let her sleep ${mod}s`,
+		`Pompom needs rest badly... ${mod}s for nap time`,
+	]);
+	else if (energy < 30 && !isSleeping) stateMsg = pick([
+		`Pompom is getting sleepy... ${mod}s for a nap`,
+		`Pompom yawns... maybe a short nap? ${mod}s`,
+		`Pompom's eyelids are drooping... ${mod}s`,
+	]);
+	else if (currentState === "excited") stateMsg = pick([
+		"Pompom is bouncing with pure joy!",
+		"Pompom's antenna is glowing with happiness!",
+		"Pompom can't contain her excitement!",
+	]);
+	else if (isSleeping) stateMsg = pick([
+		"Shhh... Pompom is curled up napping",
+		"Pompom sleeps peacefully, ears twitching softly",
+		"Sweet dreams, little Pompom... zzz",
+	]);
+	else if (currentState === "walk") stateMsg = pick([
+		"Pompom waddles along, exploring the terminal",
+		"Pompom takes a little stroll, tail swishing",
+		"Pompom's tiny paws pad across the screen",
+	]);
+	else if (currentState === "chasing") stateMsg = pick([
+		"Pompom spotted a glowing firefly! She's on the chase!",
+		"A firefly! Pompom leaps after it, antenna bobbing",
+		"Pompom bounds after a tiny light, ears perked up",
+	]);
+	else if (currentState === "fetching") stateMsg = hasBall
+		? pick(["Pompom snatched the ball! Trotting back proudly", "Got it! Pompom carries the ball back, tail wagging"])
+		: pick(["Pompom sprints after the bouncing ball!", "The ball! Pompom races to catch it!"]);
+	else if (currentState === "singing") stateMsg = pick([
+		"Pompom hums a sweet little tune, swaying gently",
+		"Pompom sings softly, her antenna glowing in rhythm",
+		"A little melody fills the terminal... la la la",
+	]);
+	else if (currentState === "dance") stateMsg = pick([
+		"Pompom grooves to her own beat, sparkles flying!",
+		"Dance party! Pompom's moves are surprisingly good",
+		"Pompom shimmies and spins with reckless joy",
+	]);
+	else if (currentState === "peek") stateMsg = pick([
+		"Pompom peeks around the edge... is it safe?",
+		"A tiny ear appears... then a curious eye. Hi!",
+		"Pompom sneaks back in, trying to look innocent",
+	]);
+	else if (currentState === "offscreen") stateMsg = pick([
+		"Pompom tiptoed away... she'll sneak back soon",
+		"Where did Pompom go? She's hiding just off screen",
+		"Pompom is on a tiny adventure, she'll return",
+	]);
+	else if (currentState === "game") stateMsg = pick([
+		"Stars are falling! Pompom leaps to catch them!",
+		"Game on! Pompom chases golden stars across the sky",
+		`Score: ${gameScore} stars! Go Pompom go!`,
+	]);
+	else if (isTalking) stateMsg = pick([
+		"Pompom is chatting with you, ears perked up",
+		"Pompom listens intently, antenna tilted your way",
+		"Pompom hangs on every word you say",
+	]);
 	else {
 		const w = getWeather(), tod = getTimeOfDay();
-		if (w === "storm") stateMsg = "Pompom hides from the thunder!";
-		else if (w === "rain") stateMsg = "Pompom watches the rain fall";
-		else if (w === "snow") stateMsg = "Pompom catches snowflakes!";
-		else if (tod === "dawn") stateMsg = "Pompom watches the sunrise";
-		else if (tod === "sunset") stateMsg = "Pompom enjoys the sunset";
-		else if (tod === "night") stateMsg = "Pompom stargazes under the night sky";
-		else stateMsg = "Pompom is vibing. Pet, feed, or play!";
+		if (w === "storm") stateMsg = pick([
+			"Thunder rumbles... Pompom huddles under her umbrella",
+			"Pompom watches the lightning from a safe spot",
+			"The storm rages, but Pompom feels cozy in here",
+		]);
+		else if (w === "rain") stateMsg = pick([
+			"Pompom watches raindrops race down the window",
+			"Pitter-patter... Pompom loves the gentle rain",
+			"Rainy day vibes. Pompom listens to the drops",
+		]);
+		else if (w === "snow") stateMsg = pick([
+			"Snowflakes drift down... Pompom tries to catch one",
+			"A white world outside. Pompom presses her nose to the glass",
+			"Pompom watches the snow fall, cozy and warm",
+		]);
+		else if (tod === "dawn") stateMsg = pick([
+			"The first light of dawn... Pompom watches the sky turn pink",
+			"Early morning. Pompom blinks sleepily at the sunrise",
+			"A new day begins. Pompom stretches and yawns",
+		]);
+		else if (tod === "sunset") stateMsg = pick([
+			"Golden hour... Pompom's fur glows in the sunset light",
+			"The sky blazes orange. Pompom gazes at the horizon",
+			"Sunset. Pompom settles in for the evening",
+		]);
+		else if (tod === "night") stateMsg = pick([
+			"Stars twinkle overhead. Pompom counts the constellations",
+			"A quiet night sky. Pompom's antenna glows softly",
+			"Moonlight bathes the terminal. Pompom is at peace",
+		]);
+		else if (hunger > 80 && energy > 80) stateMsg = pick([
+			"Pompom is living her best life right now",
+			"Full belly, rested, happy. Pompom radiates joy",
+			"Everything is perfect. Pompom couldn't be happier",
+		]);
+		else stateMsg = pick([
+			"Pompom sits beside you, content and cozy",
+			"Pompom is here, keeping you company while you code",
+			"A gentle breeze, a happy Pompom, a good day",
+			`Pet ${mod}p, feed ${mod}e, or play ball ${mod}r!`,
+		]);
 	}
 
 	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" capped at exactly W visible chars
