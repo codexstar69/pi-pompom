@@ -621,3 +621,120 @@ export function restoreState(serializedState: SerializedAgentState | null | unde
 	state.activeToolCalls = restoredCalls;
 	refreshMood();
 }
+
+// ─── Stuck Detection & Agent Intelligence ───────────────────────────────────
+
+export interface StuckSignal {
+	isStuck: boolean;
+	confidence: number;
+	reasons: string[];
+	suggestion: string;
+}
+
+export function getActiveToolDetails(): { toolName: string; durationMs: number; toolCallId: string }[] {
+	const now = Date.now();
+	return Object.values(state.activeToolCalls).map(t => ({
+		toolName: t.toolName,
+		durationMs: Math.max(0, now - t.startedAt),
+		toolCallId: t.toolCallId,
+	}));
+}
+
+export function detectStuck(): StuckSignal {
+	const reasons: string[] = [];
+	let confidence = 0;
+	const now = Date.now();
+
+	// Rule 1: Consecutive errors
+	const consecutiveErrors = state.lastToolFailedAt > state.lastToolSucceededAt
+		? state.counters.toolFailures - Math.max(0, state.counters.toolSuccesses > 0 ? 0 : state.counters.toolFailures)
+		: 0;
+	// Simpler: check if last N tool results were all errors
+	const recentFails = state.counters.toolFailures;
+	const recentSuccesses = state.counters.toolSuccesses;
+	if (recentFails >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
+		const failStreak = Math.min(recentFails, 10);
+		if (failStreak >= 3) {
+			reasons.push(`${failStreak} recent tool failures`);
+			confidence += 0.35;
+		}
+	}
+
+	// Rule 2: Agent running long without progress
+	if (state.isAgentActive && state.lastAgentStartAt > 0) {
+		const agentRunMs = now - state.lastAgentStartAt;
+		const lastProgress = Math.max(state.lastToolSucceededAt, state.lastAgentEndAt);
+		const timeSinceProgress = lastProgress > 0 ? now - lastProgress : agentRunMs;
+		if (timeSinceProgress > 300_000) { // 5 minutes
+			reasons.push(`No progress for ${Math.round(timeSinceProgress / 60000)}min`);
+			confidence += 0.25;
+		}
+	}
+
+	// Rule 3: High error rate
+	const total = state.counters.toolSuccesses + state.counters.toolFailures;
+	if (total >= 6) {
+		const errorRate = state.counters.toolFailures / total;
+		if (errorRate > 0.5) {
+			reasons.push(`Error rate ${Math.round(errorRate * 100)}% across ${total} tool calls`);
+			confidence += 0.2;
+		}
+	}
+
+	// Rule 4: Low tool diversity (same tool repeatedly)
+	const activeCount = Object.keys(state.activeToolCalls).length;
+	if (state.counters.toolCalls > 10 && activeCount === 0 && state.lastToolName) {
+		// Can't check diversity without history, but check if only using one tool type
+		if (state.counters.toolCalls > 15) {
+			reasons.push("High tool call count may indicate repetitive behavior");
+			confidence += 0.1;
+		}
+	}
+
+	// Build suggestion
+	let suggestion = "Try providing more specific instructions.";
+	if (confidence >= 0.35 && reasons.some(r => r.includes("failures"))) {
+		suggestion = "The agent keeps hitting errors. Try a different approach or simplify the task.";
+	} else if (reasons.some(r => r.includes("progress"))) {
+		suggestion = "The agent has been running a while without results. Consider breaking the task into smaller steps.";
+	} else if (reasons.some(r => r.includes("Error rate"))) {
+		suggestion = "High failure rate. Consider switching models or giving the agent more context.";
+	}
+
+	return {
+		isStuck: confidence >= 0.3,
+		confidence: Math.min(1, confidence),
+		reasons,
+		suggestion,
+	};
+}
+
+export function getAgentDashboard(): string {
+	const stats = getSessionStats();
+	const active = getActiveToolDetails();
+	const now = Date.now();
+	const mins = Math.round((now - state.sessionStartedAt) / 60000);
+	const total = stats.toolSuccesses + stats.toolFailures;
+	const rate = total > 0 ? Math.round((stats.toolSuccesses / total) * 100) : 100;
+
+	const lines: string[] = [
+		`Agent: ${stats.isAgentActive ? "ACTIVE" : "idle"}  Mood: ${stats.mood}  Session: ${mins}min`,
+		"",
+	];
+
+	if (active.length > 0) {
+		lines.push("Running now:");
+		for (const t of active) {
+			lines.push(`  ${t.toolName} — ${Math.round(t.durationMs / 1000)}s`);
+		}
+		lines.push("");
+	}
+
+	lines.push(`Tools: ${stats.toolCalls} calls (${stats.toolSuccesses} ok, ${stats.toolFailures} fail, ${rate}% success)`);
+	if (stats.averageToolDurationMs > 0) {
+		lines.push(`Speed: avg ${Math.round(stats.averageToolDurationMs)}ms, max ${stats.longestToolDurationMs}ms`);
+	}
+	lines.push(`Last tool: ${stats.lastToolName || "none"}`);
+
+	return lines.join("\n");
+}

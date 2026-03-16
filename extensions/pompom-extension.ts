@@ -17,6 +17,9 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import {
+	detectStuck,
+	getActiveToolDetails,
+	getAgentDashboard,
 	getAgentWeather,
 	getCommentary,
 	getSessionStats,
@@ -506,6 +509,7 @@ export default function (pi: ExtensionAPI) {
 			clearInterval(companionTimer);
 		}
 		companionTimer = setInterval(setWidget, 150);
+		startHealthCheck();
 
 		if (voiceCheckTimer) {
 			clearInterval(voiceCheckTimer);
@@ -538,6 +542,7 @@ export default function (pi: ExtensionAPI) {
 			clearInterval(voiceCheckTimer);
 			voiceCheckTimer = null;
 		}
+		stopHealthCheck();
 		pompomSetTalking(false);
 		pompomSetTalkAudioLevel(0);
 		pompomSetAgentOverlay({ active: false });
@@ -1022,7 +1027,11 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom inventory    See Pompom's bag\n` +
 						`  /pompom:voice        Voice on|off|setup|kokoro|deepgram|elevenlabs|test\n` +
 						`  /pompom:ask <q>      Ask Pompom about the session\n` +
-						`  /pompom:recap        Summarize the session`,
+						`  /pompom:recap        Summarize the session\n` +
+						`  /pompom:agents       Agent status dashboard\n` +
+						`  /pompom:stuck        Check if agent is stuck\n` +
+						`  /pompom:analyze      AI session analysis\n` +
+						`  /pompom-settings     Interactive settings panel`,
 						"info"
 					);
 					return;
@@ -1250,4 +1259,152 @@ export default function (pi: ExtensionAPI) {
 			});
 		},
 	});
+
+	// ─── Agent Intelligence Commands ────────────────────────────────
+
+	pi.registerCommand("pompom:agents", {
+		description: "Agent status dashboard — current tools, timing, success rate",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:agents", () => {
+				ctx = commandContext;
+				const dashboard = getAgentDashboard();
+				pompomSay("Here is what I see.", 3.0, "commentary", 1, true);
+				commandContext.ui.notify("Agent Dashboard\n\n" + dashboard, "info");
+			});
+		},
+	});
+
+	pi.registerCommand("pompom:stuck", {
+		description: "Check if the agent seems stuck in a loop or error pattern",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:stuck", () => {
+				ctx = commandContext;
+				const signal = detectStuck();
+				if (signal.isStuck) {
+					const body = signal.reasons.map(r => "  - " + r).join("\n");
+					pompomSay("Something looks off.", 4.0, "commentary", 2, true);
+					commandContext.ui.notify(
+						"Stuck Detection\n\n" +
+						`Confidence: ${Math.round(signal.confidence * 100)}%\n\n` +
+						"Issues:\n" + body + "\n\n" +
+						"Suggestion: " + signal.suggestion,
+						"warning",
+					);
+				} else {
+					pompomSay("Everything looks smooth.", 3.0, "commentary", 1, true);
+					commandContext.ui.notify("Stuck Detection\n\nNo stuck patterns detected. Session looks healthy.", "info");
+				}
+			});
+		},
+	});
+
+	pi.registerCommand("pompom:analyze", {
+		description: "AI-powered session analysis — error patterns, approach assessment, recommendations",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:analyze", async () => {
+				ctx = commandContext;
+				const model = commandContext.model;
+				if (!isModelLike(model)) {
+					commandContext.ui.notify("No model selected.", "error");
+					return;
+				}
+				const apiKey = await commandContext.modelRegistry.getApiKey(model);
+				if (!apiKey) {
+					commandContext.ui.notify("No API key for " + model.provider + "/" + model.id, "error");
+					return;
+				}
+
+				const stats = getSessionStats();
+				const stuck = detectStuck();
+				const active = getActiveToolDetails();
+				const recentMessages = buildRecentSessionMessages(commandContext);
+				const total = stats.toolSuccesses + stats.toolFailures;
+				const errorRate = total > 0 ? Math.round((stats.toolFailures / total) * 100) : 0;
+
+				const prompt = [
+					"You are Pompom, analyzing a Pi CLI coding session. Be direct and concise.",
+					"",
+					"Analyze and provide:",
+					"1. ERROR PATTERNS: What errors are recurring?",
+					"2. APPROACH: Is the current strategy working or spinning?",
+					"3. EFFICIENCY: Are tools being used effectively?",
+					"4. RECOMMENDATIONS: Concrete next steps (try different approach? break into smaller tasks? switch models? ask user for context?)",
+					"",
+					"<session-stats>",
+					"Mood: " + stats.mood,
+					"Agent starts: " + stats.agentStarts,
+					"Tool calls: " + stats.toolCalls + " (" + stats.toolSuccesses + " ok, " + stats.toolFailures + " fail)",
+					"Error rate: " + errorRate + "%",
+					"Avg tool duration: " + stats.averageToolDurationMs + "ms",
+					"Stuck signal: " + (stuck.isStuck ? "YES (" + stuck.reasons.join("; ") + ")" : "no"),
+					"Active tools: " + active.map(t => t.toolName + " " + Math.round(t.durationMs / 1000) + "s").join(", "),
+					"</session-stats>",
+					"",
+					"<recent-session>",
+					recentMessages.map(m => {
+						const text = extractTextContent(m.content);
+						return m.role.toUpperCase() + ": " + text.slice(0, 200);
+					}).join("\n\n"),
+					"</recent-session>",
+				].join("\n");
+
+				pulseOverlay({ forceOverlay: true, lookX: 0.1, lookY: -0.08, glow: 0.85, earBoost: 0.6 }, 5000);
+				pompomSay("Analyzing the session...", 3.0, "commentary", 1, true);
+
+				try {
+					const response = await completeSimple(
+						model,
+						{ messages: [createUserMessage(prompt)] },
+						{ apiKey, reasoning: "low" },
+					);
+					const analysis = extractTextContent(response.content);
+					if (analysis) {
+						pompomSay(sanitizeAscii(analysis.slice(0, 120)), 6.0, "assistant", 3, true);
+						commandContext.ui.notify("Session Analysis\n\n" + analysis, "info");
+					} else {
+						commandContext.ui.notify("Could not generate analysis.", "warning");
+					}
+				} catch (err: any) {
+					const msg = err instanceof Error ? err.message : "Unknown error";
+					pompomSay("Analysis hit a snag.", 3.0, "commentary", 2, true);
+					commandContext.ui.notify("pompom:analyze error - " + msg, "error");
+				} finally {
+					overlayHint = null;
+					overlayHintUntil = 0;
+					applyAgentVisualState();
+				}
+			});
+		},
+	});
+
+	// Background health check — proactive stuck detection (no AI, pure heuristics)
+	let healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+	let lastProactiveAlertAt = 0;
+
+	function startHealthCheck() {
+		if (healthCheckTimer) clearInterval(healthCheckTimer);
+		healthCheckTimer = setInterval(() => {
+			try {
+				if (!enabled || !companionActive) return;
+				const stats = getSessionStats();
+				if (!stats.isAgentActive) return;
+				const signal = detectStuck();
+				if (!signal.isStuck || signal.confidence < 0.5) return;
+				const now = Date.now();
+				if (now - lastProactiveAlertAt < 180_000) return; // max 1 per 3 min
+				lastProactiveAlertAt = now;
+				const lines = [
+					"Looks like we might be going in circles...",
+					"I am seeing a pattern. Same errors repeating.",
+					"This seems stuck. Want to try a different approach?",
+					"The agent might need a nudge.",
+				];
+				pompomSay(lines[Math.floor(Math.random() * lines.length)], 5.0, "commentary", 2, true);
+			} catch { /* silent */ }
+		}, 60_000);
+	}
+
+	function stopHealthCheck() {
+		if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
+	}
 }
