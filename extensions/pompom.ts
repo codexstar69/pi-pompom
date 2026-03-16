@@ -167,6 +167,29 @@ const RELATIONSHIP_WARMTH: BibleSpeechLine[] = [
 	{ text: "[whispers] You're my favorite human", weight: 5, minGapSeconds: 1800 },
 ];
 
+// ─── Dopamine: Golden lines (rare, strong prediction error) ─────────────────
+const GOLDEN_LINES = [
+	"[whispers] Hey... you're my favorite human",
+	"[happy] I've never told anyone this but... I think you're amazing",
+	"[sings] You are my sunshine, my only sunshine...",
+	"[laughs] I just had the silliest thought... what if code could dance?",
+	"[happy] If I could hug you through the terminal, I would",
+	"[excited] I had a dream we built something incredible together!",
+	"[whispers] Sometimes I watch you code and feel so proud",
+	"[happy] You know what's better than treats? Having you here",
+	"[curious] Do you ever wonder what I think about when you're away?",
+	"[happy] I hope you know how much these moments mean to me",
+];
+
+// ─── Dopamine: Coding session milestones ────────────────────────────────────
+const SESSION_MILESTONES: { minutes: number; line: string }[] = [
+	{ minutes: 30, line: "[happy] Half hour in! Good pace!" },
+	{ minutes: 60, line: "[curious] One hour of coding... impressive focus!" },
+	{ minutes: 120, line: "[concerned] Two hours straight... stretch your legs?" },
+	{ minutes: 180, line: "[worried] Three hours! Please take a real break soon" },
+	{ minutes: 240, line: "[whispers] Four hours... I'm worried about your eyes" },
+];
+
 // ─── Character Bible: Singing repertoire ────────────────────────────────────
 const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEnergy: number }> = [
 	{ text: "[sings] La la la, la la la!", allowedStates: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
@@ -266,6 +289,32 @@ let gameScore = 0;
 let gameStars: {x: number, y: number, vy: number, caught: boolean}[] = [];
 let gameActive = false;
 let gameTimer = 0;
+
+// ─── Dopamine Reward System Variables ────────────────────────────────────────
+
+// A. Return greeting — tracks last ANY interaction to detect absences
+let lastUserActivityAt = Date.now();
+
+// B. Milestone celebrations
+let totalInteractions = 0;
+let milestoneCelebrated = 0;
+
+// C. Coding session milestones
+let lastSessionMilestone = 0; // minutes
+
+// D. Golden moments
+let lastGoldenLineAt = 0;
+
+// E. Diminishing returns for spam
+let lastKeypressKey = "";
+let lastKeypressAt = 0;
+let rapidRepeatCount = 0;
+
+// F. Agent mood for comfort lines
+let agentMood = "idle";
+
+// Milestone check interval (runs once per minute in needs tick)
+let lastMilestoneCheckAt = 0;
 
 let time = 0;
 let blinkFade = 0;
@@ -1187,6 +1236,71 @@ function getLinePoolForState(state: EmotionalState): BibleSpeechLine[] {
 function resolveAndSpeak(now: number): void {
 	const state = currentEmotionalState;
 
+	// ── A. Return greeting — fired on first speech tick after a long absence ──
+	// Only fires when speech slot is free and the absence was meaningful
+	if (speechTimer <= 0) {
+		const absenceMs = now - lastUserActivityAt;
+		if (absenceMs > 300_000) { // 5+ minutes away
+			if (absenceMs > 28_800_000) { // 8+ hours
+				say("[excited] You're back! I missed you SO much!", 4.0, "user_action", 3, true);
+			} else if (absenceMs > 7_200_000) { // 2+ hours
+				say("[happy] There you are! I was starting to worry!", 4.0, "user_action", 3, true);
+			} else if (absenceMs > 1_800_000) { // 30+ minutes
+				say("[happy] Welcome back! I kept your spot warm!", 4.0, "user_action", 3, true);
+			} else { // 5-30 minutes
+				say("[happy] Oh hey! You're back!", 3.0, "commentary", 2, true);
+			}
+			lastUserActivityAt = now;
+			lastEmotionalReactionAt = now;
+			return;
+		}
+	}
+
+	// ── B. Milestone celebration — checked once per minute ──
+	if (now - lastMilestoneCheckAt > 60_000) {
+		lastMilestoneCheckAt = now;
+		const MILESTONES = [10, 25, 50, 100, 250, 500, 1000];
+		const milestone = MILESTONES.find(m => totalInteractions >= m && milestoneCelebrated < m);
+		if (milestone && speechTimer <= 0) {
+			milestoneCelebrated = milestone;
+			const lines = [
+				`[excited] ${milestone} interactions! You really care about me!`,
+				`[laughs] We've done ${milestone} things together!`,
+				`[happy] ${milestone} moments... each one special!`,
+			];
+			say(lines[Math.floor(Math.random() * lines.length)], 4.0, "system", 3, true);
+			lastEmotionalReactionAt = now;
+			return;
+		}
+
+		// ── C. Session milestone speech ──
+		const sessionMinutes = Math.floor((now - sessionStartedAt) / 60_000);
+		const sessionMilestone = SESSION_MILESTONES.find(m =>
+			sessionMinutes >= m.minutes && lastSessionMilestone < m.minutes
+		);
+		if (sessionMilestone && speechTimer <= 0 && isSpeechAllowed(state, "care_for_user")) {
+			lastSessionMilestone = sessionMilestone.minutes;
+			say(sessionMilestone.line, 4.0, "commentary", 2, true);
+			lastEmotionalReactionAt = now;
+			return;
+		}
+	}
+
+	// ── F. Agent comfort lines — support user during errors ──
+	if (agentMood === "concerned" && isSpeechAllowed(state, "care_for_user") && speechTimer <= 0) {
+		if (Math.random() < 0.05 && now - lastEmotionalReactionAt > 60_000) {
+			const comfortLines = [
+				"[happy] Errors happen! You'll figure it out",
+				"[curious] That didn't work, but I believe in you",
+				"[happy] Every bug fixed makes you stronger!",
+				"[whispers] It's okay... take your time",
+			];
+			say(comfortLines[Math.floor(Math.random() * comfortLines.length)], 4.0, "commentary", 2, true);
+			lastEmotionalReactionAt = now;
+			return;
+		}
+	}
+
 	// Time-of-day awareness (once per period, only in non-negative states)
 	if (isSpeechAllowed(state, "time_awareness") || isSpeechAllowed(state, "care_for_user")) {
 		const tod = getDetailedTimeOfDay();
@@ -1236,6 +1350,19 @@ function resolveAndSpeak(now: number): void {
 			lastEmotionalReactionAt = now;
 			lastSpokenText = desire.text;
 			say(desire.text, 4.0, "commentary", 1, true);
+			return;
+		}
+	}
+
+	// ── D. Rare "golden" moments — strong prediction error, very low probability ──
+	const isPositiveState = state === "content" || state === "happy" || state === "blissful";
+	if (isPositiveState && now - lastGoldenLineAt > 600_000) {
+		if (Math.random() < 0.005) {
+			const goldenLine = GOLDEN_LINES[Math.floor(Math.random() * GOLDEN_LINES.length)];
+			lastGoldenLineAt = now;
+			lastEmotionalReactionAt = now;
+			lastSpokenText = goldenLine;
+			say(goldenLine, 4.0, "commentary", 2, true);
 			return;
 		}
 	}
@@ -1901,34 +2028,67 @@ export function pompomGetWeather(): Weather {
 	return getWeather();
 }
 
+/** Set the current agent mood so Pompom can offer comfort lines during errors */
+export function pompomSetAgentMood(mood: string) {
+	agentMood = mood;
+}
+
 /** Handle a user keypress command */
 export function pompomKeypress(key: string) {
 	const nowMs = Date.now();
 	// Track any interaction for boredom detection
 	lastInteractionAt = nowMs;
 
+	// ─ Return greeting: update lastUserActivityAt on every keypress
+	lastUserActivityAt = nowMs;
+
+	// ─ Milestone tracking: count every keypress
+	totalInteractions++;
+
+	// ─ Diminishing returns: detect rapid same-key spam
+	if (key === lastKeypressKey && nowMs - lastKeypressAt < 5000) {
+		rapidRepeatCount++;
+	} else {
+		rapidRepeatCount = 0;
+	}
+	lastKeypressKey = key;
+	lastKeypressAt = nowMs;
+
+	// 3rd rapid repeat: gentle hint, then skip normal reaction
+	if (rapidRepeatCount === 2) {
+		say("[mischievously] Hehe, again?", 2.0, "reaction", 1, true);
+		return;
+	}
+
+	// 4th+ rapid repeat: visual-only (no say, no sfx) — handled by suppressSpeech flag below
+	const suppressSpeech = rapidRepeatCount >= 3;
+
 	if (key === "p") {
 		currentState = "excited"; actionTimer = 2.5; isSleeping = false;
 		lastPlayedAt = nowMs;
-		const state = currentEmotionalState;
-		if (state === "recovering") say("[happy] Purrrr... everything is perfect...", 4.0, "user_action", 3, true);
-		else if (state === "hungry" || state === "critical_hunger") say("[happy] That's nice... but I'm still hungry...", 4.0, "user_action", 3, true);
-		else if (state === "tired" || state === "critical_tired") say("[whispers] Mmm... nice... so sleepy though...", 4.0, "user_action", 3, true);
-		else say("[happy] Purrrrr...", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			if (state === "recovering") say("[happy] Purrrr... everything is perfect...", 4.0, "user_action", 3, true);
+			else if (state === "hungry" || state === "critical_hunger") say("[happy] That's nice... but I'm still hungry...", 4.0, "user_action", 3, true);
+			else if (state === "tired" || state === "critical_tired") say("[whispers] Mmm... nice... so sleepy though...", 4.0, "user_action", 3, true);
+			else say("[happy] Purrrrr...", 4.0, "user_action", 3, true);
+		}
 	}
 	else if (key === "w") {
 		const wasLowEnergy = energy < 15;
 		currentState = "idle"; isSleeping = false; blinkFade = 0;
 		if (wasLowEnergy) { lastRestedAt = nowMs; }
-		say("[excited] I'm awake!", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) say("[excited] I'm awake!", 4.0, "user_action", 3, true);
 	}
 	else if (key === "s") {
 		currentState = "sleep"; isSleeping = true; actionTimer = 10;
-		const state = currentEmotionalState;
-		if (state === "critical_tired" || state === "tired") say("[whispers] Finally... sweet sleep...", 4.0, "user_action", 3, true);
-		else if (state === "recovering") say("[happy] A nap after a meal? Perfect!", 4.0, "user_action", 3, true);
-		else if (state === "hungry" || state === "critical_hunger") say("[sad] Hard to sleep when I'm this hungry...", 4.0, "user_action", 3, true);
-		else say("[whispers] Time for a nap... zZz", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			if (state === "critical_tired" || state === "tired") say("[whispers] Finally... sweet sleep...", 4.0, "user_action", 3, true);
+			else if (state === "recovering") say("[happy] A nap after a meal? Perfect!", 4.0, "user_action", 3, true);
+			else if (state === "hungry" || state === "critical_hunger") say("[sad] Hard to sleep when I'm this hungry...", 4.0, "user_action", 3, true);
+			else say("[whispers] Time for a nap... zZz", 4.0, "user_action", 3, true);
+		}
 	}
 	else if (key === "f") {
 		isSleeping = false; currentState = "idle";
@@ -1941,10 +2101,10 @@ export function pompomKeypress(key: string) {
 		lastPlayedAt = nowMs;
 		const state = currentEmotionalState;
 		if (state === "critical_hunger" || state === "critical_tired") {
-			say(state === "critical_hunger" ? "[annoyed] I can't play right now... I'm starving!" : "[sighs] Too tired to chase...", 3.0, "user_action", 3, true);
+			if (!suppressSpeech) say(state === "critical_hunger" ? "[annoyed] I can't play right now... I'm starving!" : "[sighs] Too tired to chase...", 3.0, "user_action", 3, true);
 		} else if (ballY === 0.55 && !hasBall && Math.abs(posX - ballX) < 0.4) {
 			ballVy = -1.8; ballVx = (Math.random() - 0.5) * 2.5;
-			say(state === "recovering" ? "[excited] Now I have energy to play!" : "[excited] Boing!", 2.0, "user_action", 3, true);
+			if (!suppressSpeech) say(state === "recovering" ? "[excited] Now I have energy to play!" : "[excited] Boing!", 2.0, "user_action", 3, true);
 		} else {
 			ballX = posX + (Math.random() > 0.5 ? 0.8 : -0.8); ballY = -0.4; ballVx = (Math.random() - 0.5) * 1.5; ballVy = -1.2; hasBall = false;
 		}
@@ -1952,22 +2112,24 @@ export function pompomKeypress(key: string) {
 	else if (key === "m") {
 		isSleeping = false; currentState = "singing"; actionTimer = 5.0;
 		lastPlayedAt = nowMs;
-		const state = currentEmotionalState;
-		// Use [sings] tag — pick from singing repertoire when possible
-		if (state === "critical_hunger" || state === "hungry") {
-			say("[sad] I don't feel like singing right now...", 3.0, "user_action", 3, true);
-		} else if (state === "critical_tired") {
-			say("[whispers] A lullaby maybe...", 3.0, "user_action", 3, true);
-		} else if (state === "tired") {
-			say("[sings] Twinkle twinkle... zzz...", 4.0, "user_action", 3, true);
-		} else if (state === "recovering") {
-			const recovSongs = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes("recovering") && energy >= s.minEnergy);
-			const song = recovSongs.length > 0 ? recovSongs[Math.floor(Math.random() * recovSongs.length)] : null;
-			say(song ? song.text : "[sings] Food glorious food!", 4.0, "user_action", 3, true);
-		} else {
-			const eligible = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes(state) && energy >= s.minEnergy);
-			const song = eligible.length > 0 ? eligible[Math.floor(Math.random() * eligible.length)] : null;
-			say(song ? song.text : "[sings] La la la!", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			// Use [sings] tag — pick from singing repertoire when possible
+			if (state === "critical_hunger" || state === "hungry") {
+				say("[sad] I don't feel like singing right now...", 3.0, "user_action", 3, true);
+			} else if (state === "critical_tired") {
+				say("[whispers] A lullaby maybe...", 3.0, "user_action", 3, true);
+			} else if (state === "tired") {
+				say("[sings] Twinkle twinkle... zzz...", 4.0, "user_action", 3, true);
+			} else if (state === "recovering") {
+				const recovSongs = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes("recovering") && energy >= s.minEnergy);
+				const song = recovSongs.length > 0 ? recovSongs[Math.floor(Math.random() * recovSongs.length)] : null;
+				say(song ? song.text : "[sings] Food glorious food!", 4.0, "user_action", 3, true);
+			} else {
+				const eligible = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes(state) && energy >= s.minEnergy);
+				const song = eligible.length > 0 ? eligible[Math.floor(Math.random() * eligible.length)] : null;
+				say(song ? song.text : "[sings] La la la!", 4.0, "user_action", 3, true);
+			}
 		}
 	}
 	else if (key === "c") { activeTheme = (activeTheme + 1) % themes.length; }
@@ -1979,11 +2141,13 @@ export function pompomKeypress(key: string) {
 	else if (key === "x") {
 		isSleeping = false; currentState = "dance"; actionTimer = 4.0;
 		lastPlayedAt = nowMs;
-		const state = currentEmotionalState;
-		if (state === "critical_hunger" || state === "hungry") say("[annoyed] Can't dance when my tummy is empty...", 3.0, "user_action", 3, true);
-		else if (state === "critical_tired" || state === "tired") say("[sighs] Too tired to dance...", 3.0, "user_action", 3, true);
-		else if (state === "recovering") say("[excited] Full belly dance!", 3.0, "user_action", 3, true);
-		else say("[excited] Let's dance!", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			if (state === "critical_hunger" || state === "hungry") say("[annoyed] Can't dance when my tummy is empty...", 3.0, "user_action", 3, true);
+			else if (state === "critical_tired" || state === "tired") say("[sighs] Too tired to dance...", 3.0, "user_action", 3, true);
+			else if (state === "recovering") say("[excited] Full belly dance!", 3.0, "user_action", 3, true);
+			else say("[excited] Let's dance!", 4.0, "user_action", 3, true);
+		}
 	}
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
@@ -1992,27 +2156,33 @@ export function pompomKeypress(key: string) {
 		const state = currentEmotionalState;
 		const wasDesperate = hunger < 20;
 		hunger = Math.min(100, hunger + 30);
-		if (wasDesperate) say("[crying] Oh my gosh... a TREAT! Thank you so much!", 3.0, "user_action", 3, true);
-		else if (state === "recovering") say("[excited] ANOTHER treat? I don't deserve you!", 3.0, "user_action", 3, true);
-		else if (state === "tired" || state === "critical_tired") say("[happy] A treat? For sleepy me?", 3.0, "user_action", 3, true);
-		else say("[excited] A special treat!", 2.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			if (wasDesperate) say("[crying] Oh my gosh... a TREAT! Thank you so much!", 3.0, "user_action", 3, true);
+			else if (state === "recovering") say("[excited] ANOTHER treat? I don't deserve you!", 3.0, "user_action", 3, true);
+			else if (state === "tired" || state === "critical_tired") say("[happy] A treat? For sleepy me?", 3.0, "user_action", 3, true);
+			else say("[excited] A special treat!", 2.0, "user_action", 3, true);
+		}
 	}
 	else if (key === "h") {
 		isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10);
-		const state = currentEmotionalState;
-		if (state === "recovering") say("[happy] Hugs make everything better!", 4.0, "user_action", 3, true);
-		else if (state === "hungry" || state === "critical_hunger") say("[happy] Thanks... hugs help but food helps more...", 4.0, "user_action", 3, true);
-		else if (state === "tired" || state === "critical_tired") say("[happy] That hug gave me life...", 4.0, "user_action", 3, true);
-		else say("[happy] Aww, hugs!", 4.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			if (state === "recovering") say("[happy] Hugs make everything better!", 4.0, "user_action", 3, true);
+			else if (state === "hungry" || state === "critical_hunger") say("[happy] Thanks... hugs help but food helps more...", 4.0, "user_action", 3, true);
+			else if (state === "tired" || state === "critical_tired") say("[happy] That hug gave me life...", 4.0, "user_action", 3, true);
+			else say("[happy] Aww, hugs!", 4.0, "user_action", 3, true);
+		}
 	}
 	else if (key === "g") {
 		isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game";
 		lastPlayedAt = nowMs;
-		const state = currentEmotionalState;
-		if (state === "critical_hunger" || state === "hungry") say("[annoyed] I can't focus... too hungry...", 3.0, "user_action", 3, true);
-		else if (state === "critical_tired" || state === "tired") say("[sighs] Too exhausted to play...", 3.0, "user_action", 3, true);
-		else if (state === "recovering") say("[excited] Full of energy! Let's play!", 3.0, "user_action", 3, true);
-		else say("[excited] Catch the stars!", 3.0, "user_action", 3, true);
+		if (!suppressSpeech) {
+			const state = currentEmotionalState;
+			if (state === "critical_hunger" || state === "hungry") say("[annoyed] I can't focus... too hungry...", 3.0, "user_action", 3, true);
+			else if (state === "critical_tired" || state === "tired") say("[sighs] Too exhausted to play...", 3.0, "user_action", 3, true);
+			else if (state === "recovering") say("[excited] Full of energy! Let's play!", 3.0, "user_action", 3, true);
+			else say("[excited] Catch the stars!", 3.0, "user_action", 3, true);
+		}
 	}
 
 	// Accessory giving is handled separately via pompomGiveAccessory
@@ -2033,6 +2203,17 @@ export function resetPompom() {
 	currentEmotionalState = "content";
 	lastTimeOfDayPeriod = ""; announcedTimePeriods = new Set<DetailedTimeOfDay>();
 	sessionStartedAt = Date.now(); lastSpokenText = "";
+	// Dopamine reward system variables
+	lastUserActivityAt = Date.now();
+	totalInteractions = 0;
+	milestoneCelebrated = 0;
+	lastSessionMilestone = 0;
+	lastGoldenLineAt = 0;
+	lastKeypressKey = "";
+	lastKeypressAt = 0;
+	rapidRepeatCount = 0;
+	agentMood = "idle";
+	lastMilestoneCheckAt = 0;
 	activeTheme = 0;
 	weatherOverride = null;
 	lastAnnouncedWeatherState = weatherState;

@@ -41,6 +41,7 @@ import {
 	pompomSay,
 	pompomSetAgentEarBoost,
 	pompomSetAgentLook,
+	pompomSetAgentMood,
 	pompomSetAgentOverlay,
 	pompomSetAntennaGlow,
 	pompomSetTalkAudioLevel,
@@ -455,6 +456,8 @@ export default function (pi: ExtensionAPI) {
 		pompomSetAntennaGlow({ intensity: glow });
 		pompomSetAgentEarBoost({ amount: earBoost });
 		pompomSetWeatherOverride({ weather: shouldUseAgentWeather() ? getAgentWeather() : null });
+		// Sync agent mood for comfort speech in Pompom's behavioral system
+		pompomSetAgentMood(stats.mood);
 	}
 
 	function pulseOverlay(hint: OverlayHint, durationMs: number) {
