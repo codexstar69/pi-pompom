@@ -105,6 +105,7 @@ class PompomSettingsPanel {
 		if (this.sub === "voice-picker") all = getVoiceCatalog()[cfg.engine] || [];
 		else if (this.sub === "engine-picker") all = ENGINE_OPTIONS.map(e => ({ name: e.label, id: e.id }));
 		else if (this.sub === "personality-picker") all = PERSONALITY_OPTIONS.map(p => ({ name: p.label, id: p.id }));
+		else if (this.sub === "model-picker") all = this.modelList.map(m => ({ name: m, id: m }));
 		this.filtered = q ? all.filter(v => v.name.toLowerCase().includes(q)) : all;
 		this.subRow = Math.min(this.subRow, Math.max(0, this.filtered.length - 1));
 	}

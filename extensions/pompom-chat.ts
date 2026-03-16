@@ -1,6 +1,6 @@
 /**
  * Pompom Chat — side agent overlay with read-only tools.
- * Opens as a non-capturing overlay alongside the main agent.
+ * Opens as a capturing overlay (takes keyboard focus for typing).
  */
 
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
