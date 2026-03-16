@@ -1206,12 +1206,35 @@ export default function (pi: ExtensionAPI) {
 					hideCompanion();
 					stopAmbient();
 					stopAmbientWeatherSync();
+					stopPlayback();
 					resetPompom();
 					if (terminalInputUnsub) {
 						terminalInputUnsub();
 						terminalInputUnsub = null;
 					}
-					commandContext.ui.notify("Pompom companion hidden.", "info");
+					commandContext.ui.notify("Pompom companion hidden. Side chat still available via /pompom:chat", "info");
+					return;
+				}
+
+				if (sub === "quiet" || sub === "zen" || sub === "mute") {
+					// Quiet mode: disable ALL animation, voice, and sounds — but keep chat alive
+					enabled = false;
+					hideCompanion();
+					stopAmbient();
+					stopAmbientWeatherSync();
+					stopPlayback();
+					setVoiceEnabled(false);
+					setAmbientEnabled(false);
+					if (terminalInputUnsub) {
+						terminalInputUnsub();
+						terminalInputUnsub = null;
+					}
+					commandContext.ui.notify(
+						"Quiet mode — animation, voice, and sounds all off.\n" +
+						"Side chat is still available: /pompom:chat or Alt+/\n" +
+						"To restore everything: /pompom on",
+						"info"
+					);
 					return;
 				}
 
@@ -1229,6 +1252,7 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify(
 						`Pompom Commands\n` +
 						`  /pompom on|off       Toggle companion\n` +
+						`  /pompom quiet        Mute all (chat stays)  \n` +
 						`  /pompom toggle       Toggle view         ${modifier}v\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
 						`  /pompom feed         Drop food            ${modifier}e\n` +
