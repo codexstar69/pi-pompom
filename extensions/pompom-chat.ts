@@ -9,6 +9,7 @@ import {
 	buildSessionContext,
 	convertToLlm,
 	createReadOnlyTools,
+	getSelectListTheme,
 	type ModelRegistry,
 	type SessionManager,
 	type Theme,
@@ -85,7 +86,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		});
 
 		this.agent.subscribe((e) => this.onAgentEvent(e));
-		this.editor = new Editor(opts.tui, { borderColor: (t: string) => t, selectList: {} as any } as any, { paddingX: 0 });
+		this.editor = new Editor(opts.tui, { borderColor: (t: string) => opts.theme.fg("borderMuted", t), selectList: getSelectListTheme() }, { paddingX: 0 });
 		this.editor.onSubmit = (text) => this.onSubmit(text);
 
 		this.displayMessages.push({ role: "pompom", text: "Hi! Ask me anything or use peek_main to check on the main agent." });

@@ -15,7 +15,7 @@ import {
 import { pompomKeypress, pompomStatus, pompomGiveAccessory, pompomGetAccessories } from "./pompom";
 import { getSessionStats } from "./pompom-agent";
 
-type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker";
+type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker" | "model-picker";
 
 const TABS = ["Voice", "Personality", "Model", "Theme", "Accessories", "About"];
 
@@ -80,9 +80,16 @@ class PompomSettingsPanel {
 		if (matchesKey(data, Key.escape)) { this.sub = "main"; this.search = ""; this.inv(); return; }
 		if (matchesKey(data, Key.up) && this.subRow > 0) { this.subRow--; this.inv(); return; }
 		if (matchesKey(data, Key.down) && this.subRow < this.filtered.length - 1) { this.subRow++; this.inv(); return; }
-		if (matchesKey(data, Key.enter) && this.filtered[this.subRow]) {
+		if (matchesKey(data, Key.enter)) {
+			if (this.sub === "model-picker") {
+				// Model picker: use the search text directly as model ID, or selected item
+				const modelId = this.search.trim() || (this.filtered[this.subRow]?.id || "");
+				if (modelId) setPompomModel(modelId);
+				this.sub = "main"; this.search = ""; this.inv(); return;
+			}
+			if (!this.filtered[this.subRow]) { return; }
 			const p = this.filtered[this.subRow];
-			if (this.sub === "voice-picker") { setVoice(p.id); speakTest(); } // preview immediately
+			if (this.sub === "voice-picker") { setVoice(p.id); speakTest(); }
 			else if (this.sub === "engine-picker") setVoiceEngine(p.id as VoiceConfig["engine"]);
 			else if (this.sub === "personality-picker") setPersonality(p.id as Personality);
 			this.sub = "main"; this.search = ""; this.inv(); return;
@@ -109,7 +116,7 @@ class PompomSettingsPanel {
 	private rowCount(): number {
 		if (this.tab === 0) return 5; // Voice
 		if (this.tab === 1) return PERSONALITY_OPTIONS.length;
-		if (this.tab === 2) return this.modelList.length + 1; // Model: "use main" + available models
+		if (this.tab === 2) return 2; // Model: "use main" or "set custom"
 		if (this.tab === 3) return THEMES.length;
 		if (this.tab === 4) return ACCESSORIES.length;
 		return 0; // About is read-only
@@ -125,11 +132,12 @@ class PompomSettingsPanel {
 		} else if (this.tab === 1) {
 			const p = PERSONALITY_OPTIONS[this.row]; if (p) setPersonality(p.id);
 		} else if (this.tab === 2) {
-			// Model tab: row 0 = "use main agent's model", row 1+ = specific models
 			if (this.row === 0) { setPompomModel(""); }
-			else {
-				const m = this.modelList[this.row - 1];
-				if (m) setPompomModel(m);
+			else if (this.row === 1) {
+				this.sub = "model-picker";
+				this.subRow = 0;
+				this.search = getPompomModel(); // pre-fill with current model
+				this.filtered = this.modelList.map(m => ({ name: m, id: m }));
 			}
 		} else if (this.tab === 3) {
 			pompomKeypress("c");
@@ -214,21 +222,16 @@ class PompomSettingsPanel {
 				lines.push(line(`${pre}${BRT}${label}${RST}${active}`));
 			}
 		} else if (this.tab === 2) {
-			// Model tab — select which LLM Pompom uses for /pompom:ask and /pompom:analyze
 			const current = getPompomModel();
-			const mainLabel = "Use main agent's model (default)";
 			const mainActive = current === "" ? ` ${GRN}\u2713${RST}` : "";
-			const mainPre = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
-			lines.push(line(`${mainPre}${BRT}${mainLabel}${RST}${mainActive}`));
-			for (let i = 0; i < this.modelList.length; i++) {
-				const m = this.modelList[i];
-				const active = current === m ? ` ${GRN}\u2713${RST}` : "";
-				const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
-				lines.push(line(`${pre}${BRT}${m}${RST}${active}`));
-			}
-			if (this.modelList.length === 0) {
-				lines.push(line(`${DIM}No additional models available${RST}`));
-			}
+			const customActive = current !== "" ? ` ${GRN}\u2713 ${current}${RST}` : "";
+			const pre0 = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
+			const pre1 = this.row === 1 ? `${SEL}\u25b8 ` : `  `;
+			lines.push(line(`${pre0}${BRT}Use main agent's model (default)${RST}${mainActive}`));
+			lines.push(line(`${pre1}${BRT}Set custom model...${RST}${customActive}`));
+			lines.push(line(""));
+			lines.push(line(`${DIM}Pompom uses this for /pompom:ask, /pompom:analyze, /pompom:chat${RST}`));
+			lines.push(line(`${DIM}Tip: use a fast/cheap model to save costs${RST}`));
 		} else if (this.tab === 3) {
 			const st = pompomStatus();
 			for (let i = 0; i < THEMES.length; i++) {
