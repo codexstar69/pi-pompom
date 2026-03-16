@@ -26,55 +26,241 @@ function sanitizeSpeechText(text: string): string {
 // ─── Pet State ───────────────────────────────────────────────────────────────
 type State = "idle" | "walk" | "flip" | "sleep" | "excited" | "chasing" | "fetching" | "singing" | "offscreen" | "peek" | "dance" | "game";
 
-const idleSpeech = [
-	"[happy] What are we building?", "[excited] This is fun!", "Boop!",
-	"[happy] I love it here!", "[curious] Need a break?", "[sings] Pom pom pom!",
-	"[happy] You're doing great!", "[laughs] Wiggles ears!", "[curious] Hmm...",
-	"[excited] Hey! Look at me!", "[sings] Tra la la!", "[laughs] Happy bounce!",
+// ─── Character Bible: Speech Lines Per State ────────────────────────────────
+
+interface BibleSpeechLine {
+	text: string;
+	weight: number;
+	minGapSeconds: number;
+}
+
+const CRITICAL_HUNGER_LINES: BibleSpeechLine[] = [
+	{ text: "[crying] I'm SO hungry... please feed me...", weight: 5, minGapSeconds: 30 },
+	{ text: "[wheezing] Everything... looks like food...", weight: 3, minGapSeconds: 45 },
+	{ text: "[sad] My tummy hurts...", weight: 5, minGapSeconds: 25 },
+	{ text: "[crying] I can't think straight... need food...", weight: 4, minGapSeconds: 40 },
+	{ text: "[annoyed] Hmph... you forgot about me...", weight: 3, minGapSeconds: 60 },
+	{ text: "[sad] Is that... food? Please?", weight: 4, minGapSeconds: 35 },
+	{ text: "[sighs] I've been so patient...", weight: 2, minGapSeconds: 50 },
+	{ text: "[wheezing] Pompom... needs... snacks...", weight: 3, minGapSeconds: 45 },
+	{ text: "[annoyed] I can't play right now... I'm starving!", weight: 4, minGapSeconds: 20 },
+	{ text: "[sad] Please... just a little food?", weight: 5, minGapSeconds: 20 },
 ];
 
-// Emotional reactions based on needs — v3 audio tags for natural expression
-const hungrySpeech = [
-	"[sad] My tummy is rumbling...",
-	"[annoyed] I'm SO hungry!",
-	"[sad] Can I have a snack... please?",
-	"[crying] Feed me! I'm starving!",
-	"[sighs] I could really use some food right now...",
-	"[sad] Hungry... so hungry...",
-	"[wheezing] Everything... looks... like food...",
-	"[excited] Is that food? Did someone say food?!",
+const CRITICAL_TIRED_LINES: BibleSpeechLine[] = [
+	{ text: "[whispers] Just... five more minutes...", weight: 5, minGapSeconds: 30 },
+	{ text: "[exhales] I can barely keep my eyes open...", weight: 4, minGapSeconds: 35 },
+	{ text: "[sighs] Everything is so... heavy...", weight: 3, minGapSeconds: 40 },
+	{ text: "[whispers] Can I have a nap... please?", weight: 5, minGapSeconds: 25 },
+	{ text: "[sighs] Running on empty here...", weight: 3, minGapSeconds: 45 },
+	{ text: "[whispers] Zzz... oh! Sorry... I dozed off...", weight: 4, minGapSeconds: 50 },
+	{ text: "[exhales] My antenna is drooping...", weight: 3, minGapSeconds: 40 },
+	{ text: "[sighs] Too tired... maybe later...", weight: 4, minGapSeconds: 20 },
 ];
 
-const tiredSpeech = [
-	"[sighs] I'm so sleepy...",
-	"[exhales] My eyes are getting heavy...",
-	"[sad] I need a nap...",
-	"[whispers] Just... five more minutes...",
-	"[sighs] Running on empty here...",
-	"[exhales sharply] Can barely keep my eyes open...",
+const HUNGRY_LINES: BibleSpeechLine[] = [
+	{ text: "[sad] My tummy is rumbling...", weight: 5, minGapSeconds: 40 },
+	{ text: "[annoyed] I'm SO hungry!", weight: 4, minGapSeconds: 45 },
+	{ text: "[sad] Can I have a snack... please?", weight: 5, minGapSeconds: 35 },
+	{ text: "[sighs] I could really use some food...", weight: 4, minGapSeconds: 40 },
+	{ text: "[curious] Is it snack time yet?", weight: 3, minGapSeconds: 50 },
+	{ text: "[annoyed] Hmph... hungry Pompom is grumpy Pompom", weight: 3, minGapSeconds: 60 },
+	{ text: "[sad] Hungry... so hungry...", weight: 4, minGapSeconds: 35 },
+	{ text: "[excited] Is that food? Did someone say food?!", weight: 3, minGapSeconds: 45 },
+	{ text: "[annoyed] I'd care more about that if I wasn't hungry", weight: 2, minGapSeconds: 60 },
 ];
 
-const happySpeech = [
-	"[laughs] Life is good!",
-	"[excited] I feel amazing right now!",
-	"[happy] Everything is just perfect!",
-	"[laughs] I could dance all day!",
-	"[excited] Best day EVER!",
-	"[chuckles] I'm in such a good mood!",
-	"[sings] La la la, happy me!",
+const TIRED_LINES: BibleSpeechLine[] = [
+	{ text: "[sighs] I'm so sleepy...", weight: 5, minGapSeconds: 40 },
+	{ text: "[exhales] My eyes are getting heavy...", weight: 4, minGapSeconds: 45 },
+	{ text: "[sad] I need a nap...", weight: 5, minGapSeconds: 35 },
+	{ text: "[whispers] Just... five more minutes...", weight: 4, minGapSeconds: 40 },
+	{ text: "[sighs] Running on empty here...", weight: 3, minGapSeconds: 50 },
+	{ text: "[exhales] Can barely keep my eyes open...", weight: 4, minGapSeconds: 35 },
+	{ text: "[whispers] A quick nap would be amazing...", weight: 3, minGapSeconds: 45 },
 ];
 
-const playfulSpeech = [
-	"[excited] Let's play a game!",
-	"[mischievously] Wanna throw the ball?",
-	"[excited] I bet I can catch more stars than last time!",
-	"[laughs] Chase me!",
-	"[curious] What happens if I press THIS?",
-	"[excited] Dance party? Dance party!",
+const RECOVERING_LINES: BibleSpeechLine[] = [
+	{ text: "[excited] FINALLY! That was SO good!", weight: 5, minGapSeconds: 10 },
+	{ text: "[happy] Mmm... my tummy is happy now!", weight: 5, minGapSeconds: 15 },
+	{ text: "[laughs] I feel so much better!", weight: 4, minGapSeconds: 15 },
+	{ text: "[happy] Thank you for feeding me!", weight: 5, minGapSeconds: 10 },
+	{ text: "[chuckles] Food coma incoming...", weight: 3, minGapSeconds: 20 },
+	{ text: "[happy] You always take care of me", weight: 4, minGapSeconds: 25 },
+	{ text: "[sighs] What a nice nap!", weight: 5, minGapSeconds: 10 },
+	{ text: "[excited] I feel SO refreshed!", weight: 5, minGapSeconds: 15 },
+	{ text: "[happy] That rest was exactly what I needed", weight: 4, minGapSeconds: 15 },
+	{ text: "[laughs] Full of energy again!", weight: 4, minGapSeconds: 20 },
 ];
 
+const CONTENT_LINES: BibleSpeechLine[] = [
+	{ text: "[happy] What are we building?", weight: 3, minGapSeconds: 60 },
+	{ text: "[curious] Hmm... interesting code...", weight: 2, minGapSeconds: 90 },
+	{ text: "[happy] I love it here!", weight: 3, minGapSeconds: 75 },
+	{ text: "[happy] Nice and cozy", weight: 2, minGapSeconds: 90 },
+	{ text: "[curious] What's that function do?", weight: 2, minGapSeconds: 120 },
+	{ text: "[happy] Good vibes today", weight: 3, minGapSeconds: 60 },
+	{ text: "[curious] Need a break?", weight: 3, minGapSeconds: 300 },
+	{ text: "[happy] I'm glad you're here", weight: 4, minGapSeconds: 240 },
+	{ text: "[happy] You're doing great!", weight: 3, minGapSeconds: 180 },
+];
+
+const HAPPY_LINES: BibleSpeechLine[] = [
+	{ text: "[laughs] Life is good!", weight: 5, minGapSeconds: 45 },
+	{ text: "[excited] I feel amazing right now!", weight: 4, minGapSeconds: 50 },
+	{ text: "[happy] Everything is just perfect!", weight: 4, minGapSeconds: 55 },
+	{ text: "[laughs] I could dance all day!", weight: 3, minGapSeconds: 60 },
+	{ text: "[excited] Best day EVER!", weight: 3, minGapSeconds: 70 },
+	{ text: "[chuckles] I'm in such a good mood!", weight: 4, minGapSeconds: 50 },
+	{ text: "[sings] La la la, happy me!", weight: 3, minGapSeconds: 90 },
+	{ text: "[happy] You make everything better", weight: 4, minGapSeconds: 180 },
+	{ text: "[excited] Let's celebrate with a dance!", weight: 3, minGapSeconds: 120 },
+	{ text: "[happy] I love our coding sessions", weight: 4, minGapSeconds: 240 },
+];
+
+const BLISSFUL_LINES: BibleSpeechLine[] = [
+	{ text: "[laughs] I'm the happiest Pompom in the world!", weight: 5, minGapSeconds: 60 },
+	{ text: "[sings] Everything is wonderful!", weight: 4, minGapSeconds: 90 },
+	{ text: "[happy] I feel so loved and full and warm!", weight: 5, minGapSeconds: 70 },
+	{ text: "[excited] Nothing could ruin this moment!", weight: 4, minGapSeconds: 80 },
+	{ text: "[happy] Thank you for taking such good care of me", weight: 5, minGapSeconds: 120 },
+	{ text: "[laughs] This is what paradise feels like!", weight: 3, minGapSeconds: 90 },
+	{ text: "[sings] Pom pom pom... I love you!", weight: 4, minGapSeconds: 120 },
+];
+
+const BORED_LINES: BibleSpeechLine[] = [
+	{ text: "[sighs] I'm bored...", weight: 5, minGapSeconds: 60 },
+	{ text: "[curious] Can we do something?", weight: 4, minGapSeconds: 75 },
+	{ text: "[sighs] Nothing to do...", weight: 3, minGapSeconds: 90 },
+	{ text: "[curious] What are you working on?", weight: 4, minGapSeconds: 60 },
+	{ text: "[happy] Tell me a joke!", weight: 3, minGapSeconds: 120 },
+	{ text: "[excited] Can we play ball?", weight: 4, minGapSeconds: 90 },
+	{ text: "[curious] I wonder what's outside the terminal...", weight: 2, minGapSeconds: 120 },
+	{ text: "[mischievously] Bet I can catch a firefly!", weight: 3, minGapSeconds: 90 },
+	{ text: "[sighs] I've been sitting here forever...", weight: 3, minGapSeconds: 100 },
+];
+
+const PLAYFUL_LINES: BibleSpeechLine[] = [
+	{ text: "[excited] Can we play ball? Please please please!", weight: 5, minGapSeconds: 45 },
+	{ text: "[excited] I wanna dance!", weight: 5, minGapSeconds: 50 },
+	{ text: "[mischievously] Wanna throw the ball?", weight: 4, minGapSeconds: 55 },
+	{ text: "[excited] Let's play catch the stars!", weight: 4, minGapSeconds: 60 },
+	{ text: "[laughs] Chase me!", weight: 3, minGapSeconds: 60 },
+	{ text: "[excited] Sing me a song!", weight: 3, minGapSeconds: 90 },
+	{ text: "[curious] What happens if I press THIS?", weight: 2, minGapSeconds: 120 },
+	{ text: "[excited] Dance party? Dance party!", weight: 4, minGapSeconds: 55 },
+	{ text: "[mischievously] Do a flip! Do a flip!", weight: 3, minGapSeconds: 60 },
+	{ text: "[excited] I bet I can catch more stars this time!", weight: 3, minGapSeconds: 75 },
+];
+
+const RELATIONSHIP_WARMTH: BibleSpeechLine[] = [
+	{ text: "[happy] I'm glad you're here", weight: 5, minGapSeconds: 600 },
+	{ text: "[happy] Take a break if you need one", weight: 4, minGapSeconds: 300 },
+	{ text: "[curious] That was a long session, are you okay?", weight: 4, minGapSeconds: 600 },
+	{ text: "[happy] You always take care of me", weight: 5, minGapSeconds: 900 },
+	{ text: "[happy] I love our coding sessions together", weight: 4, minGapSeconds: 1200 },
+	{ text: "[chuckles] We make a good team", weight: 3, minGapSeconds: 600 },
+	{ text: "[happy] Don't forget to drink some water", weight: 3, minGapSeconds: 1800 },
+	{ text: "[curious] Remember to stretch!", weight: 3, minGapSeconds: 1800 },
+	{ text: "[happy] I'm proud of you for working hard", weight: 4, minGapSeconds: 1200 },
+	{ text: "[happy] You're doing amazing... I mean it", weight: 5, minGapSeconds: 900 },
+	{ text: "[whispers] You're my favorite human", weight: 5, minGapSeconds: 1800 },
+];
+
+// ─── Character Bible: Singing repertoire ────────────────────────────────────
+const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEnergy: number }> = [
+	{ text: "[sings] La la la, la la la!", allowedStates: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
+	{ text: "[sings] Pom pom pom, I'm a happy Pompom!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: "[sings] Tra la la, coding all day!", allowedStates: ["happy", "blissful", "content", "playful"], minEnergy: 40 },
+	{ text: "[sings] Do re mi, you and me!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: "[sings] Boop boop be doo!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: "[sings] Sunshine and rainbows and fluffy clouds too!", allowedStates: ["happy", "blissful"], minEnergy: 60 },
+	{ text: "[sings] I love you, you love me, we're a happy family!", allowedStates: ["blissful", "recovering"], minEnergy: 50 },
+	{ text: "[sings] Hmm hmm hmm...", allowedStates: ["content", "happy", "recovering"], minEnergy: 30 },
+	{ text: "[sings] Da dum, da dum...", allowedStates: ["content", "happy"], minEnergy: 30 },
+	{ text: "[sings] Food glorious food!", allowedStates: ["recovering"], minEnergy: 30 },
+	{ text: "[sings] Happy tummy happy me!", allowedStates: ["recovering"], minEnergy: 30 },
+];
+
+// ─── Character Bible: Time-of-day awareness ──────────────────────────────────
+type DetailedTimeOfDay = "dawn" | "morning" | "day" | "afternoon" | "evening" | "late_night" | "deep_night";
+
+function getDetailedTimeOfDay(): DetailedTimeOfDay {
+	const h = new Date().getHours();
+	if (h >= 5 && h < 7) return "dawn";
+	if (h >= 7 && h < 10) return "morning";
+	if (h >= 10 && h < 14) return "day";
+	if (h >= 14 && h < 17) return "afternoon";
+	if (h >= 17 && h < 22) return "evening";
+	if (h >= 22 || h < 2) return "late_night";
+	return "deep_night";
+}
+
+const TIME_AWARENESS_LINES: Array<{ text: string; timeOfDay: DetailedTimeOfDay[]; oncePerPeriod: boolean; minSessionMinutes?: number }> = [
+	{ text: "[happy] Good morning! Ready to code?", timeOfDay: ["morning"], oncePerPeriod: true },
+	{ text: "[excited] Rise and shine! Let's build something!", timeOfDay: ["morning"], oncePerPeriod: true },
+	{ text: "[happy] A fresh day, a fresh terminal!", timeOfDay: ["morning"], oncePerPeriod: true },
+	{ text: "[curious] You're up early! The birds aren't even awake yet", timeOfDay: ["dawn"], oncePerPeriod: true },
+	{ text: "[whispers] Shh... the terminal is still waking up", timeOfDay: ["dawn"], oncePerPeriod: true },
+	{ text: "[sighs] Afternoon slump hitting... coffee time?", timeOfDay: ["afternoon"], oncePerPeriod: false, minSessionMinutes: 120 },
+	{ text: "[curious] Have you had lunch?", timeOfDay: ["afternoon"], oncePerPeriod: true },
+	{ text: "[happy] Nice evening session", timeOfDay: ["evening"], oncePerPeriod: true },
+	{ text: "[curious] Wrapping up for the day?", timeOfDay: ["evening"], oncePerPeriod: false, minSessionMinutes: 240 },
+	{ text: "[concerned] It's getting late... shouldn't you be sleeping?", timeOfDay: ["late_night"], oncePerPeriod: true },
+	{ text: "[whispers] It's past midnight... I'm worried about you", timeOfDay: ["late_night"], oncePerPeriod: false, minSessionMinutes: 60 },
+	{ text: "[sighs] We've been at this a while... take a stretch?", timeOfDay: ["late_night"], oncePerPeriod: false, minSessionMinutes: 120 },
+	{ text: "[whispers] It's really late... please get some rest soon", timeOfDay: ["deep_night"], oncePerPeriod: true },
+	{ text: "[sad] I'm sleepy and worried... you need sleep too", timeOfDay: ["deep_night"], oncePerPeriod: false, minSessionMinutes: 30 },
+	{ text: "[whispers] The world is asleep... maybe we should be too?", timeOfDay: ["deep_night"], oncePerPeriod: true },
+	{ text: "[curious] That was a long session... are you okay?", timeOfDay: ["day", "afternoon", "evening"], oncePerPeriod: false, minSessionMinutes: 180 },
+	{ text: "[happy] Take a break if you need one", timeOfDay: ["day", "afternoon", "evening"], oncePerPeriod: false, minSessionMinutes: 90 },
+	{ text: "[concerned] Your eyes must be tired... look away for 20 seconds?", timeOfDay: ["day", "afternoon", "evening", "late_night"], oncePerPeriod: false, minSessionMinutes: 120 },
+];
+
+// ─── Character Bible: Emotional State System ────────────────────────────────
+type EmotionalState =
+	| "critical_hunger" | "critical_tired"
+	| "hungry" | "tired"
+	| "recovering"
+	| "content" | "happy" | "blissful"
+	| "bored" | "playful";
+
+// Which speech categories are blocked per state (prevents happy speech during suffering)
+type SpeechCategory =
+	| "idle_chatter" | "encouragement" | "playful_request" | "food_request"
+	| "sleep_request" | "gratitude" | "care_for_user" | "time_awareness"
+	| "bored_complaint" | "weather_reaction" | "agent_commentary" | "singing" | "grumpy";
+
+const SPEECH_BLOCKED: Record<EmotionalState, SpeechCategory[]> = {
+	critical_hunger: ["idle_chatter", "encouragement", "playful_request", "singing", "care_for_user", "bored_complaint", "agent_commentary"],
+	critical_tired:  ["idle_chatter", "encouragement", "playful_request", "singing", "care_for_user", "bored_complaint", "food_request", "agent_commentary"],
+	hungry:          ["idle_chatter", "encouragement", "playful_request", "singing", "bored_complaint"],
+	tired:           ["idle_chatter", "encouragement", "playful_request", "singing", "bored_complaint"],
+	recovering:      ["food_request", "sleep_request", "grumpy", "bored_complaint"],
+	content:         ["food_request", "sleep_request", "grumpy"],
+	happy:           ["food_request", "sleep_request", "grumpy", "bored_complaint"],
+	blissful:        ["food_request", "sleep_request", "grumpy", "bored_complaint"],
+	bored:           ["encouragement", "singing"],
+	playful:         ["food_request", "sleep_request", "grumpy", "bored_complaint"],
+};
+
+function isSpeechAllowed(state: EmotionalState, category: SpeechCategory): boolean {
+	return !SPEECH_BLOCKED[state].includes(category);
+}
+
+// ─── New State Variables (character bible) ───────────────────────────────────
+let lastFedAt = 0;
+let lastRestedAt = 0;
+let lastPlayedAt = 0;
+let lastInteractionAt = 0;
+let lastDesireAt = 0;
+let currentEmotionalState: EmotionalState = "content";
+let lastTimeOfDayPeriod: DetailedTimeOfDay | "" = "";
+let announcedTimePeriods = new Set<DetailedTimeOfDay>();
+let sessionStartedAt = Date.now();
+let lastSpokenText = "";
 let lastEmotionalReactionAt = 0;
-const EMOTIONAL_REACTION_COOLDOWN_MS = 45000; // max one emotional line every 45s
+const EMOTIONAL_REACTION_COOLDOWN_MS = 45000;
 let currentState: State = "idle";
 let gameScore = 0;
 let gameStars: {x: number, y: number, vy: number, caught: boolean}[] = [];
@@ -937,6 +1123,133 @@ function buildObjects(): RenderObj[] {
 	return objects;
 }
 
+// ─── Character Bible: Core Functions ─────────────────────────────────────────
+
+function resolveEmotionalState(now: number): EmotionalState {
+	// Critical needs — always checked first
+	if (hunger < 15) return "critical_hunger";
+	if (energy < 15) return "critical_tired";
+
+	// Moderate needs
+	if (hunger < 30) return "hungry";
+	if (energy < 30) return "tired";
+
+	// Gratitude window — 45s after being fed/rested from a low state
+	const fedRecently = lastFedAt > 0 && now - lastFedAt < 45_000;
+	const restedRecently = lastRestedAt > 0 && now - lastRestedAt < 45_000;
+	if (fedRecently || restedRecently) return "recovering";
+
+	// Boredom — idle too long with no interaction
+	const idleMs = lastInteractionAt > 0 ? now - lastInteractionAt : now - sessionStartedAt;
+	if (idleMs > 180_000 && hunger > 50 && energy > 50) return "bored";
+
+	// Positive states
+	if (hunger > 90 && energy > 90) return "blissful";
+	if (hunger > 75 && energy > 75) {
+		if (Math.random() < 0.15) return "playful";
+		return "happy";
+	}
+
+	return "content";
+}
+
+function pickWeightedLine(pool: BibleSpeechLine[], now: number): BibleSpeechLine | null {
+	const eligible = pool.filter(l => {
+		if (l.text === lastSpokenText) return false;
+		if (now - lastEmotionalReactionAt < l.minGapSeconds * 1000) return false;
+		return true;
+	});
+	if (eligible.length === 0) return null;
+	const totalWeight = eligible.reduce((sum, l) => sum + l.weight, 0);
+	let roll = Math.random() * totalWeight;
+	for (const line of eligible) {
+		roll -= line.weight;
+		if (roll <= 0) return line;
+	}
+	return eligible[eligible.length - 1];
+}
+
+function getLinePoolForState(state: EmotionalState): BibleSpeechLine[] {
+	switch (state) {
+		case "critical_hunger": return CRITICAL_HUNGER_LINES;
+		case "critical_tired":  return CRITICAL_TIRED_LINES;
+		case "hungry":          return HUNGRY_LINES;
+		case "tired":           return TIRED_LINES;
+		case "recovering":      return RECOVERING_LINES;
+		case "content":         return [...CONTENT_LINES, ...RELATIONSHIP_WARMTH];
+		case "happy":           return [...HAPPY_LINES, ...RELATIONSHIP_WARMTH];
+		case "blissful":        return [...BLISSFUL_LINES, ...RELATIONSHIP_WARMTH];
+		case "bored":           return BORED_LINES;
+		case "playful":         return PLAYFUL_LINES;
+	}
+}
+
+function resolveAndSpeak(now: number): void {
+	const state = currentEmotionalState;
+
+	// Time-of-day awareness (once per period, only in non-negative states)
+	if (isSpeechAllowed(state, "time_awareness") || isSpeechAllowed(state, "care_for_user")) {
+		const tod = getDetailedTimeOfDay();
+		if (tod !== lastTimeOfDayPeriod) {
+			const sessionMin = (now - sessionStartedAt) / 60_000;
+			const timeLine = TIME_AWARENESS_LINES.find(l => {
+				if (!l.timeOfDay.includes(tod)) return false;
+				if (l.oncePerPeriod && announcedTimePeriods.has(tod)) return false;
+				if (!isSpeechAllowed(state, "care_for_user")) return false;
+				if (l.minSessionMinutes && sessionMin < l.minSessionMinutes) return false;
+				return true;
+			});
+			if (timeLine && speechTimer <= 0) {
+				lastTimeOfDayPeriod = tod;
+				announcedTimePeriods.add(tod);
+				lastEmotionalReactionAt = now;
+				lastSpokenText = timeLine.text;
+				say(timeLine.text, 4.0, "commentary", 2, true);
+				return;
+			}
+		}
+	}
+
+	// Minimum gap before speaking again (varies by urgency)
+	const minGap = (state === "critical_hunger" || state === "critical_tired") ? 25_000
+		: (state === "hungry" || state === "tired") ? 40_000
+		: 60_000;
+	if (now - lastEmotionalReactionAt < minGap) return;
+	if (speechTimer > 0) return;
+
+	// Spontaneous desires — when happy/playful/bored, she asks for activities
+	if (isSpeechAllowed(state, "playful_request") && now - lastDesireAt > 90_000) {
+		const desireLines: Array<{ text: string; states: EmotionalState[] }> = [
+			{ text: "[excited] Can we play ball? Please?", states: ["happy", "playful", "bored"] },
+			{ text: "[excited] I wanna dance!", states: ["happy", "playful", "blissful"] },
+			{ text: "[excited] Let's play catch the stars!", states: ["happy", "playful"] },
+			{ text: "[happy] Sing me a song?", states: ["content", "happy", "blissful", "bored"] },
+			{ text: "[mischievously] Do a flip! Do a flip!", states: ["happy", "playful"] },
+			{ text: "[happy] Can I have a hug?", states: ["content", "tired", "bored", "recovering"] },
+			{ text: "[happy] Pet me? I promise I'll purr!", states: ["content", "happy", "bored"] },
+			{ text: "[curious] Any chance of a treat?", states: ["content", "bored"] },
+		];
+		const eligibleDesires = desireLines.filter(d => d.states.includes(state));
+		if (eligibleDesires.length > 0 && Math.random() < 0.12) {
+			const desire = eligibleDesires[Math.floor(Math.random() * eligibleDesires.length)];
+			lastDesireAt = now;
+			lastEmotionalReactionAt = now;
+			lastSpokenText = desire.text;
+			say(desire.text, 4.0, "commentary", 1, true);
+			return;
+		}
+	}
+
+	// Pick a state-appropriate line
+	const pool = getLinePoolForState(state);
+	const line = pickWeightedLine(pool, now);
+	if (line) {
+		lastEmotionalReactionAt = now;
+		lastSpokenText = line.text;
+		say(line.text, 4.0, "commentary", state.startsWith("critical") ? 2 : 1, true);
+	}
+}
+
 function getScreenEdgeX(): number {
 	const effectDim = Math.max(40, Math.min(W, H * 4.5));
 	const scale = 2.0 / effectDim;
@@ -954,24 +1267,10 @@ function updatePhysics(dt: number) {
 		if (!isSleeping) { energy = Math.max(0, energy - 0.5); hunger = Math.max(0, hunger - 0.8); }
 		else { energy = Math.min(100, energy + 5.0); hunger = Math.max(0, hunger - 0.2); }
 
-		// Emotional reactions based on needs (rate-limited)
-		if (!isSleeping && speechTimer <= 0 && now - lastEmotionalReactionAt >= EMOTIONAL_REACTION_COOLDOWN_MS) {
-			let emotionalLine: string | null = null;
-			if (hunger < 15 && Math.random() < 0.08) {
-				emotionalLine = hungrySpeech[Math.floor(Math.random() * hungrySpeech.length)];
-			} else if (hunger < 30 && Math.random() < 0.04) {
-				emotionalLine = hungrySpeech[Math.floor(Math.random() * hungrySpeech.length)];
-			} else if (energy < 15 && Math.random() < 0.06) {
-				emotionalLine = tiredSpeech[Math.floor(Math.random() * tiredSpeech.length)];
-			} else if (hunger > 80 && energy > 80 && Math.random() < 0.02) {
-				emotionalLine = happySpeech[Math.floor(Math.random() * happySpeech.length)];
-			} else if (hunger > 60 && energy > 60 && Math.random() < 0.015) {
-				emotionalLine = playfulSpeech[Math.floor(Math.random() * playfulSpeech.length)];
-			}
-			if (emotionalLine) {
-				lastEmotionalReactionAt = now;
-				say(emotionalLine, 4.0, "commentary", 2, true);
-			}
+		// Character bible: resolve emotional state and speak
+		if (!isSleeping) {
+			currentEmotionalState = resolveEmotionalState(now);
+			resolveAndSpeak(now);
 		}
 	}
 
@@ -1178,7 +1477,19 @@ function updatePhysics(dt: number) {
 		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("[excited] Wheee!", 4.0, "reaction", 1, true); emitSfx("flip_whoosh"); }
 		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
-			say(idleSpeech[Math.floor(Math.random() * idleSpeech.length)], 3.0, "commentary", 1, true);
+			// Only pick idle speech when in a non-negative state
+			const nowMs = Date.now();
+			const state = currentEmotionalState;
+			if (isSpeechAllowed(state, "idle_chatter")) {
+				const pool = getLinePoolForState(state);
+				const eligible = pool.filter(l => isSpeechAllowed(state, "idle_chatter") && l.text !== lastSpokenText);
+				if (eligible.length > 0) {
+					const line = eligible[Math.floor(Math.random() * eligible.length)];
+					lastEmotionalReactionAt = nowMs;
+					lastSpokenText = line.text;
+					say(line.text, 3.0, "commentary", 1, true);
+				}
+			}
 		}
 	}
 	if (currentState === "walk") {
@@ -1231,6 +1542,7 @@ function updatePhysics(dt: number) {
 		}
 		if (actionTimer <= 0) {
 			currentState = "idle"; isSleeping = false;
+			lastRestedAt = Date.now();
 			if (hunger < 30) say("[sighs] Good nap... but I'm hungry now!", 4.0, "reaction", 1, true);
 			else say("[sighs] What a nice nap! [laughs] I feel great!", 4.0, "reaction", 1, true);
 		}
@@ -1290,9 +1602,12 @@ function updatePhysics(dt: number) {
 			for (let k = 0; k < 5; k++) {
 				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
 			}
-			const wasStarving = hunger < 30;
+			const wasStarving = hunger < 15;
+			const wasHungry = hunger < 30;
 			hunger = Math.min(100, hunger + 20);
-			if (wasStarving) say("[excited] FINALLY! Food! Oh that's SO good!", 3.0, "user_action", 3, true);
+			lastFedAt = Date.now();
+			if (wasStarving) say("[crying] Oh my gosh... FOOD! Thank you so much!", 3.0, "user_action", 3, true);
+			else if (wasHungry) say("[excited] Yum! That hit the spot!", 3.0, "user_action", 3, true);
 			else say("[happy] Yum!", 2.0, "user_action", 3, true);
 			foods.splice(i, 1);
 		}
@@ -1588,33 +1903,117 @@ export function pompomGetWeather(): Weather {
 
 /** Handle a user keypress command */
 export function pompomKeypress(key: string) {
-	if (key === "p") { currentState = "excited"; actionTimer = 2.5; isSleeping = false; say("[happy] Purrrrr...", 4.0, "user_action", 3, true); }
-	else if (key === "w") { currentState = "idle"; isSleeping = false; blinkFade = 0; say("[excited] I'm awake!", 4.0, "user_action", 3, true); }
-	else if (key === "s") { currentState = "sleep"; isSleeping = true; actionTimer = 10; say("[whispers] Time for a nap... zZz", 4.0, "user_action", 3, true); }
+	const nowMs = Date.now();
+	// Track any interaction for boredom detection
+	lastInteractionAt = nowMs;
+
+	if (key === "p") {
+		currentState = "excited"; actionTimer = 2.5; isSleeping = false;
+		lastPlayedAt = nowMs;
+		const state = currentEmotionalState;
+		if (state === "recovering") say("[happy] Purrrr... everything is perfect...", 4.0, "user_action", 3, true);
+		else if (state === "hungry" || state === "critical_hunger") say("[happy] That's nice... but I'm still hungry...", 4.0, "user_action", 3, true);
+		else if (state === "tired" || state === "critical_tired") say("[whispers] Mmm... nice... so sleepy though...", 4.0, "user_action", 3, true);
+		else say("[happy] Purrrrr...", 4.0, "user_action", 3, true);
+	}
+	else if (key === "w") {
+		const wasLowEnergy = energy < 15;
+		currentState = "idle"; isSleeping = false; blinkFade = 0;
+		if (wasLowEnergy) { lastRestedAt = nowMs; }
+		say("[excited] I'm awake!", 4.0, "user_action", 3, true);
+	}
+	else if (key === "s") {
+		currentState = "sleep"; isSleeping = true; actionTimer = 10;
+		const state = currentEmotionalState;
+		if (state === "critical_tired" || state === "tired") say("[whispers] Finally... sweet sleep...", 4.0, "user_action", 3, true);
+		else if (state === "recovering") say("[happy] A nap after a meal? Perfect!", 4.0, "user_action", 3, true);
+		else if (state === "hungry" || state === "critical_hunger") say("[sad] Hard to sleep when I'm this hungry...", 4.0, "user_action", 3, true);
+		else say("[whispers] Time for a nap... zZz", 4.0, "user_action", 3, true);
+	}
 	else if (key === "f") {
 		isSleeping = false; currentState = "idle";
+		lastFedAt = nowMs;
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.4, y: -0.8, vy: 0 });
+		// Food drop reaction — state-aware (eating reaction fires in updatePhysics)
 	}
 	else if (key === "b") {
 		isSleeping = false;
-		if (ballY === 0.55 && !hasBall && Math.abs(posX - ballX) < 0.4) { ballVy = -1.8; ballVx = (Math.random() - 0.5) * 2.5; say("[excited] Boing!", 2.0, "user_action", 3, true); }
-		else { ballX = posX + (Math.random() > 0.5 ? 0.8 : -0.8); ballY = -0.4; ballVx = (Math.random() - 0.5) * 1.5; ballVy = -1.2; hasBall = false; }
+		lastPlayedAt = nowMs;
+		const state = currentEmotionalState;
+		if (state === "critical_hunger" || state === "critical_tired") {
+			say(state === "critical_hunger" ? "[annoyed] I can't play right now... I'm starving!" : "[sighs] Too tired to chase...", 3.0, "user_action", 3, true);
+		} else if (ballY === 0.55 && !hasBall && Math.abs(posX - ballX) < 0.4) {
+			ballVy = -1.8; ballVx = (Math.random() - 0.5) * 2.5;
+			say(state === "recovering" ? "[excited] Now I have energy to play!" : "[excited] Boing!", 2.0, "user_action", 3, true);
+		} else {
+			ballX = posX + (Math.random() > 0.5 ? 0.8 : -0.8); ballY = -0.4; ballVx = (Math.random() - 0.5) * 1.5; ballVy = -1.2; hasBall = false;
+		}
 	}
-	else if (key === "m") { isSleeping = false; currentState = "singing"; actionTimer = 5.0; say("[sings] La la la!", 4.0, "user_action", 3, true); }
+	else if (key === "m") {
+		isSleeping = false; currentState = "singing"; actionTimer = 5.0;
+		lastPlayedAt = nowMs;
+		const state = currentEmotionalState;
+		// Use [sings] tag — pick from singing repertoire when possible
+		if (state === "critical_hunger" || state === "hungry") {
+			say("[sad] I don't feel like singing right now...", 3.0, "user_action", 3, true);
+		} else if (state === "critical_tired") {
+			say("[whispers] A lullaby maybe...", 3.0, "user_action", 3, true);
+		} else if (state === "tired") {
+			say("[sings] Twinkle twinkle... zzz...", 4.0, "user_action", 3, true);
+		} else if (state === "recovering") {
+			const recovSongs = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes("recovering") && energy >= s.minEnergy);
+			const song = recovSongs.length > 0 ? recovSongs[Math.floor(Math.random() * recovSongs.length)] : null;
+			say(song ? song.text : "[sings] Food glorious food!", 4.0, "user_action", 3, true);
+		} else {
+			const eligible = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes(state) && energy >= s.minEnergy);
+			const song = eligible.length > 0 ? eligible[Math.floor(Math.random() * eligible.length)] : null;
+			say(song ? song.text : "[sings] La la la!", 4.0, "user_action", 3, true);
+		}
+	}
 	else if (key === "c") { activeTheme = (activeTheme + 1) % themes.length; }
-	else if (key === "d") { currentState = "flip"; isFlipping = true; flipPhase = 0; isSleeping = false; }
+	else if (key === "d") {
+		currentState = "flip"; isFlipping = true; flipPhase = 0; isSleeping = false;
+		lastPlayedAt = nowMs;
+	}
 	else if (key === "o") { isSleeping = false; currentState = "walk"; targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); isWalking = true; }
-	else if (key === "x") { isSleeping = false; currentState = "dance"; actionTimer = 4.0; say("[excited] Let's dance!", 4.0, "user_action", 3, true); }
+	else if (key === "x") {
+		isSleeping = false; currentState = "dance"; actionTimer = 4.0;
+		lastPlayedAt = nowMs;
+		const state = currentEmotionalState;
+		if (state === "critical_hunger" || state === "hungry") say("[annoyed] Can't dance when my tummy is empty...", 3.0, "user_action", 3, true);
+		else if (state === "critical_tired" || state === "tired") say("[sighs] Too tired to dance...", 3.0, "user_action", 3, true);
+		else if (state === "recovering") say("[excited] Full belly dance!", 3.0, "user_action", 3, true);
+		else say("[excited] Let's dance!", 4.0, "user_action", 3, true);
+	}
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
+		lastFedAt = nowMs;
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0 });
+		const state = currentEmotionalState;
 		const wasDesperate = hunger < 20;
 		hunger = Math.min(100, hunger + 30);
 		if (wasDesperate) say("[crying] Oh my gosh... a TREAT! Thank you so much!", 3.0, "user_action", 3, true);
+		else if (state === "recovering") say("[excited] ANOTHER treat? I don't deserve you!", 3.0, "user_action", 3, true);
+		else if (state === "tired" || state === "critical_tired") say("[happy] A treat? For sleepy me?", 3.0, "user_action", 3, true);
 		else say("[excited] A special treat!", 2.0, "user_action", 3, true);
 	}
-	else if (key === "h") { isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10); say("[happy] Aww, hugs!", 4.0, "user_action", 3, true); }
-	else if (key === "g") { isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game"; say("[excited] Catch the stars!", 3.0, "user_action", 3, true); }
+	else if (key === "h") {
+		isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10);
+		const state = currentEmotionalState;
+		if (state === "recovering") say("[happy] Hugs make everything better!", 4.0, "user_action", 3, true);
+		else if (state === "hungry" || state === "critical_hunger") say("[happy] Thanks... hugs help but food helps more...", 4.0, "user_action", 3, true);
+		else if (state === "tired" || state === "critical_tired") say("[happy] That hug gave me life...", 4.0, "user_action", 3, true);
+		else say("[happy] Aww, hugs!", 4.0, "user_action", 3, true);
+	}
+	else if (key === "g") {
+		isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game";
+		lastPlayedAt = nowMs;
+		const state = currentEmotionalState;
+		if (state === "critical_hunger" || state === "hungry") say("[annoyed] I can't focus... too hungry...", 3.0, "user_action", 3, true);
+		else if (state === "critical_tired" || state === "tired") say("[sighs] Too exhausted to play...", 3.0, "user_action", 3, true);
+		else if (state === "recovering") say("[excited] Full of energy! Let's play!", 3.0, "user_action", 3, true);
+		else say("[excited] Catch the stars!", 3.0, "user_action", 3, true);
+	}
 
 	// Accessory giving is handled separately via pompomGiveAccessory
 }
@@ -1628,6 +2027,12 @@ export function resetPompom() {
 	talkAudioLevel = 0; flipPhase = 0;
 	gameScore = 0; gameTimer = 0; gameActive = false; gameStars = [];
 	hunger = 100; energy = 100; lastNeedsTick = 0;
+	// Character bible state variables
+	lastFedAt = 0; lastRestedAt = 0; lastPlayedAt = 0;
+	lastInteractionAt = 0; lastDesireAt = 0;
+	currentEmotionalState = "content";
+	lastTimeOfDayPeriod = ""; announcedTimePeriods = new Set<DetailedTimeOfDay>();
+	sessionStartedAt = Date.now(); lastSpokenText = "";
 	activeTheme = 0;
 	weatherOverride = null;
 	lastAnnouncedWeatherState = weatherState;
