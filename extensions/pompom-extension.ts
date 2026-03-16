@@ -65,8 +65,11 @@ import {
 	resumeAmbient,
 	stopAmbient,
 	pregenerateAll,
+	resetGeneratedAudio,
 	getCachedWeathers,
+	getCustomWeathers,
 	isAmbientPlaying,
+	getCustomAudioDir,
 } from "./pompom-ambient";
 import {
 	autoDetectEngine,
@@ -1488,9 +1491,37 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
+				if (sub === "reset" || sub === "regenerate") {
+					const deleted = resetGeneratedAudio();
+					commandContext.ui.notify(
+						`Deleted ${deleted} generated audio files. They'll regenerate on next weather change.\n` +
+						`Custom files in ${getCustomAudioDir()} are preserved.`,
+						"info"
+					);
+					return;
+				}
+
+				if (sub === "folder" || sub === "dir" || sub === "path") {
+					const customDir = getCustomAudioDir();
+					const custom = getCustomWeathers();
+					commandContext.ui.notify(
+						`Custom audio folder:\n  ${customDir}\n\n` +
+						`Drop your own ambient loops here as:\n` +
+						`  clear.mp3   cloudy.mp3   rain.mp3   snow.mp3   storm.mp3\n\n` +
+						`Supports: .mp3 .m4a .wav .aac .aiff .flac .ogg\n` +
+						`Custom files override AI-generated ones.\n` +
+						(custom.length > 0
+							? `\nCustom files found: ${custom.join(", ")}`
+							: "\nNo custom files found yet."),
+						"info"
+					);
+					return;
+				}
+
 				// Default: show status
 				const ambientConfig = getAmbientConfig();
 				const cached = getCachedWeathers();
+				const custom = getCustomWeathers();
 				const hasKey = Boolean(process.env.ELEVENLABS_API_KEY);
 				commandContext.ui.notify(
 					"Pompom Ambient\n" +
@@ -1498,10 +1529,13 @@ export default function (pi: ExtensionAPI) {
 					`  Volume:   ${ambientConfig.volume}%\n` +
 					`  Playing:  ${isAmbientPlaying() ? "yes" : "no"}\n` +
 					`  Cached:   ${cached.length > 0 ? cached.join(", ") : "none"}\n` +
+					`  Custom:   ${custom.length > 0 ? custom.join(", ") : "none"}\n` +
 					`  API key:  ${hasKey ? "set" : "missing (ELEVENLABS_API_KEY)"}\n\n` +
 					"  /pompom:ambient on|off\n" +
 					"  /pompom:ambient volume <0-100>\n" +
-					"  /pompom:ambient pregenerate   Generate all 5 sounds now",
+					"  /pompom:ambient pregenerate   Generate all 5 sounds\n" +
+					"  /pompom:ambient reset         Delete generated, regenerate fresh\n" +
+					"  /pompom:ambient folder         Show custom audio folder path",
 					"info"
 				);
 			});

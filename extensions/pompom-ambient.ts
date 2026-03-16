@@ -1,8 +1,11 @@
 /**
  * pompom-ambient — Weather-reactive ambient soundscapes for Pompom.
  *
- * Generates ambient audio via ElevenLabs Sound Effects API on first use,
- * caches to ~/.pi/pompom/ambient/, and loops with afplay.
+ * Priority order for audio sources:
+ *   1. User-provided files in ~/.pi/pompom/ambient/custom/ (any format afplay supports)
+ *   2. Generated via ElevenLabs Sound Effects API, cached in ~/.pi/pompom/ambient/
+ *
+ * Loops playback by respawning afplay on close.
  * Ducks volume automatically during TTS playback.
  */
 
@@ -15,6 +18,7 @@ import type { Weather } from "./pompom";
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const AMBIENT_DIR = path.join(os.homedir(), ".pi", "pompom", "ambient");
+const CUSTOM_DIR = path.join(AMBIENT_DIR, "custom");
 const CONFIG_FILE = path.join(os.homedir(), ".pi", "pompom", "ambient-config.json");
 
 export interface AmbientConfig {
@@ -29,12 +33,38 @@ const DEFAULT_CONFIG: AmbientConfig = {
 	volume: 40,
 };
 
+// Sound-design-grade prompts — written like a foley artist's brief, not a chatbot prompt.
+// Key principles: specify exact sounds, environment, what to EXCLUDE, and mood.
 const WEATHER_PROMPTS: Record<Weather, string> = {
-	clear: "Gentle outdoor ambience with soft birdsong, light breeze through leaves, peaceful nature sounds, perfect for focus and concentration",
-	cloudy: "Soft atmospheric wind, gentle distant breeze, muted outdoor ambience, calm overcast day, subtle and soothing",
-	rain: "Gentle rain falling on a window, soft raindrops, cozy indoor rain ambience, calming and steady, lo-fi rain",
-	snow: "Quiet winter ambience, soft muffled wind, gentle snowfall atmosphere, peaceful and serene, distant soft chimes",
-	storm: "Steady rain with distant rolling thunder, atmospheric storm ambience, not too intense, cozy and immersive",
+	clear:
+		"Field recording of a quiet morning garden. Gentle birdsong from two or three " +
+		"small birds at medium distance, soft rustling leaves in a light breeze, faint " +
+		"insect hum. No music, no voices, no traffic. Warm, peaceful, continuous tone " +
+		"suitable for seamless looping. Natural outdoor ambience.",
+
+	cloudy:
+		"Outdoor ambience on an overcast day. Steady gentle wind through grass and trees, " +
+		"occasional soft gust, distant muffled atmosphere. No rain, no thunder, no birds. " +
+		"Muted, calm, slightly hollow tone. Continuous background suitable for seamless " +
+		"looping. Like standing in an open field under gray sky.",
+
+	rain:
+		"Steady gentle rain heard from inside a room with a window slightly open. Soft " +
+		"raindrops on glass and leaves, light dripping from a gutter, very faint distant " +
+		"traffic hum. No thunder, no heavy downpour, no music. Cozy, calming, ASMR-like. " +
+		"Continuous steady rain suitable for seamless looping.",
+
+	snow:
+		"Quiet winter night outdoors. Muffled near-silence with very soft wind, occasional " +
+		"faint creaking of cold branches, subtle crunchy snow texture in the air. No music, " +
+		"no chimes, no voices. Extremely peaceful, hushed, almost meditative. Continuous " +
+		"ambient tone suitable for seamless looping.",
+
+	storm:
+		"Thunderstorm heard from inside a cozy room. Steady heavy rain on windows, " +
+		"occasional distant rolling thunder rumble every fifteen to twenty seconds, " +
+		"soft wind gusts. No close lightning cracks, no scary elements, no music. " +
+		"Immersive but comforting. Continuous storm suitable for seamless looping.",
 };
 
 const DUCK_VOLUME_RATIO = 0.2; // 20% of normal volume during TTS
@@ -78,16 +108,39 @@ function saveConfig(): void {
 
 // ─── Audio file management ───────────────────────────────────────────────────
 
-function audioPath(weather: Weather): string {
+const AUDIO_EXTENSIONS = [".mp3", ".m4a", ".wav", ".aac", ".aiff", ".flac", ".ogg"];
+
+/** Find user-provided custom audio file for a weather type (any supported format). */
+function findCustomAudio(weather: Weather): string | null {
+	try {
+		if (!fs.existsSync(CUSTOM_DIR)) return null;
+		for (const ext of AUDIO_EXTENSIONS) {
+			const file = path.join(CUSTOM_DIR, `${weather}${ext}`);
+			if (fs.existsSync(file) && fs.statSync(file).size > 1000) return file;
+		}
+	} catch { /* non-fatal */ }
+	return null;
+}
+
+function generatedAudioPath(weather: Weather): string {
 	return path.join(AMBIENT_DIR, `${weather}.mp3`);
 }
 
+/** Resolve the best audio file: custom > generated */
+function resolveAudioPath(weather: Weather): string | null {
+	const custom = findCustomAudio(weather);
+	if (custom) return custom;
+	const generated = generatedAudioPath(weather);
+	if (fs.existsSync(generated) && fs.statSync(generated).size > 1000) return generated;
+	return null;
+}
+
 function hasAudio(weather: Weather): boolean {
-	try {
-		return fs.existsSync(audioPath(weather)) && fs.statSync(audioPath(weather)).size > 1000;
-	} catch {
-		return false;
-	}
+	return resolveAudioPath(weather) !== null;
+}
+
+function hasCustomAudio(weather: Weather): boolean {
+	return findCustomAudio(weather) !== null;
 }
 
 async function generateAudio(weather: Weather): Promise<boolean> {
@@ -107,10 +160,10 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 			},
 			body: JSON.stringify({
 				text: prompt,
-				duration_seconds: 30,
-				prompt_influence: 0.4,
+				duration_seconds: 22,
+				prompt_influence: 0.3,
 			}),
-			signal: AbortSignal.timeout(30000),
+			signal: AbortSignal.timeout(45000),
 		});
 
 		if (!response.ok) {
@@ -121,7 +174,7 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 
 		const buffer = Buffer.from(await response.arrayBuffer());
 		fs.mkdirSync(AMBIENT_DIR, { recursive: true });
-		fs.writeFileSync(audioPath(weather), buffer);
+		fs.writeFileSync(generatedAudioPath(weather), buffer);
 		return true;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -145,8 +198,9 @@ function stopCurrent(): void {
 }
 
 function startPlayback(weather: Weather): void {
-	const file = audioPath(weather);
-	if (!fs.existsSync(file)) return;
+	const resolved = resolveAudioPath(weather);
+	if (!resolved) return;
+	const file: string = resolved;
 
 	stopCurrent();
 
@@ -186,7 +240,6 @@ function startPlayback(weather: Weather): void {
 
 function restartWithVolume(): void {
 	if (!currentWeather) return;
-	// afplay doesn't support runtime volume changes — restart with new volume
 	startPlayback(currentWeather);
 }
 
@@ -195,6 +248,8 @@ function restartWithVolume(): void {
 export function initAmbient(isInteractive: boolean): void {
 	interactive = isInteractive;
 	config = loadConfig();
+	// Ensure custom directory exists so users know where to drop files
+	try { fs.mkdirSync(CUSTOM_DIR, { recursive: true }); } catch { /* non-fatal */ }
 }
 
 export function getAmbientConfig(): AmbientConfig {
@@ -282,11 +337,12 @@ export function stopAmbient(): void {
 	currentWeather = null;
 }
 
-/** Pre-generate all weather audio files in the background */
+/** Pre-generate all weather audio files in the background (skips weathers with custom files) */
 export async function pregenerateAll(): Promise<number> {
 	const weathers: Weather[] = ["clear", "cloudy", "rain", "snow", "storm"];
 	let generated = 0;
 	for (const w of weathers) {
+		if (hasCustomAudio(w)) continue; // Don't overwrite user files
 		if (hasAudio(w)) continue;
 		const ok = await generateAudio(w);
 		if (ok) generated++;
@@ -294,12 +350,48 @@ export async function pregenerateAll(): Promise<number> {
 	return generated;
 }
 
-/** Check which weather sounds are cached */
+/** Delete all generated audio files so they regenerate fresh (preserves custom files) */
+export function resetGeneratedAudio(): number {
+	const weathers: Weather[] = ["clear", "cloudy", "rain", "snow", "storm"];
+	let deleted = 0;
+	for (const w of weathers) {
+		const file = generatedAudioPath(w);
+		try {
+			if (fs.existsSync(file)) {
+				fs.unlinkSync(file);
+				deleted++;
+			}
+		} catch { /* non-fatal */ }
+	}
+	// Stop current playback if it was using a generated file
+	if (currentWeather && !hasCustomAudio(currentWeather)) {
+		stopCurrent();
+	}
+	return deleted;
+}
+
+/** Check which weather sounds are cached (generated or custom) */
 export function getCachedWeathers(): Weather[] {
 	const weathers: Weather[] = ["clear", "cloudy", "rain", "snow", "storm"];
 	return weathers.filter(hasAudio);
 }
 
+/** Check which weather sounds have custom user files */
+export function getCustomWeathers(): Weather[] {
+	const weathers: Weather[] = ["clear", "cloudy", "rain", "snow", "storm"];
+	return weathers.filter(hasCustomAudio);
+}
+
 export function isAmbientPlaying(): boolean {
 	return currentProcess !== null;
+}
+
+/** Return the path where users should drop custom audio files */
+export function getCustomAudioDir(): string {
+	return CUSTOM_DIR;
+}
+
+/** Return the path where generated audio files are stored */
+export function getAmbientDir(): string {
+	return AMBIENT_DIR;
 }

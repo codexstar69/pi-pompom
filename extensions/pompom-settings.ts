@@ -18,7 +18,8 @@ import { pompomKeypress, pompomStatus, pompomGiveAccessory, pompomGetAccessories
 import { getSessionStats } from "./pompom-agent";
 import {
 	getAmbientConfig, setAmbientEnabled, setAmbientVolume,
-	getCachedWeathers, isAmbientPlaying, pregenerateAll,
+	getCachedWeathers, getCustomWeathers, isAmbientPlaying, pregenerateAll,
+	getCustomAudioDir,
 } from "./pompom-ambient";
 
 type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker" | "model-picker";
@@ -457,10 +458,15 @@ class PompomSettingsPanel {
 		if (isAmbientPlaying()) {
 			lines.push(line(`${GRN}Now playing${RST}`));
 		}
-		lines.push(line(`${DIM}Weather-reactive background sounds via ElevenLabs.${RST}`));
-		lines.push(line(`${DIM}Sounds generate on first play and cache locally.${RST}`));
-		if (!hasKey) {
-			lines.push(line(`${YEL}Set ELEVENLABS_API_KEY to enable generation.${RST}`));
+		const custom = getCustomWeathers();
+		if (custom.length > 0) {
+			lines.push(line(`${ACC}Custom:${RST} ${custom.join(", ")}`));
+		}
+		lines.push(line(`${DIM}Drop your own loops in:${RST}`));
+		lines.push(line(`${DIM}  ${getCustomAudioDir()}${RST}`));
+		lines.push(line(`${DIM}  Files: clear.mp3 cloudy.mp3 rain.mp3 snow.mp3 storm.mp3${RST}`));
+		if (!hasKey && custom.length < 5) {
+			lines.push(line(`${YEL}Set ELEVENLABS_API_KEY for AI generation fallback.${RST}`));
 		}
 	}
 
