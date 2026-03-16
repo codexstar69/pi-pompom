@@ -132,7 +132,7 @@ function project2D(x: number, y: number): [number, number] {
 	const effectDim = Math.max(40, Math.min(W, H * 4.5));
 	const scale = 2.0 / effectDim;
 	const cx = (x / scale) + (W / 2.0);
-	const cy = ((y - VIEW_OFFSET_Y) / scale + H) / 2.0;
+	const cy = (y - VIEW_OFFSET_Y) / scale + H; // pixel-row units [0..2H], callers divide by 2 for char rows
 	return [Math.floor(cx), Math.floor(cy)];
 }
 
@@ -1311,7 +1311,7 @@ function renderToBuffers() {
 
 	// Speech bubble
 	if (speechTimer > 0 && speechText !== "") {
-		const [scX, scY] = project2D(posX, posY + getEffectiveBounceY() - 0.6);
+		const [scX, scY] = project2D(posX, posY + getEffectiveBounceY() - 0.2); // just above head, not off-screen
 		drawSpeechBubble(speechText, scX, Math.floor(scY / 2));
 	}
 }
@@ -1398,18 +1398,28 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		else stateMsg = "Pompom is vibing. Pet, feed, or play!";
 	}
 
-	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" exactly W visible chars
+	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" capped at exactly W visible chars
 	const shortcuts: [string, string][] = [
-		["w","Wake"],["p","Pet"],["f","Feed"],["b","Ball"],
-		["m","Music"],["c","Color"],["s","Sleep"],["d","Flip"],
+		["p","Pet"],["e","Eat"],["r","Ball"],["x","Dnc"],
+		["m","Mus"],["c","Col"],["s","Slp"],["a","Wke"],
 	];
 
-	// Build plain text to measure, styled text to render
+	// Truncate stateMsg to fit W
+	const maxStateW = Math.max(8, W - 20);
+	if (getStringWidth(stateMsg) > maxStateW) {
+		let w = 0; let trimmed = "";
+		for (const ch of stateMsg) {
+			const cw = getStringWidth(ch);
+			if (w + cw + 1 > maxStateW) { trimmed += "~"; break; }
+			trimmed += ch; w += cw;
+		}
+		stateMsg = trimmed;
+	}
+
 	let plainHints = "";
 	let styledHints = "";
 	const stateW = getStringWidth(stateMsg);
-	// Fixed parts: "─ " + mod + " " + hints + "│ " + state + " " + pad
-	const fixedW = 2 + getStringWidth(mod) + 1 + 2 + stateW + 1; // "─ ⌥ " ... "│ state ─"
+	const fixedW = 2 + getStringWidth(mod) + 1 + 2 + stateW + 1;
 	for (const [k, l] of shortcuts) {
 		const part = `${k}·${l} `;
 		if (getStringWidth(plainHints + part) + fixedW + 1 > W) break;
