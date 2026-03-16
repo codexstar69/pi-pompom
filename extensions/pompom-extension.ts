@@ -577,11 +577,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				try {
-					if (data.length === 2 && data[0] === "\x1d" && POMPOM_KEYS.includes(data[1])) {
-						pompomKeypress(data[1]);
-						return { consume: true };
-					}
-
+					// Fallback: ESC prefix (terminals without Kitty protocol)
 					if (data.length === 2 && data[0] === "\x1b" && POMPOM_KEYS.includes(data[1])) {
 						pompomKeypress(data[1]);
 						return { consume: true };
