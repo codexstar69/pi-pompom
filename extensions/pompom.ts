@@ -11,7 +11,7 @@ import type { SpeechEvent } from "./pompom-voice";
 // Widget dimensions — set once, used by renderPompom
 let W = 50;
 let H = 13; // character rows — visible but not dominant
-const VIEW_OFFSET_Y = 0.22; // shift camera down so ground is visible in compact mode
+const VIEW_OFFSET_Y = 0.12; // shift camera slightly down — balanced between sky (sun/moon) and ground
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
 
@@ -49,7 +49,7 @@ let hunger = 100;
 let energy = 100;
 let lastNeedsTick = 0;
 
-interface Accessories {
+export interface Accessories {
 	umbrella: boolean;
 	scarf: boolean;
 	sunglasses: boolean;
@@ -122,8 +122,8 @@ function say(
 	if (safeText && onSpeechCallback) {
 		try {
 			onSpeechCallback({ text: safeText, source, priority, allowTts });
-		} catch (error) {
-			/* silent */
+		} catch {
+			// Speech callback failure — non-fatal, TTS pipeline handles its own errors
 		}
 	}
 }
@@ -183,7 +183,7 @@ function fbm(x: number, y: number): number {
 		Math.sin(x * 30 - time) * Math.cos(y * 30) * 0.02;
 }
 
-type Weather = "clear" | "cloudy" | "rain" | "snow" | "storm";
+export type Weather = "clear" | "cloudy" | "rain" | "snow" | "storm";
 type TimeOfDay = "dawn" | "morning" | "day" | "sunset" | "dusk" | "night";
 
 function getTimeOfDay(): TimeOfDay {
@@ -199,7 +199,6 @@ function getTimeOfDay(): TimeOfDay {
 let weatherState: Weather = "clear";
 let weatherOverride: Weather | null = null;
 let weatherTimer = 0;
-let lastWeatherChange = 0;
 let lastAnnouncedWeatherState: Weather = "clear";
 let lastRenderedWeatherState: Weather = "clear";
 let weatherBlend = 0;
@@ -303,6 +302,8 @@ function getWeatherAndTime() {
 	}
 
 	if (weather !== lastRenderedWeatherState) {
+		// Snapshot current tinted sky BEFORE applying new weather, so blend starts from correct state
+		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
 		weatherBlend = 1.0;
 		lastRenderedWeatherState = weather;
 	}
@@ -319,8 +320,6 @@ function getWeatherAndTime() {
 
 	rTop = Math.floor(rTop); gTop = Math.floor(gTop); bTop = Math.floor(bTop);
 	rBot = Math.floor(rBot); gBot = Math.floor(gBot); bBot = Math.floor(bBot);
-	
-	prevWeatherColors = { rTop, gTop, bTop, rBot, gBot, bBot };
 
 	return { rTop, gTop, bTop, rBot, gBot, bBot, isNight: tod === "night" || tod === "dusk", weather, timeOfDay: tod };
 }
@@ -424,49 +423,49 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 			b = Math.floor(b * (1 - blush) + 65 * blush);
 		}
 
-		// ── Eyes: kawaii style — white sclera → colored iris → dark pupil → highlight ──
+		// ── Eyes: chunky pixel-art style — big enough to span multiple terminal cells ──
+		// Old-school pixel-art principle: features should occupy WHOLE grid cells, not fall between them
 		const isTired = (energy < 20 || hunger < 30) && !isSleeping;
-		const eyeOpen = isSleeping ? 0.05 : (isTired ? 0.4 : 1.0) - blinkFade;
-		// Reduced look offsets — rectangular eyes need subtle shifts, not big displacement
+		const eyeOpen = isSleeping ? 0.05 : Math.max(0.05, (isTired ? 0.4 : 1.0) - blinkFade);
 		const lxClamp = clamp(effectiveLookX, -0.4, 0.4);
 		const lyClamp = clamp(effectiveLookY, -0.3, 0.3);
-		const ex1 = bdx - lxClamp * 0.025 + 0.11, ey1 = bdy - lyClamp * 0.015 + 0.02;
-		const ex2 = bdx - lxClamp * 0.025 - 0.11, ey2 = bdy - lyClamp * 0.015 + 0.02;
+		// Eye centers — wider apart for visibility, look offset subtle
+		const ex1 = bdx - lxClamp * 0.02 + 0.12, ey1 = bdy - lyClamp * 0.012 + 0.02;
+		const ex2 = bdx - lxClamp * 0.02 - 0.12, ey2 = bdy - lyClamp * 0.012 + 0.02;
 
 		if (isSleeping || currentState === "singing") {
-			// Closed eyes — flat horizontal dark bars (pixel-art)
+			// Closed eyes — thick horizontal bars (pixel-art, 2x thicker for visibility)
 			if (isSleeping) {
-				if ((Math.abs(ey1) < 0.012 && Math.abs(ex1) < 0.055) || (Math.abs(ey2) < 0.012 && Math.abs(ex2) < 0.055)) { r = 10; g = 8; b = 15; }
+				if ((Math.abs(ey1) < 0.02 && Math.abs(ex1) < 0.08) || (Math.abs(ey2) < 0.02 && Math.abs(ex2) < 0.08)) { r = 10; g = 8; b = 15; }
 			} else {
-				// Happy squint — flat bars with slight upward curve at edges
-				const sq1 = Math.abs(ey1 + Math.abs(ex1) * Math.abs(ex1) * 8) < 0.015 && Math.abs(ex1) < 0.065;
-				const sq2 = Math.abs(ey2 + Math.abs(ex2) * Math.abs(ex2) * 8) < 0.015 && Math.abs(ex2) < 0.065;
+				// Happy squint — thick curved bars
+				const sq1 = Math.abs(ey1 + Math.abs(ex1) * Math.abs(ex1) * 5) < 0.022 && Math.abs(ex1) < 0.09;
+				const sq2 = Math.abs(ey2 + Math.abs(ex2) * Math.abs(ex2) * 5) < 0.022 && Math.abs(ex2) < 0.09;
 				if (sq1 || sq2) { r = 10; g = 8; b = 15; }
 			}
+		} else if (eyeOpen < 0.1) {
+			// Nearly closed — render as thin horizontal bars (blink animation)
+			if ((Math.abs(ey1) < 0.015 && Math.abs(ex1) < 0.08) || (Math.abs(ey2) < 0.015 && Math.abs(ex2) < 0.08)) { r = 10; g = 8; b = 15; }
 		} else {
-			const eDist1 = ex1 * ex1 + (ey1 * ey1) / (eyeOpen * eyeOpen + 0.001);
-			const eDist2 = ex2 * ex2 + (ey2 * ey2) / (eyeOpen * eyeOpen + 0.001);
-
-			// Layered rectangular eyes — white sclera > brown iris > dark pupil > highlight
-			// All layers use box math for grid alignment
-			const eyeW = 0.06, eyeH = 0.045 * eyeOpen;
+			// Layered rectangular eyes — 2x larger than before for pixel-art chunky look
+			// White sclera > brown iris > dark pupil > highlight
+			const eyeW = 0.09, eyeH = 0.065 * eyeOpen;
 			const inEye1 = Math.abs(ex1) < eyeW && Math.abs(ey1) < eyeH;
 			const inEye2 = Math.abs(ex2) < eyeW && Math.abs(ey2) < eyeH;
 			if (inEye1 || inEye2) {
-				// Layer 1: White sclera (outermost box)
+				// Layer 1: White sclera (outermost)
 				r = 245; g = 245; b = 250;
 
-				// Layer 2: Brown iris (inner box)
-				const irisW = 0.04, irisH = 0.032 * eyeOpen;
+				// Layer 2: Brown iris
+				const irisW = 0.06, irisH = 0.048 * eyeOpen;
 				const inIris1 = Math.abs(ex1) < irisW && Math.abs(ey1) < irisH;
 				const inIris2 = Math.abs(ex2) < irisW && Math.abs(ey2) < irisH;
 				if (inIris1 || inIris2) {
-					r = 60; g = 40; b = 25; // warm brown
-					// Lower iris slightly lighter
-					if ((inIris1 && ey1 > 0.01) || (inIris2 && ey2 > 0.01)) { r = 80; g = 55; b = 35; }
+					r = 60; g = 40; b = 25;
+					if ((inIris1 && ey1 > 0.015) || (inIris2 && ey2 > 0.015)) { r = 80; g = 55; b = 35; }
 
-					// Layer 3: Dark pupil (center box)
-					const pupilW = 0.022, pupilH = 0.02 * eyeOpen;
+					// Layer 3: Dark pupil
+					const pupilW = 0.035, pupilH = 0.028 * eyeOpen;
 					const inPupil1 = Math.abs(ex1) < pupilW && Math.abs(ey1) < pupilH;
 					const inPupil2 = Math.abs(ex2) < pupilW && Math.abs(ey2) < pupilH;
 					if (inPupil1 || inPupil2) {
@@ -474,40 +473,42 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 					}
 				}
 
-				// White highlight block (upper-left of eye)
-				const hl1 = ex1 > -0.055 && ex1 < -0.025 && ey1 > -0.038 && ey1 < -0.01;
-				const hl2 = ex2 > -0.055 && ex2 < -0.025 && ey2 > -0.038 && ey2 < -0.01;
+				// Chunky white highlight block (upper-left of eye) — big enough for 1-2 cells
+				const hl1 = ex1 > -0.08 && ex1 < -0.03 && ey1 > -0.055 && ey1 < -0.015;
+				const hl2 = ex2 > -0.08 && ex2 < -0.03 && ey2 > -0.055 && ey2 < -0.015;
 				if ((hl1 || hl2) && !isTired) { r = 255; g = 255; b = 255; }
 
 				// Small warm highlight (lower-right)
-				const hl1b = ex1 > 0.015 && ex1 < 0.04 && ey1 > 0.008 && ey1 < 0.028;
-				const hl2b = ex2 > 0.015 && ex2 < 0.04 && ey2 > 0.008 && ey2 < 0.028;
+				const hl1b = ex1 > 0.02 && ex1 < 0.06 && ey1 > 0.01 && ey1 < 0.04;
+				const hl2b = ex2 > 0.02 && ex2 < 0.06 && ey2 > 0.01 && ey2 < 0.04;
 				if ((hl1b || hl2b) && !isTired) { r = 220; g = 230; b = 250; }
 			}
 		}
 
-		// ── Nose: small dark oval ──
-		const nnx = bdx - lxClamp * 0.02, nny = bdy - lyClamp * 0.01 - 0.03;
-		// Pixel-art rectangular nose — small dark block
-		if (Math.abs(nnx) < 0.02 && Math.abs(nny) < 0.018 && !isSleeping) { r = 15; g = 8; b = 15; }
+		// ── Nose: chunky dark block — larger for pixel-art visibility ──
+		const nnx = bdx - lxClamp * 0.015, nny = bdy - lyClamp * 0.01 - 0.04;
+		if (Math.abs(nnx) < 0.03 && Math.abs(nny) < 0.025 && !isSleeping) {
+			r = 15; g = 8; b = 15;
+			// Nose highlight — small bright spot on top
+			if (Math.abs(nnx) < 0.015 && nny > 0.008 && nny < 0.02) { r = 60; g = 30; b = 40; }
+		}
 
-		// ── Mouth: clear smile arc ──
+		// ── Mouth: small pixel-art smile below the nose ──
 		if (!isSleeping && !hasBall) {
 			const mx = bdx - lxClamp * 0.02, my = bdy - lyClamp * 0.01 - 0.07;
-			// Pixel-art smile — flat dark line, slightly curved via step
+			// Simple smile line
 			const smileWidth = 0.06;
-			const smileY = -0.008 + Math.abs(mx) * Math.abs(mx) * 3; // slight upward curve at edges
+			const smileY = -0.008 + Math.abs(mx) * Math.abs(mx) * 3;
 			if (Math.abs(mx) < smileWidth && Math.abs(my - smileY) < 0.012) {
 				r = 20; g = 10; b = 20;
 			}
-			// Open mouth when excited/talking
+			// Small open mouth when talking/excited
 			if (currentState === "excited" || currentState === "singing" || currentState === "dance" || speechTimer > 0 || isTalking) {
 				const mouthOpen = (speechTimer > 0 || currentState === "singing" || isTalking)
-					? (isTalking ? talkAudioLevel * 0.08 + 0.01 : Math.abs(Math.sin(time * 12)) * 0.03)
-					: 0.02;
+					? (isTalking ? talkAudioLevel * 0.02 + 0.003 : Math.abs(Math.sin(time * 12)) * 0.008 + 0.003)
+					: 0.005;
 				if (mx * mx + (my + 0.012) ** 2 < mouthOpen && my < -0.01) {
-					r = 230; g = 70; b = 90;
-					if (my < -0.03) { r = 255; g = 110; b = 130; }
+					r = 200; g = 70; b = 90;
 				}
 			}
 		}
@@ -716,7 +717,7 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	// STARS & MOON (dimmer stars)
 	if (skyColors.isNight || hour >= 20 || hour < 5) {
 		const moonDx = px - (-0.4);
-		const moonDy = py - (-0.35);
+		const moonDy = py - (-0.25);
 		const moonDist = Math.sqrt(moonDx * moonDx + moonDy * moonDy);
 		
 		if (moonDist < 0.15) {
@@ -751,7 +752,7 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	// SUN (daytime)
 	if (hour >= 7 && hour < 17) {
 		const sunDx = px - 0.5;
-		const sunDy = py - (-0.3);
+		const sunDy = py - (-0.2);
 		const sunDist = Math.sqrt(sunDx * sunDx + sunDy * sunDy);
 		if (sunDist < 0.15) {
 			if (sunDist < 0.03) {
@@ -766,8 +767,8 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		}
 	}
 
-	// CLOUDS: SUBTLE only. Small, soft wisps. Only upper 30% of sky.
-	if (py < -0.4) {
+	// CLOUDS: SUBTLE only. Small, soft wisps. Only upper portion of sky.
+	if (py < -0.15) {
 		const drift = time * 0.05; // drift slowly
 		const n1 = Math.sin((px + drift) * 4) * Math.cos(py * 6) * 0.5 + 0.5;
 		const n2 = Math.sin((px - drift * 0.5) * 8 + py * 10) * 0.5 + 0.5;
@@ -892,7 +893,7 @@ function getScreenEdgeX(): number {
 
 function updatePhysics(dt: number) {
 	if (actionTimer > 0) actionTimer -= dt;
-	if (speechTimer > 0) speechTimer -= dt;
+	if (speechTimer > 0) speechTimer = Math.max(0, speechTimer - dt);
 
 	// Needs decay
 	const now = Date.now();
@@ -905,9 +906,9 @@ function updatePhysics(dt: number) {
 	weatherTimer -= dt;
 	if (time < 60) {
 		weatherState = "clear";
-		if (weatherTimer <= 0) weatherTimer = 45 + Math.random() * 45;
+		if (weatherTimer <= 0) weatherTimer = 1800 + Math.random() * 5400;
 	} else if (weatherTimer <= 0) {
-		weatherTimer = 45 + Math.random() * 45;
+		weatherTimer = 1800 + Math.random() * 5400;
 		if (weatherState === "clear") weatherState = "cloudy";
 		else if (weatherState === "cloudy") {
 			const r = Math.random();
@@ -1224,8 +1225,7 @@ function updatePhysics(dt: number) {
 		if (p.type === "note") p.x += Math.sin(p.y * 6.0) * 0.01;
 		if (p.type === "rain" && p.y > 0.6) { p.type = "splash"; p.char = "."; p.vy = -0.5; p.vx = (Math.random() - 0.5) * 0.5; p.life = 0.2; }
 		if (p.type === "snow") { p.vx += Math.sin(time * 2 + p.x * 5) * 0.01; if (p.y > 0.55) { p.life = 0; } }
-		if (p.type === "lightning") { p.life -= dt * 8; }
-		p.life -= dt * 0.8;
+		p.life -= dt * (p.type === "lightning" ? 8 : 0.8);
 		if (p.life <= 0) particles.splice(i, 1);
 	}
 }
@@ -1328,8 +1328,9 @@ function renderToBuffers() {
  */
 export function renderPompom(width: number, audioLevel: number, dt: number): string[] {
 	// Adapt dimensions — compact: secondary addon, must not dominate the terminal
-	if (width !== W && width > 10) {
-		W = width;
+	const clampedWidth = Math.max(20, width);
+	if (clampedWidth !== W) {
+		W = clampedWidth;
 		H = Math.max(10, Math.min(14, Math.floor(W * 0.18)));
 		allocBuffers();
 	}
@@ -1400,8 +1401,8 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 
 	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" capped at exactly W visible chars
 	const shortcuts: [string, string][] = [
-		["p","Pet"],["e","Eat"],["r","Ball"],["x","Dnc"],
-		["m","Mus"],["c","Col"],["s","Slp"],["a","Wke"],
+		["p","Pet"],["e","Feed"],["r","Ball"],["x","Dance"],
+		["m","Music"],["c","Color"],["s","Sleep"],["a","Wake"],
 	];
 
 	// Truncate stateMsg to fit W
@@ -1494,6 +1495,10 @@ export function pompomSetAgentEarBoost({ amount }: { amount: number }) {
 
 export function pompomSetWeatherOverride({ weather }: { weather: Weather | null }) {
 	weatherOverride = weather;
+}
+
+export function pompomGetWeather(): Weather {
+	return getWeather();
 }
 
 /** Handle a user keypress command */

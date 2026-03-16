@@ -55,8 +55,8 @@ interface KokoroModuleLike {
 const MODEL_ID = "onnx-community/Kokoro-82M-v1.0-ONNX";
 const CONFIG_DIR = path.join(os.homedir(), ".pi", "pompom");
 const CONFIG_FILE = path.join(CONFIG_DIR, "voice-config.json");
-const TMP_DIR = path.join(process.cwd(), "tmp");
-const MIN_INTERVAL_MS = 12000;
+const TMP_DIR = path.join(os.tmpdir(), "pompom-voice");
+const MIN_INTERVAL_MS = 45000;
 const MAX_QUEUE = 3;
 const ENGINE_PRIORITY = ["elevenlabs", "deepgram", "kokoro"] as const;
 
@@ -180,7 +180,8 @@ function loadVoiceConfig(): VoiceConfig {
 			pompomModel: typeof parsed.pompomModel === "string" ? parsed.pompomModel : DEFAULT_CONFIG.pompomModel,
 		};
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] loadVoiceConfig failed: ${msg}`);
 		return { ...DEFAULT_CONFIG };
 	}
 }
@@ -190,7 +191,8 @@ function saveVoiceConfig(): void {
 		fs.mkdirSync(CONFIG_DIR, { recursive: true });
 		fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, "\t"));
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] saveVoiceConfig failed: ${msg}`);
 	}
 }
 
@@ -254,6 +256,7 @@ function detectPlayer(): AudioPlayer | null {
 async function playAudio(buffer: Buffer): Promise<void> {
 		try {
 			if (!detectedPlayer) {
+				console.error("[pompom-voice] No audio player detected — cannot play TTS audio");
 				return;
 			}
 			const player = detectedPlayer;
@@ -265,7 +268,6 @@ async function playAudio(buffer: Buffer): Promise<void> {
 		fs.writeFileSync(tempFile, buffer);
 
 			await new Promise<void>((resolve) => {
-				stopRequested = false;
 				const child = childProcess.spawn(
 					player.command,
 					player.argsForFile(tempFile),
@@ -281,10 +283,8 @@ async function playAudio(buffer: Buffer): Promise<void> {
 				finished = true;
 				try {
 					fs.unlinkSync(tempFile);
-				} catch (error) {
-					if (fs.existsSync(tempFile)) {
-						/* silent */
-					}
+				} catch {
+					// Temp file cleanup is best-effort — file will be cleaned on next launch or OS reboot
 				}
 				currentPlayback = null;
 				resolve();
@@ -292,7 +292,8 @@ async function playAudio(buffer: Buffer): Promise<void> {
 
 			child.on("error", (error) => {
 				if (!stopRequested) {
-					/* silent */
+					const msg = error instanceof Error ? error.message : String(error);
+					console.error(`[pompom-voice] playback error: ${msg}`);
 				}
 				finish();
 			});
@@ -302,7 +303,8 @@ async function playAudio(buffer: Buffer): Promise<void> {
 			});
 		});
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] playAudio failed: ${msg}`);
 	}
 }
 
@@ -317,14 +319,19 @@ class KokoroEngine implements TTSEngine {
 		}
 		if (!this.synthPromise) {
 			this.synthPromise = (async () => {
-				const moduleName = "kokoro-js";
-				const kokoroModule = await import(moduleName) as KokoroModuleLike;
-				const synth = await kokoroModule.KokoroTTS.from_pretrained(MODEL_ID, {
-					dtype: "q8",
-					device: "cpu",
-				});
-				this.synth = synth;
-				return synth;
+				try {
+					const moduleName = "kokoro-js";
+					const kokoroModule = await import(moduleName) as KokoroModuleLike;
+					const synth = await kokoroModule.KokoroTTS.from_pretrained(MODEL_ID, {
+						dtype: "q8",
+						device: "cpu",
+					});
+					this.synth = synth;
+					return synth;
+				} catch (error) {
+					this.synthPromise = null; // Reset so next call retries
+					throw error;
+				}
 			})();
 		}
 		return this.synthPromise;
@@ -345,6 +352,10 @@ class KokoroEngine implements TTSEngine {
 			buffer,
 			durationMs: estimateDurationMs(buffer),
 		};
+		if (kokoroCache.size >= 50) {
+			const firstKey = kokoroCache.keys().next().value;
+			if (firstKey) kokoroCache.delete(firstKey);
+		}
 		kokoroCache.set(cacheKey, result);
 		return result;
 	}
@@ -380,6 +391,7 @@ class DeepgramEngine implements TTSEngine {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ text }),
+			signal: AbortSignal.timeout(15000),
 		});
 		if (!response.ok) {
 			throw new Error(`Deepgram TTS failed: HTTP ${response.status}`);
@@ -427,11 +439,13 @@ class ElevenLabsEngine implements TTSEngine {
 					use_speaker_boost: true,
 				},
 			}),
+			signal: AbortSignal.timeout(15000),
 		});
 
 		if (!response.ok) {
-			const errText = await response.text().catch(() => "");
-			throw new Error(`ElevenLabs TTS failed: HTTP ${response.status} ${errText}`);
+			const rawErr = await response.text().catch(() => "");
+			const safeErr = rawErr.slice(0, 200).replace(/[^\x20-\x7E]/g, "");
+			throw new Error(`ElevenLabs TTS failed: HTTP ${response.status} ${safeErr}`);
 		}
 
 		// ElevenLabs returns raw PCM when output_format is pcm_*
@@ -486,10 +500,13 @@ async function resolveEngine(): Promise<TTSEngine | null> {
 	try {
 		const preferredEngine = await autoDetectEngine({ preferredEngine: config.engine });
 		if (!preferredEngine) {
+			console.error("[pompom-voice] No TTS engine available — check API keys or install kokoro-js");
 			return null;
 		}
 		return engineMap[preferredEngine] || null;
-	} catch {
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] resolveEngine failed: ${msg}`);
 		return null;
 	}
 }
@@ -499,32 +516,77 @@ async function processQueue(): Promise<void> {
 		return;
 	}
 	isProcessingQueue = true;
+	let consecutiveFailures = 0;
 	try {
 		while (queue.length > 0 && config.enabled && interactive) {
+			if (stopRequested) break;
 			const nextEvent = queue.shift();
 			if (!nextEvent) {
 				continue;
 			}
-			const engine = await resolveEngine();
-			if (!engine) {
-				continue;
+			try {
+				const engine = await resolveEngine();
+				if (!engine) {
+					continue;
+				}
+				const voice = engine.name === "kokoro" ? config.kokoroVoice
+					: engine.name === "elevenlabs" ? config.elevenlabsVoice
+					: config.deepgramVoice;
+				const audio = await engine.synthesize(nextEvent.text, voice);
+				if (stopRequested) break;
+				lastSpokenText = nextEvent.text;
+				lastSpeakTime = Date.now();
+				playbackActive = true;
+				playbackEnvelopePhase = 0;
+				const playbackTimeout = audio.durationMs + 10000;
+				let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+				try {
+					await Promise.race([
+						playAudio(audio.buffer),
+						new Promise<void>((_, reject) => {
+							timeoutHandle = setTimeout(() => {
+								// Kill the stuck player process on timeout
+								if (currentPlayback) {
+									try { currentPlayback.kill("SIGTERM"); } catch { /* already dead */ }
+									currentPlayback = null;
+								}
+								const err = new Error("Playback timeout");
+								err.name = "TimeoutError";
+								reject(err);
+							}, playbackTimeout);
+						}),
+					]);
+				} finally {
+					if (timeoutHandle) clearTimeout(timeoutHandle);
+				}
+				playbackActive = false;
+				consecutiveFailures = 0;
+			} catch (itemError) {
+				playbackActive = false;
+				const errName = itemError instanceof Error ? itemError.name : "";
+				if (errName === "AbortError" || errName === "TimeoutError") {
+					// User-initiated stop or abort — not a synthesis failure
+					break;
+				}
+				consecutiveFailures++;
+				const msg = itemError instanceof Error ? itemError.message : String(itemError);
+				console.error(`[pompom-voice] TTS failed (${consecutiveFailures}): ${msg}`);
+				if (consecutiveFailures >= 3) {
+					console.error("[pompom-voice] 3 consecutive failures — pausing queue");
+					break;
+				}
 			}
-			const voice = engine.name === "kokoro" ? config.kokoroVoice
-				: engine.name === "elevenlabs" ? config.elevenlabsVoice
-				: config.deepgramVoice;
-			const audio = await engine.synthesize(nextEvent.text, voice);
-			lastSpokenText = nextEvent.text;
-			lastSpeakTime = Date.now();
-			playbackActive = true;
-			playbackEnvelopePhase = 0;
-			await playAudio(audio.buffer);
-			playbackActive = false;
 		}
 	} catch (error) {
 		playbackActive = false;
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] processQueue unexpected error: ${msg}`);
 	} finally {
 		isProcessingQueue = false;
+		// Re-check: items may have been enqueued during processing
+		if (queue.length > 0 && config.enabled && interactive && !stopRequested) {
+			void processQueue();
+		}
 	}
 }
 
@@ -533,14 +595,21 @@ export function initVoice(isInteractive: boolean): void {
 		interactive = isInteractive;
 		config = loadVoiceConfig();
 		detectedPlayer = detectPlayer();
+		if (isInteractive && !detectedPlayer) {
+			console.error("[pompom-voice] No audio player found (afplay/paplay/aplay) — voice will not produce audio");
+		}
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] initVoice failed: ${msg}`);
 	}
 }
 
 export function setAgentBusy(busy: boolean): void {
 	agentBusy = busy;
-	if (!busy) {
+	if (busy) {
+		// Cancel stale cooldown from previous agent run
+		if (agentEndCooldownTimer) { clearTimeout(agentEndCooldownTimer); agentEndCooldownTimer = null; }
+	} else {
 		// After agent finishes, keep quiet for 5s before re-enabling TTS
 		if (agentEndCooldownTimer) clearTimeout(agentEndCooldownTimer);
 		agentEndCooldownTimer = setTimeout(() => { agentEndCooldownTimer = null; }, 5000);
@@ -558,7 +627,7 @@ export function getVoiceCatalog(): Record<string, { name: string; id: string }[]
 
 export function setVolume(vol: number): void {
 	config.volume = Math.max(0, Math.min(100, vol));
-	detectedPlayer = detectPlayer(); // re-detect to pick up new volume
+	// Volume is read dynamically in argsForFile() — no need to re-detect player
 	saveVoiceConfig();
 }
 
@@ -583,6 +652,8 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		if (!config.enabled || !interactive || !event.allowTts) {
 			return;
 		}
+		// Clear stop flag — new speech requested means user/system wants TTS active again
+		stopRequested = false;
 		// Hard guard: don't enqueue anything while already playing
 		if (playbackActive) {
 			return;
@@ -624,7 +695,7 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		if (queue.some((queued) => queued.text === text)) {
 			return;
 		}
-		if (event.priority === 1 && Math.random() > 0.25) {
+		if (event.priority === 1 && Math.random() > 0.12) {
 			return;
 		}
 		if (Date.now() - lastSpeakTime < MIN_INTERVAL_MS && event.priority < 3) {
@@ -658,7 +729,8 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		});
 		void processQueue();
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] enqueueSpeech failed: ${msg}`);
 	}
 }
 
@@ -691,7 +763,8 @@ export function setVoiceEnabled(enabled: boolean): void {
 			stopPlayback();
 		}
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] setVoiceEnabled failed: ${msg}`);
 	}
 }
 
@@ -709,7 +782,8 @@ export function setVoiceEngine(engine: "kokoro" | "deepgram" | "elevenlabs"): vo
 			saveVoiceConfig();
 		}
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] setVoiceEngine failed: ${msg}`);
 	}
 }
 
@@ -753,16 +827,12 @@ export async function autoDetectEngine(options?: {
 }
 
 export function speakTest(): void {
-	try {
-		enqueueSpeech({
-			text: "Hello. I am Pompom. Voice test ready.",
-			source: "system",
-			priority: 3,
-			allowTts: true,
-		});
-	} catch (error) {
-		/* silent */
-	}
+	enqueueSpeech({
+		text: "Hello. I am Pompom. Voice test ready.",
+		source: "system",
+		priority: 3,
+		allowTts: true,
+	});
 }
 
 export function stopPlayback(): void {
@@ -770,15 +840,19 @@ export function stopPlayback(): void {
 		queue = [];
 		playbackActive = false;
 		stopRequested = true;
+		// Do NOT set isProcessingQueue = false here — let processQueue's own finally handle it.
+		// Setting it here would break mutual exclusion if processQueue is still running.
+		if (agentEndCooldownTimer) { clearTimeout(agentEndCooldownTimer); agentEndCooldownTimer = null; }
 		if (currentPlayback) {
 			try {
 				currentPlayback.kill("SIGTERM");
 			} catch (error) {
-				/* silent */
+				try { currentPlayback.kill("SIGKILL"); } catch { /* truly dead */ }
 			}
 		}
 		currentPlayback = null;
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom-voice] stopPlayback failed: ${msg}`);
 	}
 }

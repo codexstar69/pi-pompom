@@ -46,10 +46,28 @@ import {
 	pompomSetTalkAudioLevel,
 	pompomSetTalking,
 	pompomSetWeatherOverride,
+	pompomGetWeather,
 	pompomStatus,
 	renderPompom,
 	resetPompom,
 } from "./pompom";
+import {
+	initAmbient,
+	getAmbientConfig,
+	hasAmbientBeenConfigured,
+	setAmbientEnabled,
+	setAmbientVolume,
+	getAmbientVolume,
+	setAmbientWeather,
+	duckAmbient,
+	unduckAmbient,
+	pauseAmbient,
+	resumeAmbient,
+	stopAmbient,
+	pregenerateAll,
+	getCachedWeathers,
+	isAmbientPlaying,
+} from "./pompom-ambient";
 import {
 	autoDetectEngine,
 	enqueueSpeech,
@@ -145,7 +163,8 @@ function saveAccessories(): void {
 		fs.mkdirSync(SAVE_DIR, { recursive: true });
 		fs.writeFileSync(SAVE_FILE, JSON.stringify(pompomGetAccessories()));
 	} catch (error) {
-		/* silent */
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom] saveAccessories failed: ${msg}`);
 	}
 }
 
@@ -390,17 +409,19 @@ export default function (pi: ExtensionAPI) {
 	let companionTimer: ReturnType<typeof setInterval> | null = null;
 	let voiceCheckTimer: ReturnType<typeof setInterval> | null = null;
 	let companionActive = false;
+	let widgetVisible = true;
 	let lastRenderTime = Date.now();
 	let terminalInputUnsub: (() => void) | null = null;
 	let enabled = true;
 	let overlayHint: OverlayHint | null = null;
 	let overlayHintUntil = 0;
+	let pulseOverlayTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function persistAgentState() {
 		try {
 			pi.appendEntry(POMPOM_AGENT_STATE_TYPE, serializeState());
 		} catch (error) {
-			/* silent */
+			// Non-fatal: agent state persistence is best-effort
 		}
 	}
 
@@ -431,7 +452,9 @@ export default function (pi: ExtensionAPI) {
 		overlayHint = hint;
 		overlayHintUntil = Date.now() + durationMs;
 		applyAgentVisualState();
-		setTimeout(() => {
+		if (pulseOverlayTimer) clearTimeout(pulseOverlayTimer);
+		pulseOverlayTimer = setTimeout(() => {
+			pulseOverlayTimer = null;
 			if (Date.now() < overlayHintUntil) {
 				return;
 			}
@@ -454,7 +477,8 @@ export default function (pi: ExtensionAPI) {
 		try {
 			await fn();
 		} catch (error) {
-			/* silent */
+			const msg = error instanceof Error ? error.message : String(error);
+			console.error(`[pompom] ${label} failed: ${msg}`);
 		}
 	}
 
@@ -469,6 +493,56 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Tip: Give Pompom a voice with /pompom:voice on or /pompom:voice setup", "info");
 			}
 		}, 5000);
+	}
+
+	// ─── Ambient weather sync ─────────────────────────────────────────────
+	let ambientWeatherTimer: ReturnType<typeof setInterval> | null = null;
+	let loadedAmbientHintShown = false;
+	let lastAmbientWeather: string | null = null;
+	let wasTTSPlaying = false;
+
+	function startAmbientWeatherSync() {
+		stopAmbientWeatherSync();
+		// Sync immediately, then poll every 5s (weather changes every 30min+ so this is cheap)
+		syncAmbientWeather();
+		ambientWeatherTimer = setInterval(syncAmbientWeather, 5000);
+	}
+
+	function stopAmbientWeatherSync() {
+		if (ambientWeatherTimer) { clearInterval(ambientWeatherTimer); ambientWeatherTimer = null; }
+	}
+
+	function syncAmbientWeather() {
+		try {
+			const weather = pompomGetWeather();
+			if (weather !== lastAmbientWeather) {
+				lastAmbientWeather = weather;
+				void setAmbientWeather(weather);
+			}
+			// TTS ducking: duck when TTS starts, unduck when it stops
+			const ttsPlaying = isPlayingTTS();
+			if (ttsPlaying && !wasTTSPlaying) duckAmbient();
+			else if (!ttsPlaying && wasTTSPlaying) unduckAmbient();
+			wasTTSPlaying = ttsPlaying;
+		} catch {
+			// Non-fatal
+		}
+	}
+
+	function showAmbientHint() {
+		if (hasAmbientBeenConfigured() || loadedAmbientHintShown || !ctx?.hasUI) return;
+		const ambientConfig = getAmbientConfig();
+		if (!ambientConfig.enabled) return;
+		loadedAmbientHintShown = true;
+		setTimeout(() => {
+			if (ctx?.hasUI && process.env.ELEVENLABS_API_KEY) {
+				ctx.ui.notify(
+					"Ambient sounds are enabled — Pompom will play weather-matching background audio.\n" +
+					"Use /pompom:ambient off to disable, or /pompom:ambient volume 0-100 to adjust.",
+					"info"
+				);
+			}
+		}, 8000);
 	}
 
 	function safeRender(width: number): string[] {
@@ -500,7 +574,7 @@ export default function (pi: ExtensionAPI) {
 					render: safeRender,
 				}), { placement: "aboveEditor" });
 			} catch (error) {
-				/* silent */
+				// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 			}
 		};
 
@@ -554,7 +628,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.setWidget(WIDGET_ID, undefined);
 			}
 		} catch (error) {
-			/* silent */
+			// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 		}
 	}
 
@@ -565,6 +639,14 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	const POMPOM_KEYS = "pfbmcdswoxthg";
+
+	// Map keyboard letter → pompom action key (for Kitty CSI u sequences)
+	// Alt+e sends codepoint 'e', but we need to call pompomKeypress('f') for feed
+	const kittyKeyToAction: Record<string, string> = {
+		p: "p", e: "f", r: "b", z: "d", u: "h",
+		a: "w", t: "t", x: "x", g: "g", s: "s",
+		o: "o", c: "c", m: "m",
+	};
 
 	function setupKeyHandler() {
 		if (!ctx?.hasUI) {
@@ -578,6 +660,10 @@ export default function (pi: ExtensionAPI) {
 		try {
 			terminalInputUnsub = ctx.ui.onTerminalInput((data: string) => {
 				if (!enabled || !companionActive) {
+					return undefined;
+				}
+				// Don't intercept keys when chat overlay has focus — let the overlay handle input
+				if (chatOverlayHandle && chatOverlayHandle.isFocused()) {
 					return undefined;
 				}
 
@@ -594,25 +680,26 @@ export default function (pi: ExtensionAPI) {
 						return { consume: true };
 					}
 
-						const kittyMatch = data.match(/^\x1b\[(\d+);(\d+)u$/);
-						if (kittyMatch) {
-							const mod = parseInt(kittyMatch[2], 10);
-							if ((mod - 1) & 2) {
-								const char = String.fromCharCode(parseInt(kittyMatch[1], 10)).toLowerCase();
-								if (POMPOM_KEYS.includes(char)) {
-									pompomKeypress(char);
-									return { consume: true };
-								}
+					const kittyMatch = data.match(/^\x1b\[(\d+);(\d+)u$/);
+					if (kittyMatch) {
+						const mod = parseInt(kittyMatch[2], 10);
+						if ((mod - 1) & 2) { // Alt modifier bit set
+							const keyChar = String.fromCharCode(parseInt(kittyMatch[1], 10)).toLowerCase();
+							const actionKey = kittyKeyToAction[keyChar];
+							if (actionKey) {
+								pompomKeypress(actionKey);
+								return { consume: true };
+							}
 						}
 					}
 				} catch (error) {
-					/* silent */
+					// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 				}
 
 				return undefined;
 			});
 		} catch (error) {
-			/* silent */
+			// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 		}
 	}
 
@@ -625,14 +712,20 @@ export default function (pi: ExtensionAPI) {
 		try {
 			pompomRestoreAccessories(loadAccessories());
 		} catch (error) {
-			/* silent */
+			// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 		}
 		applyAgentVisualState();
 	}
 
 	async function runPompomAsk(commandArgs: string, commandContext: ExtensionContext) {
+		if (aiCommandInProgress) {
+			commandContext.ui.notify("Pompom is already working on a request. Please wait.", "warning");
+			return;
+		}
+		aiCommandInProgress = true; // Set IMMEDIATELY to prevent race
 		const question = commandArgs.trim();
 		if (!question) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify("Usage: /pompom:ask <question>", "warning");
 			return;
 		}
@@ -719,6 +812,7 @@ export default function (pi: ExtensionAPI) {
 			pompomSay("I hit a snag while thinking.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:ask error - ${message}`, "error");
 		} finally {
+			aiCommandInProgress = false;
 			overlayHint = null;
 			overlayHintUntil = 0;
 			applyAgentVisualState();
@@ -726,8 +820,14 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function runPompomRecap(commandContext: ExtensionContext) {
+		if (aiCommandInProgress) {
+			commandContext.ui.notify("Pompom is already working on a request. Please wait.", "warning");
+			return;
+		}
+		aiCommandInProgress = true; // Set IMMEDIATELY to prevent race
 		const model = commandContext.model;
 		if (!isModelLike(model)) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
 			return;
 		}
@@ -790,6 +890,7 @@ export default function (pi: ExtensionAPI) {
 			pompomSay("Recap failed. I need another try.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:recap error - ${message}`, "error");
 		} finally {
+			aiCommandInProgress = false;
 			overlayHint = null;
 			overlayHintUntil = 0;
 			applyAgentVisualState();
@@ -801,6 +902,7 @@ export default function (pi: ExtensionAPI) {
 			ctx = startCtx;
 			loadedVoiceHintShown = false;
 			initVoice(Boolean(startCtx.hasUI));
+			initAmbient(Boolean(startCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
 					enqueueSpeech(event);
@@ -810,15 +912,21 @@ export default function (pi: ExtensionAPI) {
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
+				startAmbientWeatherSync();
 			}
 			showVoiceHint();
+			showAmbientHint();
 		});
 	});
 
 	pi.on("session_shutdown", async () => {
 		await runSafely("session_shutdown", () => {
 			persistAgentState();
+			setAgentBusy(false);
 			stopPlayback();
+			stopAmbient();
+			stopAmbientWeatherSync();
+			chatOverlayHandle = null;
 			pompomOnSpeech(null);
 			hideCompanion();
 			resetPompom();
@@ -832,12 +940,18 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_switch", async (_event, switchCtx) => {
 		await runSafely("session_switch", () => {
+			persistAgentState();
+			setAgentBusy(false);
 			stopPlayback();
+			stopAmbient();
+			stopAmbientWeatherSync();
+			chatOverlayHandle = null;
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
 			loadedVoiceHintShown = false;
 			initVoice(Boolean(switchCtx.hasUI));
+			initAmbient(Boolean(switchCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
 					enqueueSpeech(event);
@@ -847,8 +961,10 @@ export default function (pi: ExtensionAPI) {
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
+				startAmbientWeatherSync();
 			}
 			showVoiceHint();
+			showAmbientHint();
 		});
 	});
 
@@ -946,6 +1062,21 @@ export default function (pi: ExtensionAPI) {
 	// Keyboard shortcuts — only keys NOT claimed by Pi's editor
 	// Conflicts: alt+b(wordLeft) alt+f(wordRight) alt+d(deleteWord) alt+h(cursorLeft)
 	//            alt+j(down) alt+k(up) alt+l(right) alt+w(wordRight) alt+y(yank)
+	const shortcutDescriptions: Record<string, string> = {
+		p: "Pet Pompom",
+		f: "Feed Pompom",
+		b: "Throw ball",
+		d: "Do a flip",
+		h: "Hug Pompom",
+		w: "Wake Pompom",
+		t: "Give treat",
+		x: "Dance",
+		g: "Play game",
+		s: "Sleep",
+		o: "Hide Pompom",
+		c: "Cycle color",
+		m: "Play music",
+	};
 	const shortcutActions: [string, string][] = [
 		["alt+p", "p"],  // Pet
 		["alt+e", "f"],  // Eat (feed)
@@ -964,10 +1095,50 @@ export default function (pi: ExtensionAPI) {
 	for (const [shortcut, key] of shortcutActions) {
 		try {
 			pi.registerShortcut(shortcut as any, {
-				description: `Pompom: ${key}`,
+				description: shortcutDescriptions[key] || `Pompom: ${key}`,
 				handler: async () => { if (enabled && companionActive) pompomKeypress(key); },
 			});
-		} catch {}
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[pompom] registerShortcut ${shortcut} failed: ${msg}`);
+		}
+	}
+
+	// Toggle widget visibility — hides animation but keeps voice/health/agent tracking alive
+	function toggleWidget() {
+		if (!enabled) return;
+		if (widgetVisible) {
+			widgetVisible = false;
+			// Stop the render loop and remove widget, but keep voice/health/agent timers running
+			if (companionTimer) {
+				clearInterval(companionTimer);
+				companionTimer = null;
+			}
+			pauseAmbient();
+			try {
+				if (ctx?.hasUI) {
+					ctx.ui.setWidget(WIDGET_ID, undefined);
+				}
+			} catch {
+				// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
+			}
+		} else {
+			widgetVisible = true;
+			resumeAmbient();
+			if (companionActive) {
+				showCompanion();
+			}
+		}
+	}
+
+	try {
+		pi.registerShortcut("alt+v" as any, {
+			description: "Toggle Pompom view",
+			handler: async () => { toggleWidget(); },
+		});
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[pompom] registerShortcut alt+v failed: ${msg}`);
 	}
 
 	// Interactive settings panel — full TUI overlay with arrow-key navigation
@@ -993,6 +1164,7 @@ export default function (pi: ExtensionAPI) {
 					enabled = true;
 					showCompanion();
 					setupKeyHandler();
+					startAmbientWeatherSync();
 					commandContext.ui.notify("Pompom companion enabled.", "info");
 					return;
 				}
@@ -1000,6 +1172,8 @@ export default function (pi: ExtensionAPI) {
 				if (sub === "off") {
 					enabled = false;
 					hideCompanion();
+					stopAmbient();
+					stopAmbientWeatherSync();
 					resetPompom();
 					if (terminalInputUnsub) {
 						terminalInputUnsub();
@@ -1009,11 +1183,21 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
+				if (sub === "toggle") {
+					toggleWidget();
+					commandContext.ui.notify(
+						widgetVisible ? "Pompom view restored." : "Pompom view hidden (voice & tracking still active).",
+						"info"
+					);
+					return;
+				}
+
 				if (sub === "help" || sub === "?") {
 					const modifier = process.platform === "darwin" ? "⌥" : "Alt+";
 					commandContext.ui.notify(
 						`Pompom Commands\n` +
 						`  /pompom on|off       Toggle companion\n` +
+						`  /pompom toggle       Toggle view         ${modifier}v\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
 						`  /pompom feed         Drop food            ${modifier}e\n` +
 						`  /pompom treat        Special treat       ${modifier}t\n` +
@@ -1036,6 +1220,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom:agents       Agent status dashboard\n` +
 						`  /pompom:stuck        Check if agent is stuck\n` +
 						`  /pompom:analyze      AI session analysis\n` +
+						`  /pompom:ambient      Weather ambient sounds — on|off|volume\n` +
 						`  /pompom-settings     Interactive settings panel`,
 						"info"
 					);
@@ -1255,6 +1440,74 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("pompom:ambient", {
+		description: "Ambient weather sounds — on/off/volume/pregenerate",
+		handler: async (args, commandContext) => {
+			await runSafely("pompom:ambient", async () => {
+				ctx = commandContext;
+				const sub = (args || "").trim().toLowerCase();
+
+				if (sub === "on") {
+					setAmbientEnabled(true);
+					startAmbientWeatherSync();
+					commandContext.ui.notify("Ambient sounds enabled. Weather audio will play in the background.", "info");
+					return;
+				}
+
+				if (sub === "off") {
+					setAmbientEnabled(false);
+					stopAmbientWeatherSync();
+					commandContext.ui.notify("Ambient sounds disabled.", "info");
+					return;
+				}
+
+				if (sub.startsWith("volume ") || sub.startsWith("vol ")) {
+					const val = parseInt(sub.split(" ")[1]);
+					if (isNaN(val) || val < 0 || val > 100) {
+						commandContext.ui.notify("Usage: /pompom:ambient volume 0-100", "warning");
+						return;
+					}
+					setAmbientVolume(val);
+					commandContext.ui.notify(`Ambient volume: ${val}%`, "info");
+					return;
+				}
+
+				if (sub === "volume" || sub === "vol") {
+					commandContext.ui.notify(`Ambient volume: ${getAmbientVolume()}%\n  /pompom:ambient volume <0-100>`, "info");
+					return;
+				}
+
+				if (sub === "pregenerate" || sub === "pregen" || sub === "cache") {
+					commandContext.ui.notify("Generating ambient audio for all weather types... this may take a minute.", "info");
+					const count = await pregenerateAll();
+					const cached = getCachedWeathers();
+					commandContext.ui.notify(
+						`Generated ${count} new ambient tracks. Cached: ${cached.join(", ")}`,
+						"info"
+					);
+					return;
+				}
+
+				// Default: show status
+				const ambientConfig = getAmbientConfig();
+				const cached = getCachedWeathers();
+				const hasKey = Boolean(process.env.ELEVENLABS_API_KEY);
+				commandContext.ui.notify(
+					"Pompom Ambient\n" +
+					`  Status:   ${ambientConfig.enabled ? "ON" : "OFF"}\n` +
+					`  Volume:   ${ambientConfig.volume}%\n` +
+					`  Playing:  ${isAmbientPlaying() ? "yes" : "no"}\n` +
+					`  Cached:   ${cached.length > 0 ? cached.join(", ") : "none"}\n` +
+					`  API key:  ${hasKey ? "set" : "missing (ELEVENLABS_API_KEY)"}\n\n` +
+					"  /pompom:ambient on|off\n" +
+					"  /pompom:ambient volume <0-100>\n" +
+					"  /pompom:ambient pregenerate   Generate all 5 sounds now",
+					"info"
+				);
+			});
+		},
+	});
+
 	pi.registerCommand("pompom:recap", {
 		description: "Ask Pompom for a concise recap of the current session",
 		handler: async (_args, commandContext) => {
@@ -1405,7 +1658,9 @@ export default function (pi: ExtensionAPI) {
 					"The agent might need a nudge.",
 				];
 				pompomSay(lines[Math.floor(Math.random() * lines.length)], 5.0, "commentary", 2, true);
-			} catch { /* silent */ }
+			} catch {
+				// Non-fatal: health check is best-effort
+			}
 		}, 60_000);
 	}
 
@@ -1417,6 +1672,8 @@ export default function (pi: ExtensionAPI) {
 
 	const CHAT_SHORTCUT = "alt+/";
 	let chatOverlayHandle: { focus: () => void; unfocus: () => void; isFocused: () => boolean } | null = null;
+	let chatOpenInProgress = false;
+	let aiCommandInProgress = false;
 
 	pi.registerCommand("pompom:chat", {
 		description: "Open Pompom side chat — parallel agent with read-only tools",
@@ -1448,11 +1705,13 @@ export default function (pi: ExtensionAPI) {
 	} catch { /* silent — shortcut may already exist */ }
 
 	async function openPompomChat(commandContext: ExtensionContext) {
+		if (chatOpenInProgress || chatOverlayHandle) return;
 		if (!commandContext.hasUI) return;
 		if (!isModelLike(commandContext.model)) {
 			commandContext.ui.notify("Cannot open chat: no model configured.", "error");
 			return;
 		}
+		chatOpenInProgress = true;
 
 		try {
 			const { PompomChatOverlay } = await import("./pompom-chat");
@@ -1481,9 +1740,8 @@ export default function (pi: ExtensionAPI) {
 					overlay: true,
 					overlayOptions: {
 						width: "90%" as any,
-						maxHeight: "50%" as any,
+						maxHeight: "55%" as any,
 						anchor: "center" as any,
-						margin: { top: 1, left: 1, right: 1 } as any,
 						// nonCapturing removed — chat needs keyboard focus to type
 					},
 					onHandle: (handle: any) => {
@@ -1494,6 +1752,10 @@ export default function (pi: ExtensionAPI) {
 			);
 		} catch (err) {
 			chatOverlayHandle = null;
+			const msg = err instanceof Error ? err.message : String(err);
+			console.error(`[pompom] openPompomChat failed: ${msg}`);
+		} finally {
+			chatOpenInProgress = false;
 		}
 	}
 }

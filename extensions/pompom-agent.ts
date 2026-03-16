@@ -85,21 +85,21 @@ interface ToolResultInput {
 	result?: unknown;
 }
 
-const MIN_COMMENTARY_GAP_MS = 8000;
-const SAME_BUCKET_GAP_MS = 20000;
+const MIN_COMMENTARY_GAP_MS = 30000;
+const SAME_BUCKET_GAP_MS = 60000;
 const RECENT_ACTIVITY_WINDOW_MS = 25000;
 
 const COMMENTARY_CHANCE: Record<CommentaryBucket, number> = {
-	agent_start: 0.25,
-	agent_end: 0.35,
-	tool_call: 0.12,
-	tool_result: 0.08,
-	tool_error: 0.7,
-	message_start_user: 0.05,
-	message_start_assistant: 0.08,
-	message_end_user: 0.04,
-	message_end_assistant: 0.15,
-	message_end_tool: 0.06,
+	agent_start: 0.12,
+	agent_end: 0.18,
+	tool_call: 0.06,
+	tool_result: 0.04,
+	tool_error: 0.50,
+	message_start_user: 0.025,
+	message_start_assistant: 0.04,
+	message_end_user: 0.02,
+	message_end_assistant: 0.08,
+	message_end_tool: 0.03,
 };
 
 const COMMENTARY_LINES: Record<CommentaryBucket, string[]> = {
@@ -288,11 +288,14 @@ function refreshMood(): void {
 	state.mood = resolveMood();
 }
 
+let syntheticIdCounter = 0;
+
 function getToolCallId(input: { toolCallId?: string; toolName: string }): string {
 	if (input.toolCallId && input.toolCallId.trim()) {
 		return input.toolCallId;
 	}
-	return `${input.toolName}-${state.counters.toolCalls + Object.keys(state.activeToolCalls).length + 1}`;
+	syntheticIdCounter++;
+	return `${input.toolName}-synth-${syntheticIdCounter}`;
 }
 
 function resolveTrackedToolCallId(input: { toolCallId?: string; toolName: string }): string {
@@ -577,7 +580,7 @@ export function serializeState(): SerializedAgentState {
 		lastToolSucceededAt: state.lastToolSucceededAt,
 		lastToolFailedAt: state.lastToolFailedAt,
 		lastMessageRole: state.lastMessageRole,
-		activeToolCalls: { ...state.activeToolCalls },
+		activeToolCalls: JSON.parse(JSON.stringify(state.activeToolCalls)),
 		sessionStartedAt: state.sessionStartedAt,
 		counters: { ...state.counters },
 	};
@@ -645,11 +648,7 @@ export function detectStuck(): StuckSignal {
 	let confidence = 0;
 	const now = Date.now();
 
-	// Rule 1: Consecutive errors
-	const consecutiveErrors = state.lastToolFailedAt > state.lastToolSucceededAt
-		? state.counters.toolFailures - Math.max(0, state.counters.toolSuccesses > 0 ? 0 : state.counters.toolFailures)
-		: 0;
-	// Simpler: check if last N tool results were all errors
+	// Rule 1: Recent error pattern
 	const recentFails = state.counters.toolFailures;
 	const recentSuccesses = state.counters.toolSuccesses;
 	if (recentFails >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
