@@ -87,9 +87,10 @@ export class PompomChatOverlay implements Component, Focusable {
 
 		this.agent.subscribe((e) => this.onAgentEvent(e));
 		this.editor = new Editor(opts.tui, { borderColor: (t: string) => opts.theme.fg("borderMuted", t), selectList: getSelectListTheme() }, { paddingX: 0 });
+		this.editor.focused = true;
 		this.editor.onSubmit = (text) => this.onSubmit(text);
 
-		this.displayMessages.push({ role: "pompom", text: "Hi! Ask me anything or use peek_main to check on the main agent." });
+		this.displayMessages.push({ role: "pompom", text: "Hi! Ask me anything or use peek_main to check." });
 	}
 
 	private createPeekMain(sm: SessionManager): AgentTool {

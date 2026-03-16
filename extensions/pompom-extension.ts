@@ -943,12 +943,23 @@ export default function (pi: ExtensionAPI) {
 		game: "g",
 	};
 
-	// Keyboard shortcuts via Pi's registerShortcut API (works on macOS/Windows/Linux)
-	// Skip alt+b/f/d — conflict with Pi's readline (cursorWordLeft, cursorWordRight, deleteWordForward)
+	// Keyboard shortcuts — only keys NOT claimed by Pi's editor
+	// Conflicts: alt+b(wordLeft) alt+f(wordRight) alt+d(deleteWord) alt+h(cursorLeft)
+	//            alt+j(down) alt+k(up) alt+l(right) alt+w(wordRight) alt+y(yank)
 	const shortcutActions: [string, string][] = [
-		["alt+p", "p"], ["alt+g", "g"], ["alt+h", "h"], ["alt+t", "t"],
-		["alt+x", "x"], ["alt+w", "w"], ["alt+s", "s"], ["alt+o", "o"],
-		["alt+c", "c"], ["alt+m", "m"],
+		["alt+p", "p"],  // Pet
+		["alt+e", "f"],  // Eat (feed)
+		["alt+r", "b"],  // thRow (ball)
+		["alt+z", "d"],  // Zoom flip
+		["alt+u", "h"],  // hUg
+		["alt+a", "w"],  // Awake (wake)
+		["alt+t", "t"],  // Treat
+		["alt+x", "x"],  // Dance
+		["alt+g", "g"],  // Game
+		["alt+s", "s"],  // Sleep
+		["alt+o", "o"],  // Hide
+		["alt+c", "c"],  // Color
+		["alt+m", "m"],  // Music
 	];
 	for (const [shortcut, key] of shortcutActions) {
 		try {
@@ -1004,15 +1015,15 @@ export default function (pi: ExtensionAPI) {
 						`Pompom Commands\n` +
 						`  /pompom on|off       Toggle companion\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
-						`  /pompom feed         Drop food\n` +
+						`  /pompom feed         Drop food            ${modifier}e\n` +
 						`  /pompom treat        Special treat       ${modifier}t\n` +
-						`  /pompom hug          Give a hug          ${modifier}h\n` +
-						`  /pompom ball         Throw a ball\n` +
+						`  /pompom hug          Give a hug          ${modifier}u\n` +
+						`  /pompom ball         Throw a ball        ${modifier}r\n` +
 						`  /pompom dance        Dance               ${modifier}x\n` +
 						`  /pompom music        Sing a song         ${modifier}m\n` +
-						`  /pompom flip         Do a flip\n` +
+						`  /pompom flip         Do a flip           ${modifier}z\n` +
 						`  /pompom sleep        Nap time            ${modifier}s\n` +
-						`  /pompom wake         Wake up             ${modifier}w\n` +
+						`  /pompom wake         Wake up             ${modifier}a\n` +
 						`  /pompom theme        Cycle color         ${modifier}c\n` +
 						`  /pompom hide         Wander off          ${modifier}o\n` +
 						`  /pompom game         Catch the stars     ${modifier}g\n` +
@@ -1472,7 +1483,7 @@ export default function (pi: ExtensionAPI) {
 						maxHeight: "50%" as any,
 						anchor: "center" as any,
 						margin: { top: 1, left: 1, right: 1 } as any,
-						nonCapturing: true,
+						// nonCapturing removed — chat needs keyboard focus to type
 					},
 					onHandle: (handle: any) => {
 						chatOverlayHandle = handle;
