@@ -1804,9 +1804,8 @@ export default function (pi: ExtensionAPI) {
 					overlay: true,
 					overlayOptions: {
 						width: "90%" as any,
-						maxHeight: "55%" as any,
-						anchor: "center" as any,
-						// nonCapturing removed — chat needs keyboard focus to type
+						maxHeight: "50%" as any,
+						anchor: "bottom" as any,
 					},
 					onHandle: (handle: any) => {
 						chatOverlayHandle = handle;
