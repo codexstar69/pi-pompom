@@ -1180,7 +1180,28 @@ export default function (pi: ExtensionAPI) {
 			await runSafely("pompom-settings", async () => {
 				ctx = cmdCtx;
 				const { openPompomSettings } = await import("./pompom-settings");
-				await openPompomSettings(cmdCtx);
+				await openPompomSettings(cmdCtx, {
+					pompomEnabled: enabled,
+					onTogglePompom: (on) => {
+						if (on) {
+							enabled = true;
+							setVoiceEnabled(true);
+							setAmbientEnabled(true);
+							showCompanion();
+							setupKeyHandler();
+							startAmbientWeatherSync();
+						} else {
+							enabled = false;
+							hideCompanion();
+							stopAmbient();
+							stopAmbientWeatherSync();
+							stopPlayback();
+							setVoiceEnabled(false);
+							setAmbientEnabled(false);
+							if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+						}
+					},
+				});
 			});
 		},
 	});
@@ -1194,30 +1215,16 @@ export default function (pi: ExtensionAPI) {
 
 				if (sub === "on") {
 					enabled = true;
+					setVoiceEnabled(true);
+					setAmbientEnabled(true);
 					showCompanion();
 					setupKeyHandler();
 					startAmbientWeatherSync();
-					commandContext.ui.notify("Pompom companion enabled.", "info");
+					commandContext.ui.notify("Pompom on — animation, voice, ambient, everything restored!", "info");
 					return;
 				}
 
-				if (sub === "off") {
-					enabled = false;
-					hideCompanion();
-					stopAmbient();
-					stopAmbientWeatherSync();
-					stopPlayback();
-					resetPompom();
-					if (terminalInputUnsub) {
-						terminalInputUnsub();
-						terminalInputUnsub = null;
-					}
-					commandContext.ui.notify("Pompom companion hidden. Side chat still available via /pompom:chat", "info");
-					return;
-				}
-
-				if (sub === "quiet" || sub === "zen" || sub === "mute") {
-					// Quiet mode: disable ALL animation, voice, and sounds — but keep chat alive
+				if (sub === "off" || sub === "quiet" || sub === "zen" || sub === "mute") {
 					enabled = false;
 					hideCompanion();
 					stopAmbient();
@@ -1225,12 +1232,13 @@ export default function (pi: ExtensionAPI) {
 					stopPlayback();
 					setVoiceEnabled(false);
 					setAmbientEnabled(false);
+					resetPompom();
 					if (terminalInputUnsub) {
 						terminalInputUnsub();
 						terminalInputUnsub = null;
 					}
 					commandContext.ui.notify(
-						"Quiet mode — animation, voice, and sounds all off.\n" +
+						"Pompom off — animation, voice, and sounds all disabled.\n" +
 						"Side chat is still available: /pompom:chat or Alt+/\n" +
 						"To restore everything: /pompom on",
 						"info"
@@ -1251,8 +1259,8 @@ export default function (pi: ExtensionAPI) {
 					const modifier = process.platform === "darwin" ? "⌥" : "Alt+";
 					commandContext.ui.notify(
 						`Pompom Commands\n` +
-						`  /pompom on|off       Toggle companion\n` +
-						`  /pompom quiet        Mute all (chat stays)  \n` +
+						`  /pompom on           Everything on\n` +
+						`  /pompom off          Everything off (chat stays)\n` +
 						`  /pompom toggle       Toggle view         ${modifier}v\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
 						`  /pompom feed         Drop food            ${modifier}e\n` +

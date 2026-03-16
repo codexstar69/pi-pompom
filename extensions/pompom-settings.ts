@@ -128,6 +128,8 @@ class PompomSettingsPanel {
 	private search = "";
 	private filtered: { name: string; id: string }[] = [];
 	public modelList: string[] = [];
+	public pompomEnabled = true;
+	public onTogglePompom?: (enabled: boolean) => void;
 	private cw?: number;
 	private cl?: string[];
 	private statusMsg = "";
@@ -234,7 +236,7 @@ class PompomSettingsPanel {
 	}
 
 	private rowCount(): number {
-		if (this.tab === TAB_POMPOM) return POMPOM_ACTIONS.length;
+		if (this.tab === TAB_POMPOM) return POMPOM_ACTIONS.length + 1; // +1 for on/off toggle
 		if (this.tab === TAB_VOICE) return 5; // engine, voice, volume, status, test
 		if (this.tab === TAB_AMBIENT) return 4; // status, volume, pregenerate, cache info
 		if (this.tab === TAB_PERSONALITY) return PERSONALITY_OPTIONS.length;
@@ -247,10 +249,17 @@ class PompomSettingsPanel {
 
 	private select() {
 		if (this.tab === TAB_POMPOM) {
-			const action = POMPOM_ACTIONS[this.row];
-			if (action) {
-				pompomKeypress(action.key);
-				this.showStatus(action.label);
+			if (this.row === 0) {
+				// On/off toggle — first row
+				this.pompomEnabled = !this.pompomEnabled;
+				if (this.onTogglePompom) this.onTogglePompom(this.pompomEnabled);
+				this.showStatus(this.pompomEnabled ? "Pompom ON" : "Pompom OFF (chat stays)");
+			} else {
+				const action = POMPOM_ACTIONS[this.row - 1]; // offset by 1 for toggle row
+				if (action) {
+					pompomKeypress(action.key);
+					this.showStatus(action.label);
+				}
 			}
 		} else if (this.tab === TAB_VOICE) {
 			const cfg = getVoiceConfig();
@@ -396,6 +405,14 @@ class PompomSettingsPanel {
 		const s = pompomStatus();
 		const weather = pompomGetWeather();
 
+		// On/off toggle — first row
+		const togglePre = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
+		const toggleLabel = this.pompomEnabled
+			? `${GRN}ON${RST}  ${DIM}animation, voice, ambient all active${RST}`
+			: `${YEL}OFF${RST} ${DIM}everything muted — side chat still works${RST}`;
+		lines.push(line(`${togglePre}${BRT}Pompom: ${toggleLabel}`));
+		lines.push(line(""));
+
 		// Status section
 		lines.push(line(`${BRT}Mood:${RST}   ${s.mood}    ${BRT}Weather:${RST} ${weather}`));
 		lines.push(line(`${BRT}Hunger:${RST} ${bar10(s.hunger)} ${s.hunger}%`));
@@ -403,10 +420,10 @@ class PompomSettingsPanel {
 		lines.push(line(""));
 		lines.push(line(`${ACC}Actions${RST}  ${DIM}(press Enter to activate)${RST}`));
 
-		// Action rows
+		// Action rows — offset by 1 for the toggle row
 		for (let i = 0; i < POMPOM_ACTIONS.length; i++) {
 			const a = POMPOM_ACTIONS[i];
-			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
+			const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
 			const desc = truncateToWidth(a.description, Math.max(8, iw - a.label.length - 8));
 			lines.push(line(`${pre}${BRT}${a.label}${RST}  ${DIM}${desc}${RST}`));
 		}
@@ -618,9 +635,16 @@ class PompomSettingsPanel {
 	invalidate(): void { this.cw = undefined; this.cl = undefined; }
 }
 
-export async function openPompomSettings(ctx: ExtensionContext): Promise<void> {
+export interface PompomSettingsOptions {
+	pompomEnabled?: boolean;
+	onTogglePompom?: (enabled: boolean) => void;
+}
+
+export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSettingsOptions): Promise<void> {
 	if (!ctx.hasUI) return;
 	const panel = new PompomSettingsPanel();
+	panel.pompomEnabled = opts?.pompomEnabled ?? true;
+	panel.onTogglePompom = opts?.onTogglePompom;
 
 	// Wire pregenerate callback
 	panel.onPregenerate = async () => {
