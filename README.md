@@ -1,4 +1,8 @@
 <p align="center">
+  <b>English</b> | <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <img src="docs/images/hero.png" alt="pi-pompom" width="720">
 </p>
 
