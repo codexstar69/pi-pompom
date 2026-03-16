@@ -19,7 +19,8 @@
   <a href="#commands">Commands</a> ·
   <a href="#keyboard-shortcuts">Shortcuts</a> ·
   <a href="#features">Features</a> ·
-  <a href="#mini-game">Mini-Game</a>
+  <a href="#settings-panel">Settings</a> ·
+  <a href="#how-it-works">How It Works</a>
 </p>
 
 ---
@@ -63,24 +64,39 @@ Pompom appears automatically when you start Pi. Toggle it with:
 | `/pompom hide` | Wander offscreen |
 | `/pompom give <item>` | Give an accessory (umbrella, scarf, sunglasses, hat) |
 | `/pompom inventory` | See Pompom's bag |
+| `/pompom toggle` | Hide/show animation (voice + tracking stay active) |
+| `/pompom:voice` | Voice settings — on/off/setup/test/volume |
+| `/pompom:ambient` | Ambient weather sounds — on/off/volume/pregenerate |
+| `/pompom:chat` | Side chat with Pompom |
+| `/pompom:ask <q>` | Ask Pompom about the session |
+| `/pompom:recap` | Session summary |
+| `/pompom:agents` | Agent status dashboard |
+| `/pompom:stuck` | Check if agent is stuck |
+| `/pompom:analyze` | AI session analysis |
+| `/pompom-settings` | Interactive settings panel (9 tabs) |
 
 ## Keyboard Shortcuts
 
 | macOS | Windows/Linux | Action |
 |-------|--------------|--------|
 | `⌥p` | `Alt+p` | Pet |
-| `⌥f` | `Alt+f` | Feed |
+| `⌥e` | `Alt+e` | Feed |
 | `⌥t` | `Alt+t` | Treat |
-| `⌥h` | `Alt+h` | Hug |
-| `⌥b` | `Alt+b` | Ball |
+| `⌥u` | `Alt+u` | Hug |
+| `⌥r` | `Alt+r` | Ball |
 | `⌥x` | `Alt+x` | Dance |
 | `⌥g` | `Alt+g` | Game |
 | `⌥m` | `Alt+m` | Music |
 | `⌥c` | `Alt+c` | Theme |
 | `⌥s` | `Alt+s` | Sleep |
-| `⌥w` | `Alt+w` | Wake |
-| `⌥d` | `Alt+d` | Flip |
+| `⌥a` | `Alt+a` | Wake |
+| `⌥z` | `Alt+z` | Flip |
 | `⌥o` | `Alt+o` | Hide |
+| `⌥v` | `Alt+v` | Toggle view (hide/show) |
+| `⌥/` | `Alt+/` | Pompom Chat |
+
+> **Note:** Alt+f, Alt+b, Alt+d, Alt+h, Alt+w are used by Pi's built-in editor.
+> Pompom uses safe alternatives that don't conflict.
 
 Four input methods supported: Ghostty keybinds, ESC prefix, macOS Unicode, Kitty keyboard protocol.
 
@@ -103,7 +119,7 @@ Four input methods supported: Ghostty keybinds, ESC prefix, macOS Unicode, Kitty
 
 ### Weather System
 - 5 weather types: clear, cloudy, rain, storm, snow
-- Weather starts clear, transitions naturally every 45-90 seconds
+- Weather starts clear, transitions naturally every 30 min – 2 hours
 - Smooth 7-second color blend between weather states
 - Rain streaks and splash particles, storm lightning flashes, gentle snowfall with wind drift
 - Speech bubble announcements: "Clouds rolling in...", "It's starting to rain!", "Snowflakes!"
@@ -124,21 +140,63 @@ Four input methods supported: Ghostty keybinds, ESC prefix, macOS Unicode, Kitty
 - Catching a star scores a point with sparkle effect
 - Final score announced when timer ends
 
-### Voice Integration
+### Text-to-Speech
+- 3 engines: ElevenLabs (cloud, best), Deepgram (cloud), Kokoro (local, free)
+- 19 ElevenLabs voices, 5 Deepgram voices, 8 Kokoro voices
+- Pompom speaks reactions, commentary, and announcements aloud
+- 6 personality modes control speech frequency:
+  - **Quiet** — user actions + errors only
+  - **Normal** — moderate, casual (default)
+  - **Chatty** — frequent commentary
+  - **Professional** — errors, milestones, direct actions
+  - **Mentor** — guides on errors and completions
+  - **Zen** — near-silent, speaks only when addressed
+- Voice test: `/pompom:voice test`
+- Volume control: `/pompom:voice volume 0-100`
+
+### Voice Input
 - Works with [@codexstar/pi-listen](https://www.npmjs.com/package/@codexstar/pi-listen)
 - When recording voice, Pompom rushes to center and faces you
 - Mouth opens in sync with audio level (louder = wider)
 - Ears wiggle with your voice
 - Bounces with audio amplitude
 
-### Personality
-- 12 random idle speech lines
+### Agent Tracking
+- Pompom watches the coding agent and reacts to tool calls, errors, and completions
+- Mood changes: idle → curious → focused → busy → concerned → celebrating → sleepy
+- Weather reflects agent state (storm on errors, snow on celebrations)
+- Proactive stuck detection with speech bubble alerts
+- Session dashboard: `/pompom:agents`
+- AI-powered analysis: `/pompom:analyze`
+- Side chat: `/pompom:chat` or `Alt+/`
+
+### Personality & Behavior
 - Natural blinking, breathing, ear wiggling, tail wagging
 - Hunger and energy needs with visual status bars
 - Firefly companion that Pompom chases
 - Ball physics with bouncing and fetch behavior
 - Walk, peek, flip, dance, sing animations
 - Descriptive state messages in status bar
+- Human-readable shortcut labels in status bar
+
+### Ambient Weather Sounds
+- Background audio that matches the current weather (rain, wind, birdsong, etc.)
+- Generated via ElevenLabs Sound Effects API on first play, cached locally
+- Auto-ducks to 20% volume during voice playback, restores after
+- Pauses when view is hidden (`Alt+V`), stops on `/pompom off`
+- Pregenerate all 5 sounds: `/pompom:ambient pregenerate`
+- Default: on at 40% volume
+
+### Settings Panel
+- Open with `/pompom-settings`
+- 9 tabs: **Pompom** · **Voice** · **Ambient** · **Personality** · **Theme** · **Accessories** · **Model** · **Shortcuts** · **About**
+- Arrow keys to navigate, Enter to select, Esc to close
+- Pompom tab lets non-technical users pet, feed, and play without knowing shortcuts
+- Shortcuts tab shows a full keyboard reference card
+
+### View Toggle
+- `Alt+V` or `/pompom toggle` hides the animation but keeps voice, ambient audio, health checks, and agent tracking running
+- Press again to bring Pompom back
 
 ## How It Works
 
@@ -164,3 +222,16 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+<p align="center">
+  <strong>Made by <a href="https://x.com/baanditeagle">@baanditeagle</a></strong>
+</p>
+<p align="center">
+  <a href="https://x.com/baanditeagle">𝕏 Twitter</a> ·
+  <a href="https://github.com/codexstar69/pi-pompom">GitHub</a> ·
+  <a href="https://www.npmjs.com/package/@codexstar/pi-pompom">npm</a> ·
+  <a href="https://github.com/codexstar69/pi-pompom/issues">Report a Bug</a> ·
+  <a href="https://github.com/mariozechner/pi-coding-agent">Pi CLI</a>
+</p>
