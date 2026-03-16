@@ -499,7 +499,12 @@ export default function (pi: ExtensionAPI) {
 		loadedVoiceHintShown = true;
 		setTimeout(() => {
 			if (ctx?.hasUI) {
-				ctx.ui.notify("Tip: Give Pompom a voice with /pompom:voice on or /pompom:voice setup", "info");
+				ctx.ui.notify(
+					"Tip: Give Pompom a voice! Set ELEVENLABS_API_KEY for the best experience.\n" +
+					"ElevenLabs v3 enables emotional audio tags — Pompom laughs, whispers, and sings!\n" +
+					"Run /pompom:voice on or /pompom:voice setup to get started.",
+					"info"
+				);
 			}
 		}, 5000);
 	}
@@ -1803,9 +1808,11 @@ export default function (pi: ExtensionAPI) {
 				{
 					overlay: true,
 					overlayOptions: {
-						width: "90%" as any,
-						maxHeight: "50%" as any,
-						anchor: "bottom-center" as any,
+						width: "85%" as any,
+						maxHeight: "35%" as any,
+						anchor: "top-center" as any,
+						margin: { top: 1, left: 2, right: 2 } as any,
+						nonCapturing: true,
 					},
 					onHandle: (handle: any) => {
 						chatOverlayHandle = handle;

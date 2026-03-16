@@ -20,7 +20,7 @@ import {
 	type Theme,
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { Editor, Key, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TUI } from "@mariozechner/pi-tui";
+import { Editor, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from "@mariozechner/pi-tui";
 
 const POMPOM_SYSTEM = `
 ---
@@ -334,8 +334,8 @@ export class PompomChatOverlay implements Component, Focusable {
 		lines.push(this.frameLine(title + stream + status, innerWidth));
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(bw) + "\u2524"));
 
-		// Messages — fixed height region (cap to ~40% of terminal, minimum 5 lines)
-		const maxLines = Math.max(5, Math.floor(this.opts.tui.terminal.rows * 0.4) - 8);
+		// Messages — fixed height region (match pi-side-chat: 35% of terminal minus chrome)
+		const maxLines = Math.max(3, Math.floor(this.opts.tui.terminal.rows * 0.35) - 10);
 
 		// Build wrapped message lines
 		const allMsgLines: string[] = [];
@@ -374,70 +374,11 @@ export class PompomChatOverlay implements Component, Focusable {
 		return lines.map(l => visibleWidth(l) > width ? truncateToWidth(l, width) : l);
 	}
 
-	private wrapInto(out: string[], prefix: string, prefixW: number, text: string, maxW: number) {
-		if (maxW < 4) maxW = 4;
-		const words = text.split(" ");
-		let curLine = prefix;
-		let curW = prefixW;
-		const indent = "  ";
-		const indentW = 2;
-
-		for (const word of words) {
-			const ww = visibleWidth(word);
-
-			// If the word fits on the current line, append it
-			const spaceNeeded = curW > prefixW ? 1 : 0;
-			if (curW + spaceNeeded + ww <= maxW) {
-				curLine += (spaceNeeded ? " " : "") + word;
-				curW += spaceNeeded + ww;
-				continue;
-			}
-
-			// Word doesn't fit — flush current line if it has content
-			if (curW > prefixW || curW > indentW) {
-				out.push(curLine);
-				curLine = indent;
-				curW = indentW;
-			}
-
-			// If the word itself fits on a fresh line, just add it
-			if (indentW + ww <= maxW) {
-				curLine = indent + word;
-				curW = indentW + ww;
-				continue;
-			}
-
-			// Word is wider than maxW — break it character by character
-			let remaining = word;
-			while (remaining.length > 0) {
-				const available = maxW - curW;
-				if (available <= 0) {
-					out.push(curLine);
-					curLine = indent;
-					curW = indentW;
-					continue;
-				}
-				// Take as many characters as fit
-				let take = 0;
-				let takeW = 0;
-				for (const ch of remaining) {
-					const cw = visibleWidth(ch);
-					if (takeW + cw > available) break;
-					take++;
-					takeW += cw;
-				}
-				if (take === 0) take = 1; // always consume at least 1 char to avoid infinite loop
-				curLine += remaining.slice(0, take);
-				curW += visibleWidth(remaining.slice(0, take));
-				remaining = remaining.slice(take);
-				if (remaining.length > 0) {
-					out.push(curLine);
-					curLine = indent;
-					curW = indentW;
-				}
-			}
-		}
-		if (curW > 0) out.push(curLine);
+	/** Wrap text using Pi's built-in ANSI-aware word wrapper, prepending a prefix to the first line. */
+	private wrapInto(out: string[], prefix: string, _prefixW: number, text: string, maxW: number) {
+		const fullText = prefix + text;
+		const wrapped = wrapTextWithAnsi(fullText, Math.max(4, maxW));
+		for (const line of wrapped) out.push(line);
 	}
 
 	dispose() {
