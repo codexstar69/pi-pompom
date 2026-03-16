@@ -27,6 +27,7 @@ export interface VoiceConfig {
 	elevenlabsVoice: string;
 	personality: Personality;
 	volume: number; // 0-100
+	pompomModel: string; // model ID for /pompom:ask and /pompom:analyze (empty = use main agent's model)
 }
 
 interface AudioPlayer {
@@ -74,6 +75,7 @@ const DEFAULT_CONFIG: VoiceConfig = {
 	elevenlabsVoice: "g6xIsTj2HwM6VR4iXFCw", // Jessica Anne Bogart - Chatty and Friendly
 	personality: "normal",
 	volume: 70,
+	pompomModel: "",
 };
 
 const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
@@ -175,6 +177,7 @@ function loadVoiceConfig(): VoiceConfig {
 				: DEFAULT_CONFIG.elevenlabsVoice,
 			personality,
 			volume: typeof parsed.volume === "number" ? Math.max(0, Math.min(100, parsed.volume)) : DEFAULT_CONFIG.volume,
+			pompomModel: typeof parsed.pompomModel === "string" ? parsed.pompomModel : DEFAULT_CONFIG.pompomModel,
 		};
 	} catch (error) {
 		/* silent */
@@ -557,6 +560,15 @@ export function setVolume(vol: number): void {
 	config.volume = Math.max(0, Math.min(100, vol));
 	detectedPlayer = detectPlayer(); // re-detect to pick up new volume
 	saveVoiceConfig();
+}
+
+export function setPompomModel(modelId: string): void {
+	config.pompomModel = modelId;
+	saveVoiceConfig();
+}
+
+export function getPompomModel(): string {
+	return config.pompomModel;
 }
 
 export function setVoice(voice: string): void {

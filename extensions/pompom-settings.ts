@@ -9,6 +9,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
 	getVoiceConfig, setVoiceEnabled, setVoiceEngine, setVoice, setVolume,
 	setPersonality, getVoiceCatalog, speakTest, stopPlayback,
+	setPompomModel, getPompomModel,
 	type Personality, type VoiceConfig,
 } from "./pompom-voice";
 import { pompomKeypress, pompomStatus, pompomGiveAccessory, pompomGetAccessories } from "./pompom";
@@ -16,7 +17,7 @@ import { getSessionStats } from "./pompom-agent";
 
 type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker";
 
-const TABS = ["Voice", "Personality", "Theme", "Accessories", "About"];
+const TABS = ["Voice", "Personality", "Model", "Theme", "Accessories", "About"];
 
 const PERSONALITY_OPTIONS: { id: Personality; label: string; short: string }[] = [
 	{ id: "quiet", label: "Quiet — user actions + errors only", short: "Quiet" },
@@ -51,6 +52,7 @@ class PompomSettingsPanel {
 	private subRow = 0;
 	private search = "";
 	private filtered: { name: string; id: string }[] = [];
+	public modelList: string[] = []; // populated from ctx before opening
 	private cw?: number;
 	private cl?: string[];
 	public onClose?: () => void;
@@ -105,10 +107,11 @@ class PompomSettingsPanel {
 	}
 
 	private rowCount(): number {
-		if (this.tab === 0) return 5;
+		if (this.tab === 0) return 5; // Voice
 		if (this.tab === 1) return PERSONALITY_OPTIONS.length;
-		if (this.tab === 2) return THEMES.length;
-		if (this.tab === 3) return ACCESSORIES.length;
+		if (this.tab === 2) return this.modelList.length + 1; // Model: "use main" + available models
+		if (this.tab === 3) return THEMES.length;
+		if (this.tab === 4) return ACCESSORIES.length;
 		return 0; // About is read-only
 	}
 
@@ -122,8 +125,15 @@ class PompomSettingsPanel {
 		} else if (this.tab === 1) {
 			const p = PERSONALITY_OPTIONS[this.row]; if (p) setPersonality(p.id);
 		} else if (this.tab === 2) {
-			pompomKeypress("c");
+			// Model tab: row 0 = "use main agent's model", row 1+ = specific models
+			if (this.row === 0) { setPompomModel(""); }
+			else {
+				const m = this.modelList[this.row - 1];
+				if (m) setPompomModel(m);
+			}
 		} else if (this.tab === 3) {
+			pompomKeypress("c");
+		} else if (this.tab === 4) {
 			const item = ACCESSORIES[this.row]; const acc = pompomGetAccessories();
 			if (item && !(acc as any)[item]) pompomGiveAccessory(item);
 		}
@@ -204,13 +214,29 @@ class PompomSettingsPanel {
 				lines.push(line(`${pre}${BRT}${label}${RST}${active}`));
 			}
 		} else if (this.tab === 2) {
+			// Model tab — select which LLM Pompom uses for /pompom:ask and /pompom:analyze
+			const current = getPompomModel();
+			const mainLabel = "Use main agent's model (default)";
+			const mainActive = current === "" ? ` ${GRN}\u2713${RST}` : "";
+			const mainPre = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
+			lines.push(line(`${mainPre}${BRT}${mainLabel}${RST}${mainActive}`));
+			for (let i = 0; i < this.modelList.length; i++) {
+				const m = this.modelList[i];
+				const active = current === m ? ` ${GRN}\u2713${RST}` : "";
+				const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
+				lines.push(line(`${pre}${BRT}${m}${RST}${active}`));
+			}
+			if (this.modelList.length === 0) {
+				lines.push(line(`${DIM}No additional models available${RST}`));
+			}
+		} else if (this.tab === 3) {
 			const st = pompomStatus();
 			for (let i = 0; i < THEMES.length; i++) {
 				const active = st.theme === THEMES[i] ? ` ${GRN}\u2713${RST}` : "";
 				const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
 				lines.push(line(`${pre}${BRT}${THEMES[i]}${RST}${active}`));
 			}
-		} else if (this.tab === 3) {
+		} else if (this.tab === 4) {
 			const acc = pompomGetAccessories();
 			for (let i = 0; i < ACCESSORIES.length; i++) {
 				const owned = (acc as any)[ACCESSORIES[i]];
@@ -254,6 +280,11 @@ function stripAnsi(s: string): string {
 export async function openPompomSettings(ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 	const panel = new PompomSettingsPanel();
+	// Populate available models from Pi's model registry
+	try {
+		const models = (ctx as any).modelRegistry?.getModels?.() || [];
+		panel.modelList = models.map((m: any) => typeof m === "string" ? m : (m?.id ? `${m.provider || ""}/${m.id}` : "")).filter(Boolean);
+	} catch { panel.modelList = []; }
 	await ctx.ui.custom(
 		(_tui: any, _theme: any, _kb: any, done: (v?: any) => void) => {
 			panel.onClose = () => done();
