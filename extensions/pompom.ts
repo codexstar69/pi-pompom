@@ -82,7 +82,7 @@ let talkAudioLevel = 0;
 let onSpeechCallback: ((event: SpeechEvent) => void) | null = null;
 let onSfxCallback: ((sfx: string) => void) | null = null;
 let lastFootstepTime = 0;
-const FOOTSTEP_INTERVAL_MS = 600;
+const FOOTSTEP_INTERVAL_MS = 1200;
 
 // Interactables
 let ffX = 0, ffY = 0, ffZ = 0;

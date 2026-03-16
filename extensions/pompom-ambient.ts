@@ -518,7 +518,7 @@ function playSfxFile(filePath: string): void {
 	// Don't interrupt another SFX that's playing
 	if (sfxProcess) return;
 
-	const vol = (config.volume / 100 * 0.7).toFixed(2); // SFX slightly quieter than ambient
+	const vol = (config.volume / 100 * 0.45).toFixed(2); // SFX at ~45% of ambient volume — subtle accent, not attention-grabbing
 	const child = childProcess.spawn("afplay", ["-v", vol, filePath], {
 		stdio: "ignore",
 		detached: false,
