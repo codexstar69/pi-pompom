@@ -1805,7 +1805,7 @@ export default function (pi: ExtensionAPI) {
 					overlayOptions: {
 						width: "90%" as any,
 						maxHeight: "50%" as any,
-						anchor: "bottom" as any,
+						anchor: "bottom-center" as any,
 					},
 					onHandle: (handle: any) => {
 						chatOverlayHandle = handle;
