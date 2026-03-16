@@ -27,11 +27,54 @@ function sanitizeSpeechText(text: string): string {
 type State = "idle" | "walk" | "flip" | "sleep" | "excited" | "chasing" | "fetching" | "singing" | "offscreen" | "peek" | "dance" | "game";
 
 const idleSpeech = [
-	"What are we building?", "This is fun!", "Boop!",
-	"I love it here!", "Need a break?", "Pom pom pom!",
-	"You're doing great!", "*wiggles ears*", "Hmm...",
-	"Hey! Look at me!", "Tra la la~", "*happy bounce*",
+	"[happy] What are we building?", "[excited] This is fun!", "Boop!",
+	"[happy] I love it here!", "[curious] Need a break?", "[sings] Pom pom pom!",
+	"[happy] You're doing great!", "[laughs] Wiggles ears!", "[curious] Hmm...",
+	"[excited] Hey! Look at me!", "[sings] Tra la la!", "[laughs] Happy bounce!",
 ];
+
+// Emotional reactions based on needs — v3 audio tags for natural expression
+const hungrySpeech = [
+	"[sad] My tummy is rumbling...",
+	"[annoyed] I'm SO hungry!",
+	"[sad] Can I have a snack... please?",
+	"[crying] Feed me! I'm starving!",
+	"[sighs] I could really use some food right now...",
+	"[sad] Hungry... so hungry...",
+	"[wheezing] Everything... looks... like food...",
+	"[excited] Is that food? Did someone say food?!",
+];
+
+const tiredSpeech = [
+	"[sighs] I'm so sleepy...",
+	"[exhales] My eyes are getting heavy...",
+	"[sad] I need a nap...",
+	"[whispers] Just... five more minutes...",
+	"[sighs] Running on empty here...",
+	"[exhales sharply] Can barely keep my eyes open...",
+];
+
+const happySpeech = [
+	"[laughs] Life is good!",
+	"[excited] I feel amazing right now!",
+	"[happy] Everything is just perfect!",
+	"[laughs] I could dance all day!",
+	"[excited] Best day EVER!",
+	"[chuckles] I'm in such a good mood!",
+	"[sings] La la la, happy me!",
+];
+
+const playfulSpeech = [
+	"[excited] Let's play a game!",
+	"[mischievously] Wanna throw the ball?",
+	"[excited] I bet I can catch more stars than last time!",
+	"[laughs] Chase me!",
+	"[curious] What happens if I press THIS?",
+	"[excited] Dance party? Dance party!",
+];
+
+let lastEmotionalReactionAt = 0;
+const EMOTIONAL_REACTION_COOLDOWN_MS = 45000; // max one emotional line every 45s
 let currentState: State = "idle";
 let gameScore = 0;
 let gameStars: {x: number, y: number, vy: number, caught: boolean}[] = [];
@@ -910,6 +953,26 @@ function updatePhysics(dt: number) {
 		lastNeedsTick = now;
 		if (!isSleeping) { energy = Math.max(0, energy - 0.5); hunger = Math.max(0, hunger - 0.8); }
 		else { energy = Math.min(100, energy + 5.0); hunger = Math.max(0, hunger - 0.2); }
+
+		// Emotional reactions based on needs (rate-limited)
+		if (!isSleeping && speechTimer <= 0 && now - lastEmotionalReactionAt >= EMOTIONAL_REACTION_COOLDOWN_MS) {
+			let emotionalLine: string | null = null;
+			if (hunger < 15 && Math.random() < 0.08) {
+				emotionalLine = hungrySpeech[Math.floor(Math.random() * hungrySpeech.length)];
+			} else if (hunger < 30 && Math.random() < 0.04) {
+				emotionalLine = hungrySpeech[Math.floor(Math.random() * hungrySpeech.length)];
+			} else if (energy < 15 && Math.random() < 0.06) {
+				emotionalLine = tiredSpeech[Math.floor(Math.random() * tiredSpeech.length)];
+			} else if (hunger > 80 && energy > 80 && Math.random() < 0.02) {
+				emotionalLine = happySpeech[Math.floor(Math.random() * happySpeech.length)];
+			} else if (hunger > 60 && energy > 60 && Math.random() < 0.015) {
+				emotionalLine = playfulSpeech[Math.floor(Math.random() * playfulSpeech.length)];
+			}
+			if (emotionalLine) {
+				lastEmotionalReactionAt = now;
+				say(emotionalLine, 4.0, "commentary", 2, true);
+			}
+		}
 	}
 
 	weatherTimer -= dt;
@@ -1166,7 +1229,11 @@ function updatePhysics(dt: number) {
 		if (Math.random() < 0.02) {
 			particles.push({ x: posX + 0.2, y: posY + bounceY, vx: 0.15, vy: -0.2, char: "z", r: 150, g: 200, b: 255, life: 1.2, type: "z" });
 		}
-		if (actionTimer <= 0) { currentState = "idle"; isSleeping = false; say("[sighs] What a nice nap!", 4.0, "reaction", 1, true); }
+		if (actionTimer <= 0) {
+			currentState = "idle"; isSleeping = false;
+			if (hunger < 30) say("[sighs] Good nap... but I'm hungry now!", 4.0, "reaction", 1, true);
+			else say("[sighs] What a nice nap! [laughs] I feel great!", 4.0, "reaction", 1, true);
+		}
 	}
 	if (currentState === "excited") {
 		blinkFade = 1.0;
@@ -1223,8 +1290,10 @@ function updatePhysics(dt: number) {
 			for (let k = 0; k < 5; k++) {
 				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
 			}
+			const wasStarving = hunger < 30;
 			hunger = Math.min(100, hunger + 20);
-			say("[happy] Yum!", 2.0, "user_action", 3, true);
+			if (wasStarving) say("[excited] FINALLY! Food! Oh that's SO good!", 3.0, "user_action", 3, true);
+			else say("[happy] Yum!", 2.0, "user_action", 3, true);
 			foods.splice(i, 1);
 		}
 	}
@@ -1539,8 +1608,10 @@ export function pompomKeypress(key: string) {
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0 });
+		const wasDesperate = hunger < 20;
 		hunger = Math.min(100, hunger + 30);
-		say("[excited] A special treat!", 2.0, "user_action", 3, true);
+		if (wasDesperate) say("[crying] Oh my gosh... a TREAT! Thank you so much!", 3.0, "user_action", 3, true);
+		else say("[excited] A special treat!", 2.0, "user_action", 3, true);
 	}
 	else if (key === "h") { isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10); say("[happy] Aww, hugs!", 4.0, "user_action", 3, true); }
 	else if (key === "g") { isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game"; say("[excited] Catch the stars!", 3.0, "user_action", 3, true); }
@@ -1551,7 +1622,7 @@ export function pompomKeypress(key: string) {
 /** Reset companion state */
 export function resetPompom() {
 	time = 0; currentState = "idle"; blinkFade = 0; actionTimer = 0;
-	speechTimer = 0; speechText = ""; lastFootstepTime = 0;
+	speechTimer = 0; speechText = ""; lastFootstepTime = 0; lastEmotionalReactionAt = 0;
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;
 	isWalking = false; isFlipping = false; isSleeping = false; isTalking = false;
 	talkAudioLevel = 0; flipPhase = 0;
