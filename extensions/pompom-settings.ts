@@ -89,7 +89,7 @@ class PompomSettingsPanel {
 			}
 			if (!this.filtered[this.subRow]) { return; }
 			const p = this.filtered[this.subRow];
-			if (this.sub === "voice-picker") { setVoice(p.id); speakTest(); }
+			if (this.sub === "voice-picker") { setVoice(p.id); stopPlayback(); speakTest(); }
 			else if (this.sub === "engine-picker") setVoiceEngine(p.id as VoiceConfig["engine"]);
 			else if (this.sub === "personality-picker") setPersonality(p.id as Personality);
 			this.sub = "main"; this.search = ""; this.inv(); return;

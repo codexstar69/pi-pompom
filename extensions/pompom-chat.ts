@@ -53,6 +53,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private streamingText = "";
 	private _focused = true;
 	private disposed = false;
+	private agentUnsub: (() => void) | null = null;
 	private peekTool: AgentTool;
 	private spinnerTimer: NodeJS.Timeout | null = null;
 	private spinnerFrame = 0;
@@ -85,7 +86,7 @@ export class PompomChatOverlay implements Component, Focusable {
 			},
 		});
 
-		this.agent.subscribe((e) => this.onAgentEvent(e));
+		this.agentUnsub = this.agent.subscribe((e) => this.onAgentEvent(e));
 		this.editor = new Editor(opts.tui, { borderColor: (t: string) => opts.theme.fg("borderMuted", t), selectList: getSelectListTheme() }, { paddingX: 0 });
 		this.editor.focused = true;
 		this.editor.onSubmit = (text) => this.onSubmit(text);
@@ -243,7 +244,7 @@ export class PompomChatOverlay implements Component, Focusable {
 
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-		if (width < 10) return [" ".repeat(width)];
+		if (width < 10) return [" ".repeat(Math.max(0, width))];
 
 		const { theme } = this.opts;
 		const iw = width - 4;
@@ -307,6 +308,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		if (this.disposed) return;
 		this.disposed = true;
 		this.stopSpinner();
+		if (this.agentUnsub) { this.agentUnsub(); this.agentUnsub = null; }
 		this.agent.abort();
 		this.opts.onClose();
 	}

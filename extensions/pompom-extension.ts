@@ -1448,7 +1448,8 @@ export default function (pi: ExtensionAPI) {
 	} catch { /* silent — shortcut may already exist */ }
 
 	async function openPompomChat(commandContext: ExtensionContext) {
-		if (!commandContext.hasUI || !isModelLike(commandContext.model)) {
+		if (!commandContext.hasUI) return;
+		if (!isModelLike(commandContext.model)) {
 			commandContext.ui.notify("Cannot open chat: no model configured.", "error");
 			return;
 		}
