@@ -395,3 +395,179 @@ export function getCustomAudioDir(): string {
 export function getAmbientDir(): string {
 	return AMBIENT_DIR;
 }
+
+// ─── SFX Overlay System ──────────────────────────────────────────────────────
+// Short one-shot sound effects layered on top of the ambient loop.
+// Generated via ElevenLabs SFX API on first use, cached in ~/.pi/pompom/sfx/
+
+const SFX_DIR = path.join(os.homedir(), ".pi", "pompom", "sfx");
+
+export type SfxName =
+	| "thunder" | "bird_chirp" | "bee_buzz"
+	| "eat_crunch" | "ball_bounce" | "pet_purr"
+	| "sleep_snore" | "star_chime" | "hug_squeeze"
+	| "wake_yawn" | "dance_sparkle" | "wind_gust";
+
+const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
+	thunder:       { prompt: "Single distant thunder rumble, low rolling, not sharp or scary, cozy indoor perspective, no rain", duration: 4 },
+	bird_chirp:    { prompt: "Two short cheerful bird chirps from a small garden bird, natural, clear, no echo, no music", duration: 2 },
+	bee_buzz:      { prompt: "Brief gentle bee or insect buzz passing by, soft, natural, outdoor, one second", duration: 2 },
+	eat_crunch:    { prompt: "Small cute crunching sound, like a small animal eating a treat, two quick bites, cartoon-like but natural", duration: 1 },
+	ball_bounce:   { prompt: "Soft rubber ball bouncing once on grass, light thud then small bounce, playful", duration: 1 },
+	pet_purr:      { prompt: "Short soft cat-like purring, warm and content, gentle vibration, two seconds", duration: 2 },
+	sleep_snore:   { prompt: "Tiny cute soft snore, one breath in and out, like a small sleeping creature, gentle and adorable", duration: 2 },
+	star_chime:    { prompt: "Short magical sparkle chime, single bright twinkle sound, like catching a star, whimsical", duration: 1 },
+	hug_squeeze:   { prompt: "Soft warm squeeze sound, like hugging a plush toy, gentle fabric rustle, cozy", duration: 1 },
+	wake_yawn:     { prompt: "Tiny cute yawn, small creature waking up, short and adorable, no voice just the yawn sound", duration: 2 },
+	dance_sparkle: { prompt: "Quick series of three light sparkle tinkle sounds, magical and playful, like fairy dust", duration: 2 },
+	wind_gust:     { prompt: "Single soft wind gust, brief whoosh through grass, gentle and atmospheric, one second", duration: 2 },
+};
+
+// Weather-contextual SFX that play periodically on top of the ambient loop
+const WEATHER_SFX: Record<Weather, { sfx: SfxName; minGapMs: number; maxGapMs: number }[]> = {
+	clear: [
+		{ sfx: "bird_chirp", minGapMs: 45000, maxGapMs: 120000 },
+		{ sfx: "bee_buzz", minGapMs: 90000, maxGapMs: 180000 },
+	],
+	cloudy: [
+		{ sfx: "wind_gust", minGapMs: 60000, maxGapMs: 150000 },
+	],
+	rain: [],
+	snow: [
+		{ sfx: "wind_gust", minGapMs: 90000, maxGapMs: 180000 },
+	],
+	storm: [
+		{ sfx: "thunder", minGapMs: 30000, maxGapMs: 90000 },
+	],
+};
+
+let sfxProcess: childProcess.ChildProcess | null = null;
+let weatherSfxTimer: ReturnType<typeof setTimeout> | null = null;
+let sfxGenerating = false;
+
+function sfxPath(name: SfxName): string {
+	return path.join(SFX_DIR, `${name}.mp3`);
+}
+
+function hasSfx(name: SfxName): boolean {
+	try {
+		return fs.existsSync(sfxPath(name)) && fs.statSync(sfxPath(name)).size > 500;
+	} catch { return false; }
+}
+
+async function generateSfx(name: SfxName): Promise<boolean> {
+	const apiKey = process.env.ELEVENLABS_API_KEY;
+	if (!apiKey) return false;
+
+	const spec = SFX_PROMPTS[name];
+	try {
+		const response = await fetch("https://api.elevenlabs.io/v1/sound-generation", {
+			method: "POST",
+			headers: {
+				"xi-api-key": apiKey,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				text: spec.prompt,
+				duration_seconds: spec.duration,
+				prompt_influence: 0.35,
+			}),
+			signal: AbortSignal.timeout(20000),
+		});
+		if (!response.ok) return false;
+		const buffer = Buffer.from(await response.arrayBuffer());
+		fs.mkdirSync(SFX_DIR, { recursive: true });
+		fs.writeFileSync(sfxPath(name), buffer);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function ensureSfx(name: SfxName): Promise<string | null> {
+	if (hasSfx(name)) return sfxPath(name);
+	if (sfxGenerating) return null;
+	sfxGenerating = true;
+	try {
+		const ok = await generateSfx(name);
+		return ok ? sfxPath(name) : null;
+	} finally {
+		sfxGenerating = false;
+	}
+}
+
+function playSfxFile(filePath: string): void {
+	if (process.platform !== "darwin") return;
+	// Don't interrupt another SFX that's playing
+	if (sfxProcess) return;
+
+	const vol = (config.volume / 100 * 0.7).toFixed(2); // SFX slightly quieter than ambient
+	const child = childProcess.spawn("afplay", ["-v", vol, filePath], {
+		stdio: "ignore",
+		detached: false,
+	});
+	sfxProcess = child;
+	child.on("close", () => { if (sfxProcess === child) sfxProcess = null; });
+	child.on("error", () => { if (sfxProcess === child) sfxProcess = null; });
+}
+
+/** Play a one-shot sound effect by name. Generates on first use. */
+export async function playSfx(name: SfxName): Promise<void> {
+	if (!config.enabled || !interactive) return;
+	const file = await ensureSfx(name);
+	if (file) playSfxFile(file);
+}
+
+function scheduleNextWeatherSfx(): void {
+	clearWeatherSfxTimer();
+	if (!config.enabled || !interactive || !currentWeather) return;
+
+	const sfxList = WEATHER_SFX[currentWeather];
+	if (sfxList.length === 0) return;
+
+	// Pick a random SFX from the list for this weather
+	const entry = sfxList[Math.floor(Math.random() * sfxList.length)];
+	const delay = entry.minGapMs + Math.random() * (entry.maxGapMs - entry.minGapMs);
+
+	weatherSfxTimer = setTimeout(async () => {
+		if (!config.enabled || !interactive) return;
+		await playSfx(entry.sfx);
+		// Schedule next one
+		scheduleNextWeatherSfx();
+	}, delay);
+}
+
+function clearWeatherSfxTimer(): void {
+	if (weatherSfxTimer) { clearTimeout(weatherSfxTimer); weatherSfxTimer = null; }
+}
+
+/** Start periodic weather SFX for the current weather. Called when weather changes. */
+export function startWeatherSfx(): void {
+	scheduleNextWeatherSfx();
+}
+
+/** Stop periodic weather SFX. */
+export function stopWeatherSfx(): void {
+	clearWeatherSfxTimer();
+	if (sfxProcess) {
+		try { sfxProcess.kill("SIGTERM"); } catch { /* dead */ }
+		sfxProcess = null;
+	}
+}
+
+/** Pre-generate all SFX files */
+export async function pregenerateSfx(): Promise<number> {
+	const names = Object.keys(SFX_PROMPTS) as SfxName[];
+	let count = 0;
+	for (const name of names) {
+		if (hasSfx(name)) continue;
+		sfxGenerating = true;
+		try {
+			const ok = await generateSfx(name);
+			if (ok) count++;
+		} finally {
+			sfxGenerating = false;
+		}
+	}
+	return count;
+}

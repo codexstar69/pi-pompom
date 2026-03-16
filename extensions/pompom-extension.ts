@@ -70,6 +70,11 @@ import {
 	getCustomWeathers,
 	isAmbientPlaying,
 	getCustomAudioDir,
+	playSfx,
+	startWeatherSfx,
+	stopWeatherSfx,
+	pregenerateSfx,
+	type SfxName,
 } from "./pompom-ambient";
 import {
 	autoDetectEngine,
@@ -513,6 +518,7 @@ export default function (pi: ExtensionAPI) {
 
 	function stopAmbientWeatherSync() {
 		if (ambientWeatherTimer) { clearInterval(ambientWeatherTimer); ambientWeatherTimer = null; }
+		stopWeatherSfx();
 	}
 
 	function syncAmbientWeather() {
@@ -521,6 +527,7 @@ export default function (pi: ExtensionAPI) {
 			if (weather !== lastAmbientWeather) {
 				lastAmbientWeather = weather;
 				void setAmbientWeather(weather);
+				startWeatherSfx(); // restart periodic SFX for new weather
 			}
 			// TTS ducking: duck when TTS starts, unduck when it stops
 			const ttsPlaying = isPlayingTTS();
@@ -1099,7 +1106,16 @@ export default function (pi: ExtensionAPI) {
 		try {
 			pi.registerShortcut(shortcut as any, {
 				description: shortcutDescriptions[key] || `Pompom: ${key}`,
-				handler: async () => { if (enabled && companionActive) pompomKeypress(key); },
+				handler: async () => {
+					if (!enabled || !companionActive) return;
+					pompomKeypress(key);
+					const sfxMap: Record<string, SfxName> = {
+						p: "pet_purr", f: "eat_crunch", t: "eat_crunch",
+						b: "ball_bounce", h: "hug_squeeze", s: "sleep_snore",
+						w: "wake_yawn", x: "dance_sparkle", m: "dance_sparkle",
+					};
+					if (sfxMap[key]) void playSfx(sfxMap[key]);
+				},
 			});
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -1283,7 +1299,14 @@ export default function (pi: ExtensionAPI) {
 						showCompanion();
 						setupKeyHandler();
 					}
-					pompomKeypress(pompomCommands[sub]);
+					const actionKey = pompomCommands[sub];
+					pompomKeypress(actionKey);
+					const sfxMap: Record<string, SfxName> = {
+						p: "pet_purr", f: "eat_crunch", t: "eat_crunch",
+						b: "ball_bounce", h: "hug_squeeze", s: "sleep_snore",
+						w: "wake_yawn", x: "dance_sparkle", m: "dance_sparkle",
+					};
+					if (sfxMap[actionKey]) void playSfx(sfxMap[actionKey]);
 					return;
 				}
 
