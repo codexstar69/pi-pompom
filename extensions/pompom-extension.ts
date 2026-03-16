@@ -1407,4 +1407,87 @@ export default function (pi: ExtensionAPI) {
 	function stopHealthCheck() {
 		if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
 	}
+
+	// ─── Pompom Side Chat ───────────────────────────────────────────
+
+	const CHAT_SHORTCUT = "alt+/";
+	let chatOverlayHandle: { focus: () => void; unfocus: () => void; isFocused: () => boolean } | null = null;
+
+	pi.registerCommand("pompom:chat", {
+		description: "Open Pompom side chat — parallel agent with read-only tools",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:chat", async () => {
+				ctx = commandContext;
+				if (chatOverlayHandle) {
+					if (chatOverlayHandle.isFocused()) chatOverlayHandle.unfocus();
+					else chatOverlayHandle.focus();
+					return;
+				}
+				await openPompomChat(commandContext);
+			});
+		},
+	});
+
+	try {
+		pi.registerShortcut(CHAT_SHORTCUT as any, {
+			description: "Toggle Pompom side chat",
+			handler: async (shortcutCtx: any) => {
+				if (chatOverlayHandle) {
+					if (chatOverlayHandle.isFocused()) chatOverlayHandle.unfocus();
+					else chatOverlayHandle.focus();
+				} else {
+					await openPompomChat(shortcutCtx);
+				}
+			},
+		});
+	} catch { /* silent — shortcut may already exist */ }
+
+	async function openPompomChat(commandContext: ExtensionContext) {
+		if (!commandContext.hasUI || !isModelLike(commandContext.model)) {
+			commandContext.ui.notify("Cannot open chat: no model configured.", "error");
+			return;
+		}
+
+		try {
+			const { PompomChatOverlay } = await import("./pompom-chat");
+			const thinkingLevel = pi.getThinkingLevel();
+
+			await commandContext.ui.custom(
+				(tui: any, theme: any, _kb: any, done: (v?: any) => void) => {
+					const overlay = new PompomChatOverlay({
+						tui,
+						theme,
+						model: commandContext.model as any,
+						cwd: commandContext.cwd,
+						thinkingLevel: (thinkingLevel === "off" ? "off" : thinkingLevel) as any,
+						modelRegistry: commandContext.modelRegistry,
+						sessionManager: commandContext.sessionManager as any,
+						shortcut: CHAT_SHORTCUT,
+						onUnfocus: () => chatOverlayHandle?.unfocus(),
+						onClose: () => {
+							chatOverlayHandle = null;
+							done();
+						},
+					});
+					return overlay;
+				},
+				{
+					overlay: true,
+					overlayOptions: {
+						width: "85%" as any,
+						maxHeight: "35%" as any,
+						anchor: "top-center" as any,
+						margin: { top: 1, left: 2, right: 2 } as any,
+						nonCapturing: true,
+					},
+					onHandle: (handle: any) => {
+						chatOverlayHandle = handle;
+						handle.focus();
+					},
+				},
+			);
+		} catch (err) {
+			chatOverlayHandle = null;
+		}
+	}
 }
