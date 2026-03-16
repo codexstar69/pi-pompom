@@ -439,28 +439,36 @@ const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
 };
 
 // Weather-contextual SFX that play periodically on top of the ambient loop
+// Weather SFX intervals — intentionally rare for surprise/dopamine.
+// Research: rewards at 10-20% of expected frequency create strongest prediction error.
 const WEATHER_SFX: Record<Weather, { sfx: SfxName; minGapMs: number; maxGapMs: number }[]> = {
 	clear: [
-		{ sfx: "bird_chirp", minGapMs: 45000, maxGapMs: 120000 },
-		{ sfx: "bee_buzz", minGapMs: 90000, maxGapMs: 180000 },
+		{ sfx: "bird_chirp", minGapMs: 120000, maxGapMs: 300000 },  // 2-5 min
+		{ sfx: "bee_buzz", minGapMs: 240000, maxGapMs: 480000 },    // 4-8 min
 	],
 	cloudy: [
-		{ sfx: "wind_gust", minGapMs: 60000, maxGapMs: 150000 },
+		{ sfx: "wind_gust", minGapMs: 180000, maxGapMs: 360000 },   // 3-6 min
 	],
 	rain: [
-		{ sfx: "rain_drip", minGapMs: 30000, maxGapMs: 90000 },
+		{ sfx: "rain_drip", minGapMs: 120000, maxGapMs: 300000 },   // 2-5 min
 	],
 	snow: [
-		{ sfx: "wind_gust", minGapMs: 90000, maxGapMs: 180000 },
+		{ sfx: "wind_gust", minGapMs: 240000, maxGapMs: 480000 },   // 4-8 min
 	],
 	storm: [
-		{ sfx: "thunder", minGapMs: 30000, maxGapMs: 90000 },
+		{ sfx: "thunder", minGapMs: 90000, maxGapMs: 240000 },      // 1.5-4 min
 	],
 };
 
 let sfxProcess: childProcess.ChildProcess | null = null;
 let weatherSfxTimer: ReturnType<typeof setTimeout> | null = null;
 let sfxGenerating = false;
+
+// Per-SFX cooldown map — prevents same sound repeating too fast (kills dopamine)
+const sfxLastPlayedAt: Map<string, number> = new Map();
+const SFX_COOLDOWN_MS = 8000;    // same SFX can't repeat within 8s
+const SFX_GLOBAL_GAP_MS = 3000;  // ANY SFX needs 3s gap from last SFX
+let lastAnySfxAt = 0;
 
 function sfxPath(name: SfxName): string {
 	return path.join(SFX_DIR, `${name}.mp3`);
@@ -528,11 +536,25 @@ function playSfxFile(filePath: string): void {
 	child.on("error", () => { if (sfxProcess === child) sfxProcess = null; });
 }
 
-/** Play a one-shot sound effect by name. Generates on first use. */
+/** Play a one-shot sound effect by name. Generates on first use.
+ *  Respects per-SFX cooldown (8s) and global gap (3s) to prevent fatigue. */
 export async function playSfx(name: SfxName): Promise<void> {
 	if (!config.enabled || !interactive) return;
+	const now = Date.now();
+
+	// Global gap — no SFX back-to-back
+	if (now - lastAnySfxAt < SFX_GLOBAL_GAP_MS) return;
+
+	// Per-SFX cooldown — same sound can't repeat within 8s
+	const lastPlayed = sfxLastPlayedAt.get(name) || 0;
+	if (now - lastPlayed < SFX_COOLDOWN_MS) return;
+
 	const file = await ensureSfx(name);
-	if (file) playSfxFile(file);
+	if (file) {
+		sfxLastPlayedAt.set(name, now);
+		lastAnySfxAt = now;
+		playSfxFile(file);
+	}
 }
 
 function scheduleNextWeatherSfx(): void {
