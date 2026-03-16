@@ -427,8 +427,11 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		// ── Eyes: kawaii style — white sclera → colored iris → dark pupil → highlight ──
 		const isTired = (energy < 20 || hunger < 30) && !isSleeping;
 		const eyeOpen = isSleeping ? 0.05 : (isTired ? 0.4 : 1.0) - blinkFade;
-		const ex1 = bdx - effectiveLookX * 0.08 + 0.11, ey1 = bdy - effectiveLookY * 0.05 + 0.02;
-		const ex2 = bdx - effectiveLookX * 0.08 - 0.11, ey2 = bdy - effectiveLookY * 0.05 + 0.02;
+		// Reduced look offsets — rectangular eyes need subtle shifts, not big displacement
+		const lxClamp = clamp(effectiveLookX, -0.4, 0.4);
+		const lyClamp = clamp(effectiveLookY, -0.3, 0.3);
+		const ex1 = bdx - lxClamp * 0.025 + 0.11, ey1 = bdy - lyClamp * 0.015 + 0.02;
+		const ex2 = bdx - lxClamp * 0.025 - 0.11, ey2 = bdy - lyClamp * 0.015 + 0.02;
 
 		if (isSleeping || currentState === "singing") {
 			// Closed eyes — flat horizontal dark bars (pixel-art)
@@ -484,13 +487,13 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		}
 
 		// ── Nose: small dark oval ──
-		const nnx = bdx - effectiveLookX * 0.06, nny = bdy - effectiveLookY * 0.05 - 0.03;
+		const nnx = bdx - lxClamp * 0.02, nny = bdy - lyClamp * 0.01 - 0.03;
 		// Pixel-art rectangular nose — small dark block
 		if (Math.abs(nnx) < 0.02 && Math.abs(nny) < 0.018 && !isSleeping) { r = 15; g = 8; b = 15; }
 
 		// ── Mouth: clear smile arc ──
 		if (!isSleeping && !hasBall) {
-			const mx = bdx - effectiveLookX * 0.06, my = bdy - effectiveLookY * 0.05 - 0.07;
+			const mx = bdx - lxClamp * 0.02, my = bdy - lyClamp * 0.01 - 0.07;
 			// Pixel-art smile — flat dark line, slightly curved via step
 			const smileWidth = 0.06;
 			const smileY = -0.008 + Math.abs(mx) * Math.abs(mx) * 3; // slight upward curve at edges

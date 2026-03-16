@@ -919,12 +919,7 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("message_end", () => {
 			const message = getEventMessage(event);
 			const role = getMessageRole(message);
-			if (role === "assistant") {
-				const text = getMessageText(message);
-				if (text) {
-					pompomSay(sanitizeAscii(text.slice(0, 120)), 4.6, "assistant", 2, true);
-				}
-			}
+			// Don't mirror assistant text as Pompom speech — that causes double-speak
 			speakCommentary({ eventName: "message_end", role });
 			persistAgentState();
 		});
