@@ -1,22 +1,45 @@
 # ElevenLabs TTS Skill
 
-Generate high-quality voice notes using ElevenLabs Text-to-Speech API. Based on official best practices for Eleven v3.
+Generate high-quality speech for Pompom companion using ElevenLabs Text-to-Speech API. Based on official best practices for Eleven v3.
+
+**IMPORTANT:** This skill MUST be used whenever Pompom's voice system calls the ElevenLabs TTS engine. All text sent to ElevenLabs must follow the text preparation rules below.
 
 ## When to Use
-- User requests voice notes, audio replies, or TTS
-- Sending ad reports (voice summary component)
-- Any voice-enabled response on WhatsApp/Telegram
+- Pompom speaks via the TTS voice system (pompom-voice.ts ElevenLabsEngine)
+- Any text-to-speech generation through ElevenLabs API
+- Voice test (`/pompom:voice test`)
+- Commentary, assistant replies, and reaction speech events
 
-## Current Config
-- **Voice ID:** `1zUSi8LeHs9M2mV8X6YS`
+## Pompom Voice Config
+- **Default Voice:** Jessica Anne Bogart - Chatty and Friendly
+- **Voice ID:** `g6xIsTj2HwM6VR4iXFCw`
 - **Model:** `eleven_v3`
-- **API Key:** Configured in OpenClaw (xi-no-log enabled)
-- **Privacy:** Zero Retention Mode enabled — `enable_logging=false` query param + `xi-no-log: true` header. Nothing stored on ElevenLabs dashboard.
-- **Stability:** 0.0 (Creative — max expressiveness, required for audio tags)
+- **API Key:** `ELEVENLABS_API_KEY` from environment (`~/.env.secrets`)
+- **Privacy:** Zero Retention Mode — `enable_logging=false` query param + `xi-no-log: true` header
+- **Stability:** 0.5 (Natural — balanced, closest to original voice)
 - **Similarity Boost:** 0.8
 - **Style:** 0.7
-- **Speed:** 0.95 (slightly slower for softer delivery)
+- **Speed:** default (1.0)
 - **Speaker Boost:** true
+- **Output:** PCM 24kHz, wrapped in WAV for playback
+
+## Available Voices
+| Name | Voice ID | Style |
+|------|----------|-------|
+| Jessica Anne Bogart - Chatty (default) | `g6xIsTj2HwM6VR4iXFCw` | Chatty, friendly |
+| Jessica Anne Bogart - Eloquent | `flHkNRp1BlvT73UL6gyz` | Eloquent, dramatic |
+| Jessica Anne Bogart - VO Pro | `lxYfHSkYm1EzQzGhdbfc` | Professional voiceover |
+| Jessica - Playful, Warm | `cgSgspJ2msm6clMCkdW9` | Playful, bright |
+| Bella - Professional, Warm | `hpp4J3VqNfWAUOO0d1Us` | Professional |
+| Lily - Velvety Actress | `pFZP5JQG7iQjIQuC4Bku` | Velvety, dramatic |
+
+## Integration with Pompom
+The voice engine is in `extensions/pompom-voice.ts` (ElevenLabsEngine class). Speech events flow:
+1. `say()` in pompom.ts fires a SpeechEvent
+2. pompom-extension.ts routes it to `enqueueSpeech()`
+3. Speech queue applies personality gating, cooldown, dedup
+4. ElevenLabsEngine.synthesize() calls the API following this skill's rules
+5. Audio plays at configured volume via native OS player
 
 ## How to Send Voice Notes
 ```
