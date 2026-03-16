@@ -1004,13 +1004,13 @@ export default function (pi: ExtensionAPI) {
 						`Pompom Commands\n` +
 						`  /pompom on|off       Toggle companion\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
-						`  /pompom feed         Drop food           ${modifier}f\n` +
+						`  /pompom feed         Drop food\n` +
 						`  /pompom treat        Special treat       ${modifier}t\n` +
 						`  /pompom hug          Give a hug          ${modifier}h\n` +
-						`  /pompom ball         Throw a ball        ${modifier}b\n` +
+						`  /pompom ball         Throw a ball\n` +
 						`  /pompom dance        Dance               ${modifier}x\n` +
 						`  /pompom music        Sing a song         ${modifier}m\n` +
-						`  /pompom flip         Do a flip           ${modifier}d\n` +
+						`  /pompom flip         Do a flip\n` +
 						`  /pompom sleep        Nap time            ${modifier}s\n` +
 						`  /pompom wake         Wake up             ${modifier}w\n` +
 						`  /pompom theme        Cycle color         ${modifier}c\n` +
