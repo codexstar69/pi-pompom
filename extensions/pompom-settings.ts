@@ -337,7 +337,8 @@ class PompomSettingsPanel {
 	}
 
 	render(width: number): string[] {
-		if (this.cl && this.cw === width) return this.cl;
+		const liveTab = this.tab === TAB_POMPOM || this.tab === TAB_AMBIENT || this.tab === TAB_ABOUT;
+		if (this.cl && this.cw === width && !liveTab) return this.cl;
 		const w = Math.max(30, Math.min(width - 2, 68));
 		const iw = w - 4;
 

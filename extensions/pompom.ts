@@ -313,6 +313,8 @@ let rapidRepeatCount = 0;
 // F. Agent mood for comfort lines
 let agentMood = "idle";
 
+let playfulUntil = 0;
+
 // Milestone check interval (runs once per minute in needs tick)
 let lastMilestoneCheckAt = 0;
 
@@ -364,7 +366,7 @@ const FOOTSTEP_INTERVAL_MS = 3000; // one step every 3s — felt, not heard
 
 // Interactables
 let ffX = 0, ffY = 0, ffZ = 0;
-interface Food { x: number; y: number; vy: number; }
+interface Food { x: number; y: number; vy: number; createdAt: number; }
 const foods: Food[] = [];
 let ballX = -10, ballY = -10, ballZ = 0, ballVx = 0, ballVy = 0, ballVz = 0, hasBall = false;
 
@@ -1195,7 +1197,11 @@ function resolveEmotionalState(now: number): EmotionalState {
 	// Positive states
 	if (hunger > 90 && energy > 90) return "blissful";
 	if (hunger > 75 && energy > 75) {
-		if (Math.random() < 0.15) return "playful";
+		if (now < playfulUntil) return "playful";
+		if (Math.random() < 0.05) {
+			playfulUntil = now + 60000 + Math.random() * 60000; // 60-120s sticky
+			return "playful";
+		}
 		return "happy";
 	}
 
@@ -1747,9 +1753,10 @@ function updatePhysics(dt: number) {
 	// Food physics & eating
 	for (let i = foods.length - 1; i >= 0; i--) {
 		const f = foods[i];
+		if (Date.now() - f.createdAt > 30000) { foods.splice(i, 1); continue; }
 		f.vy += dt * 2.0; f.y += f.vy * dt;
 		if (f.y >= 0.5) { f.y = 0.5; f.vy = 0; }
-		if (Math.sqrt((f.x - posX) ** 2 + (f.y - (posY + bounceY)) ** 2) < 0.25 && !isSleeping) {
+		if (Math.sqrt((f.x - posX) ** 2 + (f.y - (posY + bounceY)) ** 2) < 0.40 && !isSleeping) {
 			currentState = "excited"; actionTimer = 2.0;
 			for (let k = 0; k < 5; k++) {
 				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
@@ -2222,7 +2229,8 @@ export function pompomKeypress(key: string) {
 	else if (key === "f") {
 		isSleeping = false; currentState = "idle";
 		lastFedAt = nowMs;
-		foods.push({ x: posX + (Math.random() - 0.5) * 0.4, y: -0.8, vy: 0 });
+		if (foods.length >= 10) foods.shift(); // remove oldest
+		foods.push({ x: posX + (Math.random() - 0.5) * 0.4, y: -0.8, vy: 0, createdAt: Date.now() });
 		// Food drop reaction — state-aware (eating reaction fires in updatePhysics)
 	}
 	else if (key === "b") {
@@ -2281,7 +2289,8 @@ export function pompomKeypress(key: string) {
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
 		lastFedAt = nowMs;
-		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0 });
+		if (foods.length >= 10) foods.shift(); // remove oldest
+		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0, createdAt: Date.now() });
 		const state = currentEmotionalState;
 		const wasDesperate = hunger < 20;
 		hunger = Math.min(100, hunger + 30);
@@ -2342,6 +2351,7 @@ export function resetPompom() {
 	lastKeypressAt = 0;
 	rapidRepeatCount = 0;
 	agentMood = "idle";
+	playfulUntil = 0;
 	lastMilestoneCheckAt = 0;
 	activeTheme = 0;
 	weatherOverride = null;

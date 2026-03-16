@@ -550,6 +550,27 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	function enablePompom(commandContext: ExtensionContext) {
+		enabled = true;
+		setVoiceEnabled(true);
+		setAmbientEnabled(true);
+		showCompanion();
+		setupKeyHandler();
+		startAmbientWeatherSync();
+	}
+
+	function disablePompom() {
+		enabled = false;
+		hideCompanion();
+		stopAmbient();
+		stopAmbientWeatherSync();
+		stopPlayback();
+		setVoiceEnabled(false);
+		setAmbientEnabled(false);
+		resetPompom();
+		if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+	}
+
 	function showAmbientHint() {
 		if (hasAmbientBeenConfigured() || loadedAmbientHintShown || !ctx?.hasUI) return;
 		const ambientConfig = getAmbientConfig();
@@ -1193,21 +1214,9 @@ export default function (pi: ExtensionAPI) {
 					pompomEnabled: enabled,
 					onTogglePompom: (on) => {
 						if (on) {
-							enabled = true;
-							setVoiceEnabled(true);
-							setAmbientEnabled(true);
-							showCompanion();
-							setupKeyHandler();
-							startAmbientWeatherSync();
+							enablePompom(cmdCtx);
 						} else {
-							enabled = false;
-							hideCompanion();
-							stopAmbient();
-							stopAmbientWeatherSync();
-							stopPlayback();
-							setVoiceEnabled(false);
-							setAmbientEnabled(false);
-							if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+							disablePompom();
 						}
 					},
 				});
@@ -1223,29 +1232,13 @@ export default function (pi: ExtensionAPI) {
 				const sub = (args || "").trim().toLowerCase();
 
 				if (sub === "on") {
-					enabled = true;
-					setVoiceEnabled(true);
-					setAmbientEnabled(true);
-					showCompanion();
-					setupKeyHandler();
-					startAmbientWeatherSync();
+					enablePompom(commandContext);
 					commandContext.ui.notify("Pompom on — animation, voice, ambient, everything restored!", "info");
 					return;
 				}
 
 				if (sub === "off" || sub === "quiet" || sub === "zen" || sub === "mute") {
-					enabled = false;
-					hideCompanion();
-					stopAmbient();
-					stopAmbientWeatherSync();
-					stopPlayback();
-					setVoiceEnabled(false);
-					setAmbientEnabled(false);
-					resetPompom();
-					if (terminalInputUnsub) {
-						terminalInputUnsub();
-						terminalInputUnsub = null;
-					}
+					disablePompom();
 					commandContext.ui.notify(
 						"Pompom off — animation, voice, and sounds all disabled.\n" +
 						"Side chat is still available: /pompom:chat or Alt+/\n" +
@@ -1368,14 +1361,10 @@ export default function (pi: ExtensionAPI) {
 
 				if (sub === "") {
 					if (companionActive) {
-						enabled = false;
-						hideCompanion();
-						resetPompom();
+						disablePompom();
 						commandContext.ui.notify("Pompom companion hidden.", "info");
 					} else {
-						enabled = true;
-						showCompanion();
-						setupKeyHandler();
+						enablePompom(commandContext);
 						commandContext.ui.notify("Pompom companion enabled. Use /pompom help for commands.", "info");
 					}
 					return;

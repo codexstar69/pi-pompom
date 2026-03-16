@@ -67,6 +67,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private _focused = true;
 	private disposed = false;
 	private agentUnsub: (() => void) | null = null;
+	private userInputTexts: Map<number, string> = new Map();
 	private peekTool: AgentTool;
 	private spinnerTimer: NodeJS.Timeout | null = null;
 	private spinnerFrame = 0;
@@ -178,6 +179,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private handleLocalCommand(input: string): boolean {
 		const lower = input.toLowerCase().trim();
 		if (lower === "help" || lower === "/help" || lower === "commands") {
+			this.localMessages = []; // clear previous help output
 			this.localMessages.push({ role: "pompom", text: "Commands you can type here:" });
 			this.localMessages.push({ role: "tool", text: "analyze — detailed analysis of main agent work" });
 			this.localMessages.push({ role: "tool", text: "stuck — check if main agent is stuck" });
@@ -207,6 +209,8 @@ export class PompomChatOverlay implements Component, Focusable {
 		const expanded = this.expandShortcut(trimmed);
 		if (!expanded) return; // empty = handled locally
 
+		const promptIndex = this.agent.state.messages.length; // index where user msg will appear
+		this.userInputTexts.set(promptIndex, trimmed);
 		this.displayMessages.push({ role: "user", text: trimmed });
 		this.isStreaming = true;
 		this.streamingText = "";
@@ -238,10 +242,12 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.displayMessages = [
 			{ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" },
 		];
+		let msgIndex = 0;
 		for (const m of this.agent.state.messages) {
 			if (m.role === "user") {
 				const c = typeof m.content === "string" ? m.content : m.content.map(b => b.type === "text" ? b.text : "").join("");
-				if (c) this.displayMessages.push({ role: "user", text: c });
+				const displayText = this.userInputTexts.get(msgIndex) || c;
+				if (displayText) this.displayMessages.push({ role: "user", text: displayText });
 			} else if (m.role === "assistant") {
 				const t = m.content.filter(b => b.type === "text").map(b => (b as any).text).join(" ");
 				if (t) this.displayMessages.push({ role: "pompom", text: t });
@@ -250,6 +256,7 @@ export class PompomChatOverlay implements Component, Focusable {
 				const toolName = (m as any).toolName || "tool";
 				if (t) this.displayMessages.push({ role: "tool", text: `[${toolName}]: ${t.slice(0, 200)}` });
 			}
+			msgIndex++;
 		}
 		// Append locally-injected messages (help output, etc.) — they survive agent syncs
 		for (const lm of this.localMessages) {

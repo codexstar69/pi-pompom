@@ -73,6 +73,7 @@ const DUCK_VOLUME_RATIO = 0.2; // 20% of normal volume during TTS
 
 let config: AmbientConfig = loadConfig();
 let currentWeather: Weather | null = null;
+let desiredWeather: Weather | null = null;
 let currentProcess: childProcess.ChildProcess | null = null;
 let isDucked = false;
 let generating = false;
@@ -209,6 +210,8 @@ function startPlayback(weather: Weather): void {
 		return;
 	}
 
+	let spawnRetries = 0; // reset on each new startPlayback call
+
 	// afplay doesn't support -l (loop) on modern macOS — loop manually by restarting on close
 	function spawnPlayer(): childProcess.ChildProcess {
 		const vol = effectiveVolume().toFixed(2);
@@ -222,13 +225,16 @@ function startPlayback(weather: Weather): void {
 			console.error(`[pompom-ambient] playback error: ${msg}`);
 			if (currentProcess === child) {
 				currentProcess = null;
-				// Retry after 2s if still supposed to be playing
-				if (currentWeather === weather && config.enabled) {
+				spawnRetries++;
+				if (spawnRetries <= 3 && currentWeather === weather && config.enabled) {
+					const delay = 2000 * Math.pow(2, spawnRetries - 1); // 2s, 4s, 8s
 					setTimeout(() => {
 						if (currentWeather === weather && config.enabled && !currentProcess) {
 							currentProcess = spawnPlayer();
 						}
-					}, 2000);
+					}, delay);
+				} else if (spawnRetries > 3) {
+					console.error(`[pompom-ambient] giving up after ${spawnRetries} retries`);
 				}
 			}
 		});
@@ -293,25 +299,35 @@ export function getAmbientVolume(): number {
 /** Called by the extension when weather changes. Transitions ambient audio. */
 export async function setAmbientWeather(weather: Weather): Promise<void> {
 	if (!config.enabled || !interactive) return;
-	if (weather === currentWeather) return;
 
-	currentWeather = weather;
+	desiredWeather = weather;
 
-	// If audio file doesn't exist yet, generate it (non-blocking for other weather)
-	if (!hasAudio(weather)) {
-		if (generating) return; // Don't stack generation requests
-		generating = true;
-		try {
-			const ok = await generateAudio(weather);
-			if (!ok) { generating = false; return; }
-		} finally {
-			generating = false;
+	// If already playing the right weather, skip
+	if (weather === currentWeather && currentProcess) return;
+
+	// If generation in progress, just update desired — it'll be picked up after
+	if (generating) return;
+
+	// Process the latest desired weather (iterative, not recursive)
+	while (desiredWeather) {
+		const target: Weather = desiredWeather;
+		currentWeather = target;
+
+		if (!hasAudio(target)) {
+			generating = true;
+			try {
+				const ok = await generateAudio(target);
+				if (!ok) break;
+			} finally {
+				generating = false;
+			}
+			// Check if desired changed during generation
+			if (desiredWeather !== target) continue; // loop to process new desired
 		}
-		// Weather may have changed during generation
-		if (currentWeather !== weather) return;
-	}
 
-	startPlayback(weather);
+		startPlayback(target);
+		break;
+	}
 }
 
 /** Duck ambient volume during TTS playback */
@@ -354,8 +370,17 @@ export async function pregenerateAll(): Promise<number> {
 	for (const w of weathers) {
 		if (hasCustomAudio(w)) continue; // Don't overwrite user files
 		if (hasAudio(w)) continue;
-		const ok = await generateAudio(w);
-		if (ok) generated++;
+		if (generating) {
+			console.error(`[pompom-ambient] skipping ${w} — generation in progress`);
+			continue;
+		}
+		generating = true;
+		try {
+			const ok = await generateAudio(w);
+			if (ok) generated++;
+		} finally {
+			generating = false;
+		}
 	}
 	return generated;
 }
