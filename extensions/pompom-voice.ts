@@ -95,9 +95,19 @@ const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
 		{ name: "Apollo (male)", id: "aura-2-apollo-en" },
 	],
 	elevenlabs: [
+		// Cute & Character voices — perfect for Pompom
 		{ name: "Jessica Anne Bogart - Chatty (default)", id: "g6xIsTj2HwM6VR4iXFCw" },
+		{ name: "Lily - Soft, Cute and Sweet", id: "Pt5YrLNyu6d2s3s4CVMg" },
+		{ name: "Cherry Twinkle - Bubbly and Sweet", id: "XJ2fW4ybq7HouelYYGcL" },
+		{ name: "Flicker - Cheerful Fairy", id: "piI8Kku0DcvcL6TTSeQt" },
+		{ name: "Bea - Cute, Sweet, Charming", id: "0OteN0TNg6Kyaflk2DY8" },
+		{ name: "Blackie - Girlish, Cute, Cheerful", id: "iFhPOZcajR7W3sDL39qJ" },
+		{ name: "Aerisita - Bubbly, Feminine", id: "vGQNBgLaiM3EdZtxIiuY" },
+		{ name: "Minnie - Cartoon Character", id: "eppqEXVumQ3CfdndcIBd" },
+		{ name: "Niki - Lively Cartoon", id: "GKXCdIjjORefHK29tFTY" },
+		{ name: "Daisy - Playful Southern", id: "j45mXgB0BR0mIJbdyK09" },
+		// Professional voices
 		{ name: "Jessica Anne Bogart - Eloquent", id: "flHkNRp1BlvT73UL6gyz" },
-		{ name: "Jessica Anne Bogart - VO Pro", id: "lxYfHSkYm1EzQzGhdbfc" },
 		{ name: "Jessica - Playful, Warm", id: "cgSgspJ2msm6clMCkdW9" },
 		{ name: "Sarah - Mature, Confident", id: "EXAVITQu4vr4xnSDxMaL" },
 		{ name: "Alice - Clear Educator", id: "Xb7hH8MSUJpSbSDYk0k2" },

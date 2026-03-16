@@ -80,7 +80,7 @@ class PompomSettingsPanel {
 		if (matchesKey(data, Key.down) && this.subRow < this.filtered.length - 1) { this.subRow++; this.inv(); return; }
 		if (matchesKey(data, Key.enter) && this.filtered[this.subRow]) {
 			const p = this.filtered[this.subRow];
-			if (this.sub === "voice-picker") setVoice(p.id);
+			if (this.sub === "voice-picker") { setVoice(p.id); speakTest(); } // preview immediately
 			else if (this.sub === "engine-picker") setVoiceEngine(p.id as VoiceConfig["engine"]);
 			else if (this.sub === "personality-picker") setPersonality(p.id as Personality);
 			this.sub = "main"; this.search = ""; this.inv(); return;
@@ -157,19 +157,26 @@ class PompomSettingsPanel {
 
 		// Content
 		if (this.sub !== "main") {
-			lines.push(line(`${BRT}Search: ${this.search}\u2502${RST}`));
+			const cfg = getVoiceConfig();
+			const currentId = this.sub === "voice-picker"
+				? (cfg.engine === "kokoro" ? cfg.kokoroVoice : cfg.engine === "elevenlabs" ? cfg.elevenlabsVoice : cfg.deepgramVoice)
+				: this.sub === "engine-picker" ? cfg.engine : cfg.personality;
+			lines.push(line(`${BRT}Search: ${this.search}\u2502${RST}  ${DIM}${this.filtered.length} results${RST}`));
 			lines.push(line(""));
-			const maxShow = Math.min(8, Math.max(3, Math.floor((w - 10) / 3)));
+			const maxShow = Math.min(10, Math.max(3, Math.floor((w - 10) / 3)));
 			const start = Math.max(0, this.subRow - Math.floor(maxShow / 2));
 			const end = Math.min(this.filtered.length, start + maxShow);
 			for (let i = start; i < end; i++) {
 				const v = this.filtered[i];
+				const isCurrent = v.id === currentId;
 				const pre = i === this.subRow ? `${SEL}\u25b8 ` : `${DIM}  `;
-				lines.push(line(`${pre}${v.name}${RST}`));
+				const mark = isCurrent ? ` ${GRN}\u2713${RST}` : "";
+				lines.push(line(`${pre}${v.name}${RST}${mark}`));
 			}
 			if (this.filtered.length === 0) lines.push(line(`${DIM}No matches${RST}`));
 			lines.push(line(""));
-			lines.push(line(`${DIM}[Esc] Back  [Type] Filter  [Enter] Select${RST}`));
+			const hint = this.sub === "voice-picker" ? "[Enter] Select + Preview" : "[Enter] Select";
+			lines.push(line(`${DIM}[Esc] Back  [Type] Filter  ${hint}${RST}`));
 		} else if (this.tab === 0) {
 			const cfg = getVoiceConfig();
 			const vname = cfg.engine === "kokoro" ? cfg.kokoroVoice : cfg.engine === "elevenlabs" ? cfg.elevenlabsVoice : cfg.deepgramVoice;
