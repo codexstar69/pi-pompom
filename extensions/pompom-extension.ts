@@ -963,110 +963,14 @@ export default function (pi: ExtensionAPI) {
 		} catch {}
 	}
 
-	// Interactive settings command
+	// Interactive settings panel — full TUI overlay with arrow-key navigation
 	pi.registerCommand("pompom-settings", {
-		description: "Pompom settings — interactive menu",
+		description: "Pompom settings — interactive panel [←→ tabs, ↑↓ navigate, Enter select]",
 		handler: async (_args, cmdCtx) => {
 			await runSafely("pompom-settings", async () => {
-				if (!cmdCtx.hasUI) return;
-				const section = await cmdCtx.ui.select("Pompom Settings", [
-					"Voice",
-					"Personality",
-					"Theme",
-					"Accessories",
-					"About",
-				]);
-				if (!section) return;
-
-				if (section === "Voice") {
-					const voiceCfg = getVoiceConfig();
-					const action = await cmdCtx.ui.select("Voice Settings", [
-						voiceCfg.enabled ? "Disable voice" : "Enable voice",
-						"Change engine",
-						"Change voice model",
-						"Personality mode",
-						"Volume (" + getVoiceConfig().volume + "%)",
-						"Test voice",
-					]);
-					if (!action) return;
-					if (action === "Enable voice") { await enableAutoDetectedVoice(cmdCtx); }
-					else if (action === "Disable voice") { setVoiceEnabled(false); stopPlayback(); cmdCtx.ui.notify("Voice disabled.", "info"); }
-					else if (action === "Change engine") {
-						const engine = await cmdCtx.ui.select("TTS Engine", ["ElevenLabs (cloud, best quality)", "Deepgram (cloud)", "Kokoro (local, free)"]);
-						if (!engine) return;
-						const map: Record<string, string> = { "ElevenLabs (cloud, best quality)": "elevenlabs", "Deepgram (cloud)": "deepgram", "Kokoro (local, free)": "kokoro" };
-						await switchVoiceEngine(cmdCtx, map[engine] as any);
-					}
-					else if (action === "Change voice model") {
-						const catalog = getVoiceCatalog();
-						const voices = catalog[voiceCfg.engine] || [];
-						const options = voices.map(v => `${v.name} (${v.id})`);
-						const pick = await cmdCtx.ui.select("Voice Model — " + voiceCfg.engine, options);
-						if (!pick) return;
-						const selected = voices.find(v => pick.includes(v.id));
-						if (selected) { setVoice(selected.id); cmdCtx.ui.notify("Voice: " + selected.name, "info"); }
-					}
-					else if (action === "Personality mode") {
-						const mode = await cmdCtx.ui.select("How chatty should Pompom be?", [
-							"quiet — only speaks on your actions and errors",
-							"normal — moderate, casual commentary",
-							"chatty — frequent commentary",
-						]);
-						if (!mode) return;
-						const p = mode.split(" ")[0] as Personality;
-						setPersonality(p);
-						cmdCtx.ui.notify("Personality: " + p, "info");
-					}
-					else if (action.startsWith("Volume")) {
-						const vol = await cmdCtx.ui.select("Volume", ["10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"]);
-						if (vol) { setVolume(parseInt(vol)); cmdCtx.ui.notify("Volume: " + vol, "info"); }
-					}
-					else if (action === "Test voice") { speakTest(); cmdCtx.ui.notify("Speaking...", "info"); }
-				}
-				else if (section === "Personality") {
-					const mode = await cmdCtx.ui.select("How chatty should Pompom be?", [
-						"quiet — only speaks on your actions and errors",
-						"normal — moderate, casual commentary",
-						"chatty — frequent commentary",
-						"professional — errors, milestones, and direct actions only",
-						"mentor — guides on errors and completions, skips routine chatter",
-						"zen — near-silent, speaks only when you interact directly",
-					]);
-					if (!mode) return;
-					setPersonality(mode.split(" ")[0] as Personality);
-					cmdCtx.ui.notify("Personality: " + mode.split(" ")[0], "info");
-				}
-				else if (section === "Theme") {
-					pompomKeypress("c");
-					const th = pompomStatus().theme;
-					cmdCtx.ui.notify("Theme: " + th, "info");
-				}
-				else if (section === "Accessories") {
-					const acc = pompomGetAccessories();
-					const owned = Object.entries(acc).filter(([, v]) => v).map(([k]) => k);
-					const items = ["umbrella", "scarf", "sunglasses", "hat"];
-					const options = items.map(i => owned.includes(i) ? i + " (owned)" : i + " — give to Pompom");
-					const pick = await cmdCtx.ui.select("Accessories", options);
-					if (!pick) return;
-					const item = pick.split(" ")[0];
-					if (!owned.includes(item)) {
-						const result = pompomGiveAccessory(item);
-						saveAccessories();
-						cmdCtx.ui.notify(result, "info");
-					}
-				}
-				else if (section === "About") {
-					const s = pompomStatus();
-					const voiceCfg = getVoiceConfig();
-					cmdCtx.ui.notify(
-						"Pompom v2.4\n" +
-						"  Mood: " + s.mood + "  Hunger: " + s.hunger + "%  Energy: " + s.energy + "%\n" +
-						"  Theme: " + s.theme + "\n" +
-						"  Voice: " + (voiceCfg.enabled ? voiceCfg.engine : "off") +
-						"  Personality: " + voiceCfg.personality,
-						"info",
-					);
-				}
+				ctx = cmdCtx;
+				const { openPompomSettings } = await import("./pompom-settings");
+				await openPompomSettings(cmdCtx);
 			});
 		},
 	});
