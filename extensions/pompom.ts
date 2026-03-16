@@ -924,11 +924,11 @@ function updatePhysics(dt: number) {
 	if (weatherState !== lastAnnouncedWeatherState) {
 		lastAnnouncedWeatherState = weatherState;
 		let weatherAnnouncement = "";
-		if (lastAnnouncedWeatherState === "cloudy") weatherAnnouncement = "Clouds rolling in...";
+		if (lastAnnouncedWeatherState === "cloudy") weatherAnnouncement = "[curious] Clouds rolling in...";
 		else if (lastAnnouncedWeatherState === "rain") weatherAnnouncement = "It's starting to rain!";
-		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "A storm is brewing...";
-		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "Snowflakes!";
-		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "The sky is clearing up";
+		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "[concerned] A storm is brewing...";
+		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "[excited] Snowflakes!";
+		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "[happy] The sky is clearing up!";
 		if (weatherAnnouncement) say(weatherAnnouncement, 3.0, "system", 2, true);
 
 		// Ask for accessories if user hasn't given them yet
@@ -1042,7 +1042,7 @@ function updatePhysics(dt: number) {
 		if (gameTimer <= 0) {
 			gameActive = false;
 			currentState = "idle";
-			say("Score: " + gameScore + "!", 3.0, "system", 2, true);
+			say("[excited] Score: " + gameScore + "!", 3.0, "system", 2, true);
 			gameStars = [];
 			bounceY = 0;
 			lookX = 0;
@@ -1096,13 +1096,13 @@ function updatePhysics(dt: number) {
 		else blinkFade = Math.max(0, blinkFade - dt * 6.0);
 		bounceY += (0 - bounceY) * dt * 5.0;
 		lookX += (0 - lookX) * dt * 3.0;
-		if (ballY !== -10 && !hasBall) { currentState = "fetching"; say("Ball incoming!", 2.0, "reaction", 2, true); }
+		if (ballY !== -10 && !hasBall) { currentState = "fetching"; say("[excited] Ball incoming!", 2.0, "reaction", 2, true); }
 		else if (Math.random() < 0.005) {
-			if (Math.random() < 0.15) targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 1.5); // occasional offscreen walk
+			if (Math.random() < 0.15) targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); // occasional sneaky walk — stays 20-30% visible
 			else targetX = (Math.random() - 0.5) * (getScreenEdgeX() * 0.6);
 			currentState = "walk"; isWalking = true;
 		}
-		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("Wheee!", 4.0, "reaction", 1, true); }
+		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("[excited] Wheee!", 4.0, "reaction", 1, true); }
 		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; }
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
 			say(idleSpeech[Math.floor(Math.random() * idleSpeech.length)], 3.0, "commentary", 1, true);
@@ -1115,12 +1115,12 @@ function updatePhysics(dt: number) {
 		lookX = dir * 0.5;
 		if (Math.abs(posX - targetX) < 0.05) {
 			isWalking = false; posX = targetX; bounceY = 0; lookX = 0;
-			if (Math.abs(posX) >= getScreenEdgeX() + 0.5) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; }
+			if (Math.abs(posX) >= getScreenEdgeX() + 0.1) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; }
 			else currentState = "idle";
 		}
 	}
 	if (currentState === "offscreen") {
-		if (actionTimer <= 0) { currentState = "peek"; actionTimer = 4.0; targetX = Math.sign(posX) * (getScreenEdgeX() + 0.35); isWalking = true; }
+		if (actionTimer <= 0) { currentState = "peek"; actionTimer = 4.0; targetX = Math.sign(posX) * (getScreenEdgeX() + 0.15); isWalking = true; }
 	}
 	if (currentState === "peek") {
 		const dir = Math.sign(targetX - posX);
@@ -1130,7 +1130,7 @@ function updatePhysics(dt: number) {
 		} else {
 			isWalking = false; posX = targetX; bounceY = 0;
 			lookX = -Math.sign(posX) * 0.6 + Math.sin(time * 2) * 0.2;
-			if (actionTimer < 3.0 && speechTimer <= 0 && Math.random() < 0.05) say("Peekaboo!", 2.0, "reaction", 1, true);
+			if (actionTimer < 3.0 && speechTimer <= 0 && Math.random() < 0.05) say("[mischievously] Peekaboo!", 2.0, "reaction", 1, true);
 			if (actionTimer <= 0) { currentState = "walk"; targetX = 0; isWalking = true; }
 		}
 	}
@@ -1154,7 +1154,7 @@ function updatePhysics(dt: number) {
 		if (Math.random() < 0.02) {
 			particles.push({ x: posX + 0.2, y: posY + bounceY, vx: 0.15, vy: -0.2, char: "z", r: 150, g: 200, b: 255, life: 1.2, type: "z" });
 		}
-		if (actionTimer <= 0) { currentState = "idle"; isSleeping = false; say("What a nice nap!", 4.0, "reaction", 1, true); }
+		if (actionTimer <= 0) { currentState = "idle"; isSleeping = false; say("[sighs] What a nice nap!", 4.0, "reaction", 1, true); }
 	}
 	if (currentState === "excited") {
 		blinkFade = 1.0;
@@ -1188,7 +1188,7 @@ function updatePhysics(dt: number) {
 			posX += dir * dt * 1.5;
 			bounceY = -Math.abs(Math.sin(time * 18)) * 0.15;
 			lookX = dir * 0.5;
-			if (Math.abs(posX - ballX) < 0.15 && Math.abs(posY + bounceY - ballY) < 0.3) { hasBall = true; say("Got it!", 4.0, "reaction", 2, true); }
+			if (Math.abs(posX - ballX) < 0.15 && Math.abs(posY + bounceY - ballY) < 0.3) { hasBall = true; say("[excited] Got it!", 4.0, "reaction", 2, true); }
 		} else {
 			const dir = Math.sign(0 - posX);
 			posX += dir * dt * 0.8;
@@ -1196,7 +1196,7 @@ function updatePhysics(dt: number) {
 			lookX = dir * 0.5;
 			if (Math.abs(posX) < 0.08) {
 				hasBall = false; ballX = posX + 0.15; ballY = 0.5; ballVx = 0.8; ballVy = -1.5;
-				currentState = "excited"; actionTimer = 2.0; say("Here you go!", 4.0, "reaction", 2, true);
+				currentState = "excited"; actionTimer = 2.0; say("[happy] Here you go!", 4.0, "reaction", 2, true);
 			}
 		}
 	}
@@ -1212,7 +1212,7 @@ function updatePhysics(dt: number) {
 				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
 			}
 			hunger = Math.min(100, hunger + 20);
-			say("Yum!", 2.0, "user_action", 3, true);
+			say("[happy] Yum!", 2.0, "user_action", 3, true);
 			foods.splice(i, 1);
 		}
 	}
@@ -1503,31 +1503,31 @@ export function pompomGetWeather(): Weather {
 
 /** Handle a user keypress command */
 export function pompomKeypress(key: string) {
-	if (key === "p") { currentState = "excited"; actionTimer = 2.5; isSleeping = false; say("Purrrrr...", 4.0, "user_action", 3, true); }
-	else if (key === "w") { currentState = "idle"; isSleeping = false; blinkFade = 0; say("I'm awake!", 4.0, "user_action", 3, true); }
-	else if (key === "s") { currentState = "sleep"; isSleeping = true; actionTimer = 10; say("Time for a nap... zZz", 4.0, "user_action", 3, true); }
+	if (key === "p") { currentState = "excited"; actionTimer = 2.5; isSleeping = false; say("[happy] Purrrrr...", 4.0, "user_action", 3, true); }
+	else if (key === "w") { currentState = "idle"; isSleeping = false; blinkFade = 0; say("[excited] I'm awake!", 4.0, "user_action", 3, true); }
+	else if (key === "s") { currentState = "sleep"; isSleeping = true; actionTimer = 10; say("[whispers] Time for a nap... zZz", 4.0, "user_action", 3, true); }
 	else if (key === "f") {
 		isSleeping = false; currentState = "idle";
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.4, y: -0.8, vy: 0 });
 	}
 	else if (key === "b") {
 		isSleeping = false;
-		if (ballY === 0.55 && !hasBall && Math.abs(posX - ballX) < 0.4) { ballVy = -1.8; ballVx = (Math.random() - 0.5) * 2.5; say("Boing!", 2.0, "user_action", 3, true); }
+		if (ballY === 0.55 && !hasBall && Math.abs(posX - ballX) < 0.4) { ballVy = -1.8; ballVx = (Math.random() - 0.5) * 2.5; say("[excited] Boing!", 2.0, "user_action", 3, true); }
 		else { ballX = posX + (Math.random() > 0.5 ? 0.8 : -0.8); ballY = -0.4; ballVx = (Math.random() - 0.5) * 1.5; ballVy = -1.2; hasBall = false; }
 	}
-	else if (key === "m") { isSleeping = false; currentState = "singing"; actionTimer = 5.0; say("La la la~", 4.0, "user_action", 3, true); }
+	else if (key === "m") { isSleeping = false; currentState = "singing"; actionTimer = 5.0; say("[sings] La la la!", 4.0, "user_action", 3, true); }
 	else if (key === "c") { activeTheme = (activeTheme + 1) % themes.length; }
 	else if (key === "d") { currentState = "flip"; isFlipping = true; flipPhase = 0; isSleeping = false; }
-	else if (key === "o") { isSleeping = false; currentState = "walk"; targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 1.5); isWalking = true; }
-	else if (key === "x") { isSleeping = false; currentState = "dance"; actionTimer = 4.0; say("Let's dance!", 4.0, "user_action", 3, true); }
+	else if (key === "o") { isSleeping = false; currentState = "walk"; targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); isWalking = true; }
+	else if (key === "x") { isSleeping = false; currentState = "dance"; actionTimer = 4.0; say("[excited] Let's dance!", 4.0, "user_action", 3, true); }
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0 });
 		hunger = Math.min(100, hunger + 30);
-		say("A special treat!", 2.0, "user_action", 3, true);
+		say("[excited] A special treat!", 2.0, "user_action", 3, true);
 	}
-	else if (key === "h") { isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10); say("Aww, hugs!", 4.0, "user_action", 3, true); }
-	else if (key === "g") { isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game"; say("Catch the stars!", 3.0, "user_action", 3, true); }
+	else if (key === "h") { isSleeping = false; currentState = "excited"; actionTimer = 3.0; energy = Math.min(100, energy + 10); say("[happy] Aww, hugs!", 4.0, "user_action", 3, true); }
+	else if (key === "g") { isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game"; say("[excited] Catch the stars!", 3.0, "user_action", 3, true); }
 
 	// Accessory giving is handled separately via pompomGiveAccessory
 }
@@ -1585,10 +1585,10 @@ export const POMPOM_HEIGHT = H + 1;
 
 export function pompomGiveAccessory(item: string): string {
 	const key = item.toLowerCase().trim();
-	if (key === "umbrella") { accessories.umbrella = true; say("Yay, an umbrella! Thank you!", 4.0, "user_action", 3, true); return "Gave Pompom an umbrella!"; }
-	if (key === "scarf") { accessories.scarf = true; say("So warm and cozy! Thanks!", 4.0, "user_action", 3, true); return "Gave Pompom a scarf!"; }
-	if (key === "sunglasses") { accessories.sunglasses = true; say("Looking cool! Thanks!", 4.0, "user_action", 3, true); return "Gave Pompom sunglasses!"; }
-	if (key === "hat") { accessories.hat = true; say("I love hats! Thank you!", 4.0, "user_action", 3, true); return "Gave Pompom a hat!"; }
+	if (key === "umbrella") { accessories.umbrella = true; say("[excited] Yay, an umbrella! Thank you!", 4.0, "user_action", 3, true); return "Gave Pompom an umbrella!"; }
+	if (key === "scarf") { accessories.scarf = true; say("[happy] So warm and cozy! Thanks!", 4.0, "user_action", 3, true); return "Gave Pompom a scarf!"; }
+	if (key === "sunglasses") { accessories.sunglasses = true; say("[excited] Looking cool! Thanks!", 4.0, "user_action", 3, true); return "Gave Pompom sunglasses!"; }
+	if (key === "hat") { accessories.hat = true; say("[excited] I love hats! Thank you!", 4.0, "user_action", 3, true); return "Gave Pompom a hat!"; }
 	return "Unknown accessory. Try: umbrella, scarf, sunglasses, hat";
 }
 
