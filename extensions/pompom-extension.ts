@@ -47,6 +47,7 @@ import {
 	pompomSetTalking,
 	pompomSetWeatherOverride,
 	pompomGetWeather,
+	pompomOnSfx,
 	pompomStatus,
 	renderPompom,
 	resetPompom,
@@ -918,6 +919,7 @@ export default function (pi: ExtensionAPI) {
 					enqueueSpeech(event);
 				}
 			});
+			pompomOnSfx((sfx) => { void playSfx(sfx as SfxName); });
 			restoreCompanionState(startCtx);
 			if (enabled) {
 				showCompanion();
@@ -938,6 +940,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			chatOverlayHandle = null;
 			pompomOnSpeech(null);
+			pompomOnSfx(null);
 			hideCompanion();
 			resetPompom();
 			resetAgentState();
@@ -967,6 +970,7 @@ export default function (pi: ExtensionAPI) {
 					enqueueSpeech(event);
 				}
 			});
+			pompomOnSfx((sfx) => { void playSfx(sfx as SfxName); });
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
@@ -1113,6 +1117,7 @@ export default function (pi: ExtensionAPI) {
 						p: "pet_purr", f: "eat_crunch", t: "eat_crunch",
 						b: "ball_bounce", h: "hug_squeeze", s: "sleep_snore",
 						w: "wake_yawn", x: "dance_sparkle", m: "dance_sparkle",
+						d: "flip_whoosh", c: "color_switch", g: "game_start",
 					};
 					if (sfxMap[key]) void playSfx(sfxMap[key]);
 				},
@@ -1275,6 +1280,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					const result = pompomGiveAccessory(item);
 					saveAccessories();
+					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
 					commandContext.ui.notify(result, "info");
 					return;
 				}
@@ -1305,6 +1311,7 @@ export default function (pi: ExtensionAPI) {
 						p: "pet_purr", f: "eat_crunch", t: "eat_crunch",
 						b: "ball_bounce", h: "hug_squeeze", s: "sleep_snore",
 						w: "wake_yawn", x: "dance_sparkle", m: "dance_sparkle",
+						d: "flip_whoosh", c: "color_switch", g: "game_start",
 					};
 					if (sfxMap[actionKey]) void playSfx(sfxMap[actionKey]);
 					return;

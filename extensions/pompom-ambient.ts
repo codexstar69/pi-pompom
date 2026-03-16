@@ -406,7 +406,11 @@ export type SfxName =
 	| "thunder" | "bird_chirp" | "bee_buzz"
 	| "eat_crunch" | "ball_bounce" | "pet_purr"
 	| "sleep_snore" | "star_chime" | "hug_squeeze"
-	| "wake_yawn" | "dance_sparkle" | "wind_gust";
+	| "wake_yawn" | "dance_sparkle" | "wind_gust"
+	| "flip_whoosh" | "rain_drip" | "footstep_soft"
+	| "accessory_equip" | "game_start" | "game_end"
+	| "hide_tiptoe" | "peek_surprise" | "firefly_twinkle"
+	| "color_switch" | "weather_transition";
 
 const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
 	thunder:       { prompt: "Single distant thunder rumble, low rolling, not sharp or scary, cozy indoor perspective, no rain", duration: 4 },
@@ -421,6 +425,17 @@ const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
 	wake_yawn:     { prompt: "Tiny cute yawn, small creature waking up, short and adorable, no voice just the yawn sound", duration: 2 },
 	dance_sparkle: { prompt: "Quick series of three light sparkle tinkle sounds, magical and playful, like fairy dust", duration: 2 },
 	wind_gust:     { prompt: "Single soft wind gust, brief whoosh through grass, gentle and atmospheric, one second", duration: 2 },
+	flip_whoosh:   { prompt: "Short quick whoosh of air, like a small object spinning through the air, single rotation, playful cartoon-like", duration: 1 },
+	rain_drip:     { prompt: "Single gentle raindrop landing on a leaf, soft plop, natural, no echo, no music", duration: 1 },
+	footstep_soft: { prompt: "Single tiny soft footstep on grass, very gentle pad, like a small plush creature stepping, barely audible", duration: 1 },
+	accessory_equip: { prompt: "Short cheerful equip sound, soft fabric rustle with a tiny sparkle, like dressing up a doll, cute", duration: 1 },
+	game_start:    { prompt: "Short upbeat game-start jingle, three ascending bright notes, arcade-like but soft and cute, no music", duration: 2 },
+	game_end:      { prompt: "Short game-over melody, three descending soft notes, gentle and cute, not sad, like a score reveal", duration: 2 },
+	hide_tiptoe:   { prompt: "Very quiet soft tiptoeing sound, two tiny careful steps, sneaky and cute, cartoon-like", duration: 1 },
+	peek_surprise: { prompt: "Quick playful surprise pop sound, like a jack-in-the-box but gentle and soft, single pop", duration: 1 },
+	firefly_twinkle: { prompt: "Soft magical twinkling sound, like tiny bells following a moving light, brief and whimsical", duration: 2 },
+	color_switch:  { prompt: "Short satisfying click-pop with a sparkle shimmer, like changing a light color, clean and bright", duration: 1 },
+	weather_transition: { prompt: "Soft atmospheric whoosh shift, like wind changing direction and settling, gentle transition sound", duration: 2 },
 };
 
 // Weather-contextual SFX that play periodically on top of the ambient loop
@@ -432,7 +447,9 @@ const WEATHER_SFX: Record<Weather, { sfx: SfxName; minGapMs: number; maxGapMs: n
 	cloudy: [
 		{ sfx: "wind_gust", minGapMs: 60000, maxGapMs: 150000 },
 	],
-	rain: [],
+	rain: [
+		{ sfx: "rain_drip", minGapMs: 30000, maxGapMs: 90000 },
+	],
 	snow: [
 		{ sfx: "wind_gust", minGapMs: 90000, maxGapMs: 180000 },
 	],

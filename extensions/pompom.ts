@@ -80,6 +80,9 @@ let breathe = 0;
 let isTalking = false;
 let talkAudioLevel = 0;
 let onSpeechCallback: ((event: SpeechEvent) => void) | null = null;
+let onSfxCallback: ((sfx: string) => void) | null = null;
+let lastFootstepTime = 0;
+const FOOTSTEP_INTERVAL_MS = 600;
 
 // Interactables
 let ffX = 0, ffY = 0, ffZ = 0;
@@ -107,6 +110,12 @@ interface RenderObj {
 	x: number; y: number; z: number;
 	r?: number; rx?: number; ry?: number; rot?: number;
 	s?: number; c?: number;
+}
+
+function emitSfx(name: string): void {
+	if (onSfxCallback) {
+		try { onSfxCallback(name); } catch { /* non-fatal */ }
+	}
 }
 
 function say(
@@ -929,7 +938,7 @@ function updatePhysics(dt: number) {
 		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "[concerned] A storm is brewing...";
 		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "[excited] Snowflakes!";
 		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "[happy] The sky is clearing up!";
-		if (weatherAnnouncement) say(weatherAnnouncement, 3.0, "system", 2, true);
+		if (weatherAnnouncement) { say(weatherAnnouncement, 3.0, "system", 2, true); emitSfx("weather_transition"); }
 
 		// Ask for accessories if user hasn't given them yet
 		const weather = weatherState;
@@ -1042,7 +1051,7 @@ function updatePhysics(dt: number) {
 		if (gameTimer <= 0) {
 			gameActive = false;
 			currentState = "idle";
-			say("[excited] Score: " + gameScore + "!", 3.0, "system", 2, true);
+			say("[excited] Score: " + gameScore + "!", 3.0, "system", 2, true); emitSfx("game_end");
 			gameStars = [];
 			bounceY = 0;
 			lookX = 0;
@@ -1065,6 +1074,7 @@ function updatePhysics(dt: number) {
 				if (distX < 0.15 && distY < 0.15 && !star.caught) {
 					gameScore++;
 					star.caught = true;
+					emitSfx("star_chime");
 					gameStars.splice(i, 1);
 					particles.push({ x: star.x, y: star.y, vx: (Math.random() - 0.5)*0.5, vy: (Math.random() - 0.5)*0.5, char: "*", r: 255, g: 255, b: 0, life: 1.0, type: "sparkle" });
 					continue;
@@ -1102,8 +1112,8 @@ function updatePhysics(dt: number) {
 			else targetX = (Math.random() - 0.5) * (getScreenEdgeX() * 0.6);
 			currentState = "walk"; isWalking = true;
 		}
-		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("[excited] Wheee!", 4.0, "reaction", 1, true); }
-		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; }
+		else if (Math.random() < 0.003) { currentState = "flip"; isFlipping = true; flipPhase = 0; say("[excited] Wheee!", 4.0, "reaction", 1, true); emitSfx("flip_whoosh"); }
+		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
 			say(idleSpeech[Math.floor(Math.random() * idleSpeech.length)], 3.0, "commentary", 1, true);
 		}
@@ -1113,14 +1123,16 @@ function updatePhysics(dt: number) {
 		posX += dir * dt * 0.6;
 		bounceY = -Math.abs(Math.sin(time * 10)) * 0.08;
 		lookX = dir * 0.5;
+		const nowMs = Date.now();
+		if (nowMs - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) { lastFootstepTime = nowMs; emitSfx("footstep_soft"); }
 		if (Math.abs(posX - targetX) < 0.05) {
 			isWalking = false; posX = targetX; bounceY = 0; lookX = 0;
-			if (Math.abs(posX) >= getScreenEdgeX() + 0.1) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; }
+			if (Math.abs(posX) >= getScreenEdgeX() + 0.1) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; emitSfx("hide_tiptoe"); }
 			else currentState = "idle";
 		}
 	}
 	if (currentState === "offscreen") {
-		if (actionTimer <= 0) { currentState = "peek"; actionTimer = 4.0; targetX = Math.sign(posX) * (getScreenEdgeX() + 0.15); isWalking = true; }
+		if (actionTimer <= 0) { currentState = "peek"; actionTimer = 4.0; targetX = Math.sign(posX) * (getScreenEdgeX() + 0.15); isWalking = true; emitSfx("peek_surprise"); }
 	}
 	if (currentState === "peek") {
 		const dir = Math.sign(targetX - posX);
@@ -1444,6 +1456,10 @@ export function pompomOnSpeech(cb: ((event: SpeechEvent) => void) | null) {
 	onSpeechCallback = cb;
 }
 
+export function pompomOnSfx(cb: ((sfx: string) => void) | null) {
+	onSfxCallback = cb;
+}
+
 export function pompomSetTalkAudioLevel(level: number) {
 	talkAudioLevel = clamp(level, 0, 1);
 }
@@ -1535,7 +1551,7 @@ export function pompomKeypress(key: string) {
 /** Reset companion state */
 export function resetPompom() {
 	time = 0; currentState = "idle"; blinkFade = 0; actionTimer = 0;
-	speechTimer = 0; speechText = "";
+	speechTimer = 0; speechText = ""; lastFootstepTime = 0;
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;
 	isWalking = false; isFlipping = false; isSleeping = false; isTalking = false;
 	talkAudioLevel = 0; flipPhase = 0;
