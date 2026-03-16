@@ -583,6 +583,10 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		if (!config.enabled || !interactive || !event.allowTts) {
 			return;
 		}
+		// Hard guard: don't enqueue anything while already playing
+		if (playbackActive) {
+			return;
+		}
 		// Agent busy gate — suppress TTS audio during agent work (speech bubbles still show)
 		if (agentBusy && event.priority < 3) {
 			return;

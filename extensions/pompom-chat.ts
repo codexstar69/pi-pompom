@@ -16,7 +16,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Editor, Key, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TUI } from "@mariozechner/pi-tui";
-import { renderPompom, pompomSetTalking } from "./pompom";
 
 const POMPOM_SYSTEM = `
 ---
@@ -62,7 +61,6 @@ export class PompomChatOverlay implements Component, Focusable {
 	private scrollOffset = 0;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
-	private lastPompomRender = Date.now();
 
 	get focused() { return this._focused; }
 	set focused(v: boolean) { this._focused = v; this.editor.focused = v; }
@@ -265,25 +263,8 @@ export class PompomChatOverlay implements Component, Focusable {
 		lines.push(frame(title + streaming + status));
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(width - 2) + "\u2524"));
 
-		// Mini Pompom animation strip — 4 rows of the creature inside the chat
-		try {
-			const now = Date.now();
-			const dt = Math.min(0.15, (now - this.lastPompomRender) / 1000);
-			this.lastPompomRender = now;
-			pompomSetTalking(this.isStreaming);
-			const miniLines = renderPompom(iw, this.isStreaming ? 0.5 : 0, dt);
-			// Take only the middle portion (skip status bar, show creature area)
-			const creatureLines = miniLines.slice(0, -1); // remove status bar line
-			const midStart = Math.max(0, Math.floor(creatureLines.length * 0.2));
-			const midEnd = Math.min(creatureLines.length, midStart + 4);
-			for (let i = midStart; i < midEnd; i++) {
-				lines.push(frame(truncateToWidth(creatureLines[i], iw)));
-			}
-		} catch { /* silent — render failure shouldn't break chat */ }
-		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(width - 2) + "\u2524"));
-
 		// Messages
-		const maxMsgLines = Math.max(4, Math.floor(this.opts.tui.terminal.rows * 0.25) - 6);
+		const maxMsgLines = Math.max(6, Math.floor(this.opts.tui.terminal.rows * 0.35) - 4);
 		const allMsgLines: string[] = [];
 
 		for (const msg of this.displayMessages) {
