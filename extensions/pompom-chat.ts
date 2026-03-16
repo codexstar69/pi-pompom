@@ -375,18 +375,66 @@ export class PompomChatOverlay implements Component, Focusable {
 	}
 
 	private wrapInto(out: string[], prefix: string, prefixW: number, text: string, maxW: number) {
+		if (maxW < 4) maxW = 4;
 		const words = text.split(" ");
 		let curLine = prefix;
 		let curW = prefixW;
+		const indent = "  ";
+		const indentW = 2;
+
 		for (const word of words) {
 			const ww = visibleWidth(word);
-			if (curW + ww + (curW > prefixW ? 1 : 0) > maxW && curW > prefixW) {
+
+			// If the word fits on the current line, append it
+			const spaceNeeded = curW > prefixW ? 1 : 0;
+			if (curW + spaceNeeded + ww <= maxW) {
+				curLine += (spaceNeeded ? " " : "") + word;
+				curW += spaceNeeded + ww;
+				continue;
+			}
+
+			// Word doesn't fit — flush current line if it has content
+			if (curW > prefixW || curW > indentW) {
 				out.push(curLine);
-				curLine = "  " + word;
-				curW = 2 + ww;
-			} else {
-				curLine += (curW > prefixW ? " " : "") + word;
-				curW += (curW > prefixW ? 1 : 0) + ww;
+				curLine = indent;
+				curW = indentW;
+			}
+
+			// If the word itself fits on a fresh line, just add it
+			if (indentW + ww <= maxW) {
+				curLine = indent + word;
+				curW = indentW + ww;
+				continue;
+			}
+
+			// Word is wider than maxW — break it character by character
+			let remaining = word;
+			while (remaining.length > 0) {
+				const available = maxW - curW;
+				if (available <= 0) {
+					out.push(curLine);
+					curLine = indent;
+					curW = indentW;
+					continue;
+				}
+				// Take as many characters as fit
+				let take = 0;
+				let takeW = 0;
+				for (const ch of remaining) {
+					const cw = visibleWidth(ch);
+					if (takeW + cw > available) break;
+					take++;
+					takeW += cw;
+				}
+				if (take === 0) take = 1; // always consume at least 1 char to avoid infinite loop
+				curLine += remaining.slice(0, take);
+				curW += visibleWidth(remaining.slice(0, take));
+				remaining = remaining.slice(take);
+				if (remaining.length > 0) {
+					out.push(curLine);
+					curLine = indent;
+					curW = indentW;
+				}
 			}
 		}
 		if (curW > 0) out.push(curLine);
