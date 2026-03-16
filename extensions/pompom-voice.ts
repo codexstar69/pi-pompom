@@ -139,6 +139,11 @@ function sanitizeSpeechText(text: string): string {
 	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
 }
 
+/** Strip ElevenLabs v3 audio tags like [laughs], [sighs], [excited] for engines that don't support them. */
+function stripAudioTags(text: string): string {
+	return text.replace(/\[[\w\s]+\]\s*/g, "").replace(/\s+/g, " ").trim();
+}
+
 function isVoiceEngine(value: unknown): value is VoiceConfig["engine"] {
 	return value === "elevenlabs" || value === "deepgram" || value === "kokoro";
 }
@@ -533,7 +538,10 @@ async function processQueue(): Promise<void> {
 				const voice = engine.name === "kokoro" ? config.kokoroVoice
 					: engine.name === "elevenlabs" ? config.elevenlabsVoice
 					: config.deepgramVoice;
-				const audio = await engine.synthesize(nextEvent.text, voice);
+				// Strip v3 audio tags for non-ElevenLabs engines — they'd be spoken literally
+				const speechText = engine.name === "elevenlabs" ? nextEvent.text : stripAudioTags(nextEvent.text);
+				if (!speechText || speechText.length < 3) continue;
+				const audio = await engine.synthesize(speechText, voice);
 				if (stopRequested) break;
 				lastSpokenText = nextEvent.text;
 				lastSpeakTime = Date.now();

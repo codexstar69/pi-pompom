@@ -76,6 +76,15 @@ v3 does NOT support SSML `<break>` tags. Use instead:
 - **Dashes (—)** — short pause
 - **CAPITALIZATION** — increases emphasis
 
+### Engine-Specific Behavior
+Audio tags like `[laughs]`, `[sighs]`, `[excited]` are **ElevenLabs v3 only**.
+When Kokoro or Deepgram is the active engine, tags are automatically stripped
+before synthesis — the text "Hello!" still reaches the engine, but "[laughs]" is removed.
+No engine loses features because of another engine's limitations.
+
+**Kokoro** supports Markdown pronunciation: `[word](/IPA/)` and stress: `[word](+2)`
+**Deepgram** Aura-2 uses natural prosody from punctuation — no markup needed.
+
 ### Stability Settings (v3 exact values only)
 - **0.0 (Creative):** Most expressive — our default for Pompom
 - **0.5 (Natural):** Balanced — good for professional/mentor personalities
