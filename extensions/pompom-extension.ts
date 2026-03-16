@@ -750,12 +750,14 @@ export default function (pi: ExtensionAPI) {
 		}
 		const model = commandContext.model;
 		if (!isModelLike(model)) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
 			return;
 		}
 
 		const apiKey = await commandContext.modelRegistry.getApiKey(model);
 		if (!apiKey) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
 			return;
 		}
@@ -853,6 +855,7 @@ export default function (pi: ExtensionAPI) {
 
 		const apiKey = await commandContext.modelRegistry.getApiKey(model);
 		if (!apiKey) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
 			return;
 		}
@@ -860,6 +863,7 @@ export default function (pi: ExtensionAPI) {
 		const stats = getSessionStats();
 		const recentMessages = buildRecentSessionMessages(commandContext);
 		if (recentMessages.length === 0) {
+			aiCommandInProgress = false;
 			commandContext.ui.notify("No session context to recap yet.", "warning");
 			return;
 		}
@@ -946,6 +950,7 @@ export default function (pi: ExtensionAPI) {
 			stopPlayback();
 			stopAmbient();
 			stopAmbientWeatherSync();
+			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			pompomOnSpeech(null);
 			pompomOnSfx(null);
@@ -966,6 +971,7 @@ export default function (pi: ExtensionAPI) {
 			stopPlayback();
 			stopAmbient();
 			stopAmbientWeatherSync();
+			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			hideCompanion();
 			resetPompom();
@@ -1141,6 +1147,7 @@ export default function (pi: ExtensionAPI) {
 		if (!enabled) return;
 		if (widgetVisible) {
 			widgetVisible = false;
+			companionActive = false;
 			// Stop the render loop and remove widget, but keep voice/health/agent timers running
 			if (companionTimer) {
 				clearInterval(companionTimer);

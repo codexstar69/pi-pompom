@@ -61,6 +61,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private agent: Agent;
 	private editor: Editor;
 	private displayMessages: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
+	private localMessages: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
 	private isStreaming = false;
 	private streamingText = "";
 	private _focused = true;
@@ -171,21 +172,20 @@ export class PompomChatOverlay implements Component, Focusable {
 		if (lower === "status" || lower === "how's it going" || lower === "hows it going") {
 			return "Use peek_main({ since_last: true }) and briefly report: what is the main agent doing right now? Any active tool calls?";
 		}
-		if (lower === "voice on") return ""; // handled below
-		if (lower === "voice off") return ""; // handled below
 		return input;
 	}
 
 	private handleLocalCommand(input: string): boolean {
 		const lower = input.toLowerCase().trim();
 		if (lower === "help" || lower === "/help" || lower === "commands") {
-			this.displayMessages.push({ role: "pompom", text: "Commands you can type here:" });
-			this.displayMessages.push({ role: "tool", text: "analyze — detailed analysis of main agent work" });
-			this.displayMessages.push({ role: "tool", text: "stuck — check if main agent is stuck" });
-			this.displayMessages.push({ role: "tool", text: "recap — session summary" });
-			this.displayMessages.push({ role: "tool", text: "status — quick status check" });
-			this.displayMessages.push({ role: "tool", text: "help — show this list" });
-			this.displayMessages.push({ role: "pompom", text: "Or just ask me anything in plain English!" });
+			this.localMessages.push({ role: "pompom", text: "Commands you can type here:" });
+			this.localMessages.push({ role: "tool", text: "analyze — detailed analysis of main agent work" });
+			this.localMessages.push({ role: "tool", text: "stuck — check if main agent is stuck" });
+			this.localMessages.push({ role: "tool", text: "recap — session summary" });
+			this.localMessages.push({ role: "tool", text: "status — quick status check" });
+			this.localMessages.push({ role: "tool", text: "help — show this list" });
+			this.localMessages.push({ role: "pompom", text: "Or just ask me anything in plain English!" });
+			this.syncMessages();
 			this.opts.tui.requestRender();
 			return true;
 		}
@@ -250,6 +250,10 @@ export class PompomChatOverlay implements Component, Focusable {
 				const toolName = (m as any).toolName || "tool";
 				if (t) this.displayMessages.push({ role: "tool", text: `[${toolName}]: ${t.slice(0, 200)}` });
 			}
+		}
+		// Append locally-injected messages (help output, etc.) — they survive agent syncs
+		for (const lm of this.localMessages) {
+			this.displayMessages.push(lm);
 		}
 		if (this.errorText) {
 			this.displayMessages.push({ role: "error", text: this.errorText });

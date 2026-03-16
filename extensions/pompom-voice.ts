@@ -310,6 +310,7 @@ async function playAudio(buffer: Buffer): Promise<void> {
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom-voice] playAudio failed: ${msg}`);
+		throw error; // Let processQueue's itemError handler catch it
 	}
 }
 
@@ -533,6 +534,11 @@ async function processQueue(): Promise<void> {
 			try {
 				const engine = await resolveEngine();
 				if (!engine) {
+					consecutiveFailures++;
+					if (consecutiveFailures >= 3) {
+						console.error("[pompom-voice] 3 consecutive failures — pausing queue");
+						break;
+					}
 					continue;
 				}
 				const voice = engine.name === "kokoro" ? config.kokoroVoice
@@ -550,6 +556,7 @@ async function processQueue(): Promise<void> {
 				const playbackTimeout = audio.durationMs + 10000;
 				let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 				try {
+					if (stopRequested) break;
 					await Promise.race([
 						playAudio(audio.buffer),
 						new Promise<void>((_, reject) => {

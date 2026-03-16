@@ -404,9 +404,17 @@ export function onToolCall({ toolCallId, toolName }: ToolCallInput): void {
 export function onToolResult({ toolCallId, toolName, isError }: ToolResultInput): void {
 	const now = setEventNow();
 	const id = resolveTrackedToolCallId({ toolCallId, toolName });
+	const exists = id in state.activeToolCalls;
 	const startedAt = state.activeToolCalls[id]?.startedAt || now;
 	const durationMs = Math.max(0, now - startedAt);
 	delete state.activeToolCalls[id];
+	if (!exists) {
+		// Fallback: sweep oldest entry for this tool name to prevent leaks
+		const match = Object.entries(state.activeToolCalls)
+			.filter(([, v]) => v.toolName === toolName)
+			.sort((a, b) => a[1].startedAt - b[1].startedAt);
+		if (match.length > 0) delete state.activeToolCalls[match[0][0]];
+	}
 	state.counters.totalToolDurationMs += durationMs;
 	state.counters.longestToolDurationMs = Math.max(state.counters.longestToolDurationMs, durationMs);
 	state.lastToolName = toolName;
@@ -649,10 +657,9 @@ export function detectStuck(): StuckSignal {
 	const now = Date.now();
 
 	// Rule 1: Recent error pattern
-	const recentFails = state.counters.toolFailures;
-	const recentSuccesses = state.counters.toolSuccesses;
-	if (recentFails >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
-		const failStreak = Math.min(recentFails, 10);
+	const lifetimeFails = state.counters.toolFailures;
+	if (lifetimeFails >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
+		const failStreak = Math.min(lifetimeFails, 10);
 		if (failStreak >= 3) {
 			reasons.push(`${failStreak} recent tool failures`);
 			confidence += 0.35;

@@ -220,7 +220,17 @@ function startPlayback(weather: Weather): void {
 		child.on("error", (err) => {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[pompom-ambient] playback error: ${msg}`);
-			currentProcess = null;
+			if (currentProcess === child) {
+				currentProcess = null;
+				// Retry after 2s if still supposed to be playing
+				if (currentWeather === weather && config.enabled) {
+					setTimeout(() => {
+						if (currentWeather === weather && config.enabled && !currentProcess) {
+							currentProcess = spawnPlayer();
+						}
+					}, 2000);
+				}
+			}
 		});
 
 		child.on("close", () => {
@@ -600,6 +610,7 @@ export async function pregenerateSfx(): Promise<number> {
 	let count = 0;
 	for (const name of names) {
 		if (hasSfx(name)) continue;
+		if (sfxGenerating) continue;
 		sfxGenerating = true;
 		try {
 			const ok = await generateSfx(name);
