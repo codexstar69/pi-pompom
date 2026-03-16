@@ -71,7 +71,7 @@ const DEFAULT_CONFIG: VoiceConfig = {
 	engine: "elevenlabs",
 	kokoroVoice: "af_nicole",
 	deepgramVoice: "aura-2-luna-en",
-	elevenlabsVoice: "1zUSi8LeHs9M2mV8X6YS",
+	elevenlabsVoice: "g6xIsTj2HwM6VR4iXFCw", // Jessica Anne Bogart - Chatty and Friendly
 	personality: "normal",
 	volume: 70,
 };
@@ -95,12 +95,15 @@ const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
 		{ name: "Apollo (male)", id: "aura-2-apollo-en" },
 	],
 	elevenlabs: [
-		{ name: "Default (configured)", id: "1zUSi8LeHs9M2mV8X6YS" },
-		{ name: "Aria (female)", id: "9BWtsMINqrJLrRacOk9x" },
-		{ name: "Rachel (female)", id: "21m00Tcm4TlvDq8ikWAM" },
-		{ name: "Domi (female)", id: "AZnzlk1XvdvUeBnXmlld" },
-		{ name: "Adam (male)", id: "pNInz6obpgDQGcFmaJgB" },
-		{ name: "Sam (male)", id: "yoZ06aMxZJJ28mfd3POQ" },
+		{ name: "Jessica Anne Bogart - Chatty (default)", id: "g6xIsTj2HwM6VR4iXFCw" },
+		{ name: "Jessica Anne Bogart - Eloquent", id: "flHkNRp1BlvT73UL6gyz" },
+		{ name: "Jessica Anne Bogart - VO Pro", id: "lxYfHSkYm1EzQzGhdbfc" },
+		{ name: "Jessica - Playful, Warm", id: "cgSgspJ2msm6clMCkdW9" },
+		{ name: "Sarah - Mature, Confident", id: "EXAVITQu4vr4xnSDxMaL" },
+		{ name: "Alice - Clear Educator", id: "Xb7hH8MSUJpSbSDYk0k2" },
+		{ name: "Bella - Professional, Warm", id: "hpp4J3VqNfWAUOO0d1Us" },
+		{ name: "Lily - Velvety Actress", id: "pFZP5JQG7iQjIQuC4Bku" },
+		{ name: "Adam - Dominant, Firm", id: "pNInz6obpgDQGcFmaJgB" },
 	],
 };
 
