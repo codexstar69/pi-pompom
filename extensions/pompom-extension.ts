@@ -1808,10 +1808,10 @@ export default function (pi: ExtensionAPI) {
 				{
 					overlay: true,
 					overlayOptions: {
-						width: "85%" as any,
-						maxHeight: "35%" as any,
-						anchor: "top-center" as any,
-						margin: { top: 1, left: 2, right: 2 } as any,
+						width: "92%" as any,
+						maxHeight: "60%" as any,
+						anchor: "center" as any,
+						margin: { top: 0, left: 1, right: 1 } as any,
 						nonCapturing: true,
 					},
 					onHandle: (handle: any) => {

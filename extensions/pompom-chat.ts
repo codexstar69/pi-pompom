@@ -325,17 +325,20 @@ export class PompomChatOverlay implements Component, Focusable {
 		const bc = this._focused ? "border" : "borderMuted";
 		const bw = Math.max(0, width - 2);
 
-		// Header
+		// Themed header — rounded corners, kawaii face, sparkle when streaming
 		const pompomFace = theme.fg("success", "(o") + theme.fg("warning", "'") + theme.fg("success", "o)");
-		const title = this._focused ? pompomFace + " " + theme.fg("accent", "Pompom Chat") : theme.fg("dim", "(o'o) Pompom Chat");
-		const stream = this.isStreaming ? theme.fg("warning", " " + SPINNER[this.spinnerFrame]) : "";
-		const status = this.toolStatus ? theme.fg("dim", " [" + this.toolStatus + "]") : "";
-		lines.push(theme.fg(bc, "\u250c" + "\u2500".repeat(bw) + "\u2510"));
-		lines.push(this.frameLine(title + stream + status, innerWidth));
+		const sparkle = this.isStreaming ? theme.fg("warning", " " + SPINNER[this.spinnerFrame]) : theme.fg("dim", " \u2727");
+		const title = this._focused
+			? pompomFace + " " + theme.fg("accent", "Pompom Chat") + sparkle
+			: theme.fg("dim", "(o'o) Pompom Chat");
+		const status = this.toolStatus ? theme.fg("dim", " \u2022 " + this.toolStatus) : "";
+		lines.push(theme.fg(bc, "\u256d" + "\u2500".repeat(bw) + "\u256e"));
+		lines.push(this.frameLine(title + status, innerWidth));
+		lines.push(this.frameLine("", innerWidth));
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(bw) + "\u2524"));
 
-		// Messages — fixed height region (match pi-side-chat: 35% of terminal minus chrome)
-		const maxLines = Math.max(3, Math.floor(this.opts.tui.terminal.rows * 0.35) - 10);
+		// Messages — responsive: use 55% of terminal height, minimum 6 lines
+		const maxLines = Math.max(6, Math.floor(this.opts.tui.terminal.rows * 0.55) - 8);
 
 		// Build wrapped message lines
 		const allMsgLines: string[] = [];
@@ -363,13 +366,13 @@ export class PompomChatOverlay implements Component, Focusable {
 			lines.push(this.frameLine(editorLine, innerWidth));
 		}
 
-		// Footer
+		// Footer — rounded bottom corners, kawaii hints
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(bw) + "\u2524"));
 		const hints = this._focused
-			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + " \u00b7 Enter send \u00b7 " + this.opts.shortcut + " unfocus \u00b7 help for commands")
+			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + "  \u2022  Enter send  \u2022  " + this.opts.shortcut + " unfocus  \u2022  type help")
 			: theme.fg("dim", this.opts.shortcut + " \u2192 focus");
 		lines.push(this.frameLine(hints, innerWidth));
-		lines.push(theme.fg(bc, "\u2514" + "\u2500".repeat(bw) + "\u2518"));
+		lines.push(theme.fg(bc, "\u2570" + "\u2500".repeat(bw) + "\u256f"));
 
 		return lines.map(l => visibleWidth(l) > width ? truncateToWidth(l, width) : l);
 	}
