@@ -15,6 +15,25 @@ import os from "node:os";
 import path from "node:path";
 import type { Weather } from "./pompom";
 
+// ─── Cross-platform audio player detection ──────────────────────────────────
+
+type AmbientPlayer = "afplay" | "paplay" | "aplay" | null;
+let detectedAmbientPlayer: AmbientPlayer = null;
+
+function detectAmbientPlayer(): AmbientPlayer {
+	try {
+		if (process.platform === "darwin") {
+			childProcess.execSync("which afplay", { stdio: "ignore" });
+			return "afplay";
+		}
+		if (process.platform === "linux") {
+			try { childProcess.execSync("which paplay", { stdio: "ignore" }); return "paplay"; } catch { /* not found */ }
+			try { childProcess.execSync("which aplay", { stdio: "ignore" }); return "aplay"; } catch { /* not found */ }
+		}
+	} catch { /* detection failed */ }
+	return null;
+}
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const AMBIENT_DIR = path.join(os.homedir(), ".pi", "pompom", "ambient");
@@ -207,20 +226,32 @@ function startPlayback(weather: Weather): void {
 
 	stopCurrent();
 
-	if (process.platform !== "darwin") {
-		console.error("[pompom-ambient] Looping playback only supported on macOS (afplay)");
+	if (!detectedAmbientPlayer) {
+		console.error("[pompom-ambient] No supported audio player found (afplay/paplay/aplay)");
 		return;
 	}
 
 	let spawnRetries = 0; // reset on each new startPlayback call
 
-	// afplay doesn't support -l (loop) on modern macOS — loop manually by restarting on close
+	// Loop manually by restarting on close (afplay/paplay/aplay don't all support -l)
 	function spawnPlayer(): childProcess.ChildProcess {
-		const vol = effectiveVolume().toFixed(2);
-		const child = childProcess.spawn("afplay", ["-v", vol, file], {
-			stdio: "ignore",
-			detached: false,
-		});
+		const volFloat = effectiveVolume();
+		const vol = volFloat.toFixed(2);
+		let child: childProcess.ChildProcess;
+		switch (detectedAmbientPlayer) {
+			case "afplay":
+				child = childProcess.spawn("afplay", ["-v", vol, file], { stdio: "ignore", detached: false });
+				break;
+			case "paplay":
+				child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), file], { stdio: "ignore", detached: false });
+				break;
+			case "aplay":
+				child = childProcess.spawn("aplay", [file], { stdio: "ignore", detached: false });
+				break;
+			default:
+				// Should not reach here since we check detectedAmbientPlayer above
+				return childProcess.spawn("true", [], { stdio: "ignore" });
+		}
 
 		child.on("error", (err) => {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -266,6 +297,7 @@ function restartWithVolume(): void {
 export function initAmbient(isInteractive: boolean): void {
 	interactive = isInteractive;
 	config = loadConfig();
+	detectedAmbientPlayer = detectAmbientPlayer();
 	// Ensure custom directory exists so users know where to drop files
 	try { fs.mkdirSync(CUSTOM_DIR, { recursive: true }); } catch { /* non-fatal */ }
 	sfxLastPlayedAt.clear();
@@ -573,15 +605,26 @@ async function ensureSfx(name: SfxName): Promise<string | null> {
 }
 
 function playSfxFile(filePath: string): boolean {
-	if (process.platform !== "darwin") return false;
+	if (!detectedAmbientPlayer) return false;
 	// Don't interrupt another SFX that's playing
 	if (sfxProcess) return false;
 
-	const vol = Math.max(0.05, config.volume / 100 * 0.15).toFixed(2); // SFX at ~15% of ambient volume — barely-there accents, never distracting
-	const child = childProcess.spawn("afplay", ["-v", vol, filePath], {
-		stdio: "ignore",
-		detached: false,
-	});
+	const volFloat = Math.max(0.05, config.volume / 100 * 0.15); // SFX at ~15% of ambient volume — barely-there accents, never distracting
+	const vol = volFloat.toFixed(2);
+	let child: childProcess.ChildProcess;
+	switch (detectedAmbientPlayer) {
+		case "afplay":
+			child = childProcess.spawn("afplay", ["-v", vol, filePath], { stdio: "ignore", detached: false });
+			break;
+		case "paplay":
+			child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), filePath], { stdio: "ignore", detached: false });
+			break;
+		case "aplay":
+			child = childProcess.spawn("aplay", [filePath], { stdio: "ignore", detached: false });
+			break;
+		default:
+			return false;
+	}
 	sfxProcess = child;
 	child.on("close", () => { if (sfxProcess === child) sfxProcess = null; });
 	child.on("error", (err) => {

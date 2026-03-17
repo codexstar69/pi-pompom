@@ -332,6 +332,9 @@ let lastSpokenText = "";
 let lastEmotionalReactionAt = 0;
 const EMOTIONAL_REACTION_COOLDOWN_MS = 45000;
 let currentState: State = "idle";
+let lastIdleWalkAt = 0;
+let lastIdleFlipAt = 0;
+let lastIdleChaseAt = 0;
 let gameScore = 0;
 let gameStars: {x: number, y: number, vy: number, caught: boolean}[] = [];
 let gameActive = false;
@@ -1760,18 +1763,20 @@ function updatePhysics(dt: number) {
 			const fetchLines = ["[excited] Ball! I got it I got it!", "[excited] Ooh, ball incoming!", "[happy] Here I come!", "[excited] Mine mine mine!"];
 			say(fetchLines[Math.floor(Math.random() * fetchLines.length)], 2.0, "reaction", 2, true);
 		}
-		else if (Math.random() < 0.005 && !isTalking) {
+		else if (now - lastIdleWalkAt > 60000 && Math.random() < 0.01 && !isTalking) {
+			lastIdleWalkAt = now;
 			if (Math.random() < 0.15) targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); // occasional sneaky walk — stays 20-30% visible
 			else targetX = (Math.random() - 0.5) * (getScreenEdgeX() * 0.6);
 			currentState = "walk"; isWalking = true;
 		}
-		else if (Math.random() < 0.003) {
+		else if (now - lastIdleFlipAt > 120000 && Math.random() < 0.005) {
+			lastIdleFlipAt = now;
 			currentState = "flip"; isFlipping = true; flipPhase = 0;
 			const flipLines = ["[excited] Wheee!", "[laughs] Watch this!", "[excited] Flip time!", "[happy] Boing!"];
 			say(flipLines[Math.floor(Math.random() * flipLines.length)], 4.0, "reaction", 1, true);
 			emitSfx("flip_whoosh");
 		}
-		else if (Math.random() < 0.002) { currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
+		else if (now - lastIdleChaseAt > 120000 && Math.random() < 0.005) { lastIdleChaseAt = now; currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
 			// Only pick idle speech when in a non-negative state
 			const nowMs = Date.now();
@@ -2498,6 +2503,7 @@ export function resetPompom() {
 	weatherAccessoryTimers.length = 0;
 	time = 0; currentState = "idle"; blinkFade = 0; actionTimer = 0;
 	speechTimer = 0; speechText = ""; lastFootstepTime = 0; lastEmotionalReactionAt = 0;
+	lastIdleWalkAt = 0; lastIdleFlipAt = 0; lastIdleChaseAt = 0;
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;
 	isWalking = false; isFlipping = false; isSleeping = false; isTalking = false;
 	talkAudioLevel = 0; flipPhase = 0;
