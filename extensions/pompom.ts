@@ -196,6 +196,7 @@ const SESSION_MILESTONES: { minutes: number; line: string }[] = [
 
 // ─── Character Bible: Singing repertoire ────────────────────────────────────
 const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEnergy: number }> = [
+	// Classic Pompom tunes
 	{ text: "[sings] La la la, la la la!", allowedStates: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
 	{ text: "[sings] Pom pom pom, I'm a happy Pompom!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
 	{ text: "[sings] Tra la la, coding all day!", allowedStates: ["happy", "blissful", "content", "playful"], minEnergy: 40 },
@@ -207,6 +208,29 @@ const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEner
 	{ text: "[sings] Da dum, da dum...", allowedStates: ["content", "happy"], minEnergy: 30 },
 	{ text: "[sings] Food glorious food!", allowedStates: ["recovering"], minEnergy: 30 },
 	{ text: "[sings] Happy tummy happy me!", allowedStates: ["recovering"], minEnergy: 30 },
+	// Cartoon & animated character style
+	{ text: "[sings] Doo bee doo bee doo bah, doo bee doo bee doo bah!", allowedStates: ["happy", "playful", "content"], minEnergy: 40 },
+	{ text: "[sings] Zip-a-dee-doo-dah, zip-a-dee-ay!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: "[sings] Bee-do bee-do bee-do!", allowedStates: ["playful", "happy"], minEnergy: 50 },
+	{ text: "[sings] Ba-da ba ba baa, I'm lovin' it!", allowedStates: ["happy", "blissful", "recovering"], minEnergy: 40 },
+	{ text: "[sings] Who lives in a terminal under the screen? Pom-pom Fluff-pants!", allowedStates: ["playful", "happy", "blissful"], minEnergy: 50 },
+	{ text: "[sings] Let it code, let it code, let it code!", allowedStates: ["happy", "blissful", "content"], minEnergy: 40 },
+	{ text: "[sings] Under the terminal, under the screen, darling it's better, where functions are clean!", allowedStates: ["happy", "blissful"], minEnergy: 50 },
+	{ text: "[sings] I'm walking on sunshine, whoa-oh!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 60 },
+	{ text: "[sings] Hakuna matata, what a wonderful phrase!", allowedStates: ["content", "happy", "playful"], minEnergy: 40 },
+	{ text: "[sings] Just keep coding, just keep coding!", allowedStates: ["content", "happy", "recovering"], minEnergy: 30 },
+	{ text: "[sings] Supercalifragilistic-expiali-code-ious!", allowedStates: ["playful", "happy", "blissful"], minEnergy: 50 },
+	{ text: "[sings] Doo doo doo doo, baby Pompom!", allowedStates: ["playful", "happy"], minEnergy: 40 },
+	// Humming & chill vibes
+	{ text: "[sings] Mmm bop, ba duba dop...", allowedStates: ["content", "happy"], minEnergy: 30 },
+	{ text: "[sings] Na na na na, na na na na, hey hey hey, goodbye bugs!", allowedStates: ["happy", "playful"], minEnergy: 40 },
+	{ text: "[sings] Shooby dooby doo wop...", allowedStates: ["content", "recovering"], minEnergy: 20 },
+	{ text: "[sings] Dum dee dum dee dum...", allowedStates: ["content", "happy", "recovering"], minEnergy: 20 },
+	{ text: "[sings] Oh, what a beautiful morning, oh what a beautiful code!", allowedStates: ["happy", "blissful", "content"], minEnergy: 40 },
+	// Sleepy/tired songs
+	{ text: "[sings] Twinkle twinkle little star, how I wonder what bugs are...", allowedStates: ["content", "recovering"], minEnergy: 20 },
+	{ text: "[sings] Rock-a-bye Pompom, in the terminal... when the code builds, the tests will all pass...", allowedStates: ["recovering", "content"], minEnergy: 20 },
+	{ text: "[sings] Somewhere over the rainbow, code runs clean...", allowedStates: ["content", "happy", "blissful"], minEnergy: 30 },
 ];
 
 // ─── Character Bible: Time-of-day awareness ──────────────────────────────────
@@ -371,6 +395,29 @@ const weatherAccessoryTimers: ReturnType<typeof setTimeout>[] = [];
 // ─── Dedup Ring Buffer ──────────────────────────────────────────────────────
 const spokenRing: string[] = [];
 const RING_SIZE = 20;
+
+// ─── Cross-Session Greeting Dedup ──────────────────────────────────────────
+// Persists last 5 greetings so reopening Pi never picks the same line
+const LAST_GREETINGS_FILE = path.join(os.homedir(), ".pi", "pompom", "last-greetings.json");
+let lastGreetingTexts: string[] = [];
+try {
+	if (fs.existsSync(LAST_GREETINGS_FILE)) {
+		const data = JSON.parse(fs.readFileSync(LAST_GREETINGS_FILE, "utf-8"));
+		if (Array.isArray(data)) lastGreetingTexts = data.filter((s: unknown) => typeof s === "string").slice(-5);
+	}
+} catch { /* non-fatal */ }
+
+function recordGreetingText(text: string): void {
+	lastGreetingTexts.push(text);
+	if (lastGreetingTexts.length > 5) lastGreetingTexts.shift();
+	try {
+		const dir = path.dirname(LAST_GREETINGS_FILE);
+		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+		const tmp = LAST_GREETINGS_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, JSON.stringify(lastGreetingTexts), "utf-8");
+		fs.renameSync(tmp, LAST_GREETINGS_FILE);
+	} catch { /* non-fatal */ }
+}
 
 // ─── Session Tracking ───────────────────────────────────────────────────────
 const STATS_FILE = path.join(os.homedir(), ".pi", "pompom", "stats.json");
@@ -1416,9 +1463,24 @@ function resolveAndSpeak(now: number): void {
 				if (l.firstSession && firstSessionGreetingDone) return false;
 				if (l.firstSession && sessionCount !== 1) return false;
 				if (!l.firstSession && sessionCount === 1 && TIME_AWARENESS_LINES.some(fl => fl.firstSession && fl.timeOfDay.includes(tod))) return false;
+				if (lastGreetingTexts.includes(l.text)) return false;
 				return true;
 			});
-			const timeLine = timeCandidates.length > 0 ? timeCandidates[Math.floor(Math.random() * timeCandidates.length)] : undefined;
+			let finalTimeCandidates = timeCandidates;
+			if (finalTimeCandidates.length === 0 && lastGreetingTexts.length > 0) {
+				lastGreetingTexts.length = 0;
+				finalTimeCandidates = TIME_AWARENESS_LINES.filter(l => {
+					if (!l.timeOfDay.includes(tod)) return false;
+					if (l.oncePerPeriod && announcedTimePeriods.has(tod)) return false;
+					if (!isSpeechAllowed(state, "care_for_user")) return false;
+					if (l.minSessionMinutes && sessionMin < l.minSessionMinutes) return false;
+					if (l.firstSession && firstSessionGreetingDone) return false;
+					if (l.firstSession && sessionCount !== 1) return false;
+					if (!l.firstSession && sessionCount === 1 && TIME_AWARENESS_LINES.some(fl => fl.firstSession && fl.timeOfDay.includes(tod))) return false;
+					return true;
+				});
+			}
+			const timeLine = finalTimeCandidates.length > 0 ? finalTimeCandidates[Math.floor(Math.random() * finalTimeCandidates.length)] : undefined;
 			if (timeLine && speechTimer <= 0) {
 				const others = getOtherInstances();
 				if (others.length > 0 && !timeLine.firstSession) {
@@ -1431,6 +1493,7 @@ function resolveAndSpeak(now: number): void {
 						.replace("{count}", String(others.length + 1));
 					lastSpokenText = greetText;
 					say(greetText, 4.0, "commentary", 2, true);
+					recordGreetingText(greetText);
 					return;
 				}
 				// First/only terminal — claim the greeting slot
@@ -1441,6 +1504,7 @@ function resolveAndSpeak(now: number): void {
 					if (timeLine.firstSession) firstSessionGreetingDone = true;
 					lastSpokenText = timeLine.text;
 					say(timeLine.text, 4.0, "commentary", 2, true);
+					recordGreetingText(timeLine.text);
 					return;
 				}
 			}
