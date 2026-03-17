@@ -424,20 +424,11 @@ export class PompomChatOverlay implements Component, Focusable {
 			}
 			if (matchesKey(data, this.opts.shortcut as any)) { this.opts.onUnfocus(); return; }
 			if (matchesKey(data, Key.alt("up")) || matchesKey(data, "pageUp" as any)) {
-				this.scrollOffset = Math.min(this.scrollOffset + 3, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
+				this.scrollOffset = Math.min(this.scrollOffset + 5, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
 				this.opts.tui.requestRender(); return;
 			}
 			if (matchesKey(data, Key.alt("down")) || matchesKey(data, "pageDown" as any)) {
-				this.scrollOffset = Math.max(0, this.scrollOffset - 3);
-				this.opts.tui.requestRender(); return;
-			}
-			// Plain Up/Down arrows — Up always initiates/continues scroll, Down only when scrolled
-			if (matchesKey(data, Key.up) && this.lastTotalMsgLines > this.lastMaxLines) {
-				this.scrollOffset = Math.min(this.scrollOffset + 1, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
-				this.opts.tui.requestRender(); return;
-			}
-			if (matchesKey(data, Key.down) && this.scrollOffset > 0) {
-				this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+				this.scrollOffset = Math.max(0, this.scrollOffset - 5);
 				this.opts.tui.requestRender(); return;
 			}
 			this.editor.handleInput(data);
@@ -506,7 +497,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(bw) + "\u2524"));
 		const newIndicator = this.scrollOffset > 0 ? theme.fg("warning", "  \u2022  \u2193 new") : "";
 		const hints = this._focused
-			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + "  \u2022  Enter send  \u2022  " + this.opts.shortcut + " unfocus  \u2022  type help") + newIndicator
+			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + "  \u2022  Enter send  \u2022  Alt+\u2191\u2193 scroll  \u2022  " + this.opts.shortcut + " unfocus  \u2022  type help") + newIndicator
 			: theme.fg("dim", this.opts.shortcut + " \u2192 focus");
 		lines.push(this.frameLine(hints, innerWidth));
 		lines.push(theme.fg(bc, "\u2570" + "\u2500".repeat(bw) + "\u256f"));

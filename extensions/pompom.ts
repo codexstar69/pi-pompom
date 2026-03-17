@@ -1419,22 +1419,30 @@ function resolveAndSpeak(now: number): void {
 				return true;
 			});
 			const timeLine = timeCandidates.length > 0 ? timeCandidates[Math.floor(Math.random() * timeCandidates.length)] : undefined;
-			if (timeLine && speechTimer <= 0 && claimGreeting()) {
-				lastTimeOfDayPeriod = tod;
-				announcedTimePeriods.add(tod);
-				lastEmotionalReactionAt = now;
-				if (timeLine.firstSession) firstSessionGreetingDone = true;
-				// If other terminals are running, use a multi-terminal-aware greeting instead
+			if (timeLine && speechTimer <= 0) {
 				const others = getOtherInstances();
-				let greetText = timeLine.text;
 				if (others.length > 0 && !timeLine.firstSession) {
+					// Other terminals running — say a context-aware multi-terminal greeting
+					lastTimeOfDayPeriod = tod;
+					announcedTimePeriods.add(tod);
+					lastEmotionalReactionAt = now;
 					const pool = MULTI_TERMINAL_GREETINGS;
-					greetText = pool[Math.floor(Math.random() * pool.length)]
+					const greetText = pool[Math.floor(Math.random() * pool.length)]
 						.replace("{count}", String(others.length + 1));
+					lastSpokenText = greetText;
+					say(greetText, 4.0, "commentary", 2, true);
+					return;
 				}
-				lastSpokenText = greetText;
-				say(greetText, 4.0, "commentary", 2, true);
-				return;
+				// First/only terminal — claim the greeting slot
+				if (claimGreeting()) {
+					lastTimeOfDayPeriod = tod;
+					announcedTimePeriods.add(tod);
+					lastEmotionalReactionAt = now;
+					if (timeLine.firstSession) firstSessionGreetingDone = true;
+					lastSpokenText = timeLine.text;
+					say(timeLine.text, 4.0, "commentary", 2, true);
+					return;
+				}
 			}
 			// Even if we didn't speak, mark the period so we don't retry every frame
 			lastTimeOfDayPeriod = tod;
