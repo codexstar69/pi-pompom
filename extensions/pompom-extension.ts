@@ -718,7 +718,7 @@ export default function (pi: ExtensionAPI) {
 		if (!ambientConfig.enabled) return;
 		loadedAmbientHintShown = true;
 		setTimeout(() => {
-			if (ctx?.hasUI && process.env.ELEVENLABS_API_KEY) {
+			if (ctx?.hasUI) {
 				ctx.ui.notify(
 					"Ambient sounds are enabled — Pompom will play weather-matching background audio.\n" +
 					"Use /pompom:ambient off to disable, or /pompom:ambient volume 0-100 to adjust.",

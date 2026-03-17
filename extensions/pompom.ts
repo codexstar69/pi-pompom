@@ -2049,7 +2049,7 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 
 	// Sub-step physics for stability
 	const safeDt = Math.min(dt, 0.5);
-	time += dt;
+	time += safeDt; // keep animation clock in sync with clamped physics clock
 	let remaining = safeDt;
 	while (remaining > 0) {
 		const step = Math.min(remaining, PHYSICS_DT);

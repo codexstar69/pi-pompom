@@ -288,7 +288,10 @@ export function setAmbientEnabled(enabled: boolean): void {
 	saveConfig();
 	if (!enabled) {
 		stopCurrent();
+		clearWeatherSfxTimer();
+		if (sfxProcess) { try { sfxProcess.kill("SIGTERM"); } catch { /* dead */ } sfxProcess = null; }
 		currentWeather = null;
+		desiredWeather = null;
 	}
 }
 
@@ -350,9 +353,10 @@ export function unduckAmbient(): void {
 	if (currentProcess) restartWithVolume();
 }
 
-/** Pause ambient (for alt+v hide) — stops audio but remembers weather */
+/** Pause ambient (for alt+v hide) — stops audio and SFX but remembers weather */
 export function pauseAmbient(): void {
 	stopCurrent();
+	clearWeatherSfxTimer();
 }
 
 /** Resume ambient (for alt+v show) — restarts if was playing */
@@ -606,9 +610,10 @@ export async function playSfx(name: SfxName): Promise<void> {
 
 	const file = await ensureSfx(name);
 	if (file) {
+		const playedAt = Date.now(); // capture after ensureSfx to avoid stale cooldown
 		if (playSfxFile(file)) {
-			sfxLastPlayedAt.set(name, now);
-			lastAnySfxAt = now;
+			sfxLastPlayedAt.set(name, playedAt);
+			lastAnySfxAt = playedAt;
 		}
 	}
 }
