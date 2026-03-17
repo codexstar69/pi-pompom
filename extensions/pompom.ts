@@ -204,8 +204,8 @@ const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEner
 	{ text: "[sings] Boop boop be doo!", allowedStates: ["happy", "blissful", "playful"], minEnergy: 50 },
 	{ text: "[sings] Sunshine and rainbows and fluffy clouds too!", allowedStates: ["happy", "blissful"], minEnergy: 60 },
 	{ text: "[sings] I love you, you love me, we're a happy family!", allowedStates: ["blissful", "recovering"], minEnergy: 50 },
-	{ text: "[sings] Hmm hmm hmm...", allowedStates: ["content", "happy", "recovering"], minEnergy: 30 },
-	{ text: "[sings] Da dum, da dum...", allowedStates: ["content", "happy"], minEnergy: 30 },
+	{ text: "[sings] Hmm hmm hmm...", allowedStates: ["content", "happy", "recovering", "bored"], minEnergy: 30 },
+	{ text: "[sings] Da dum, da dum...", allowedStates: ["content", "happy", "bored"], minEnergy: 30 },
 	{ text: "[sings] Food glorious food!", allowedStates: ["recovering"], minEnergy: 30 },
 	{ text: "[sings] Happy tummy happy me!", allowedStates: ["recovering"], minEnergy: 30 },
 	// Cartoon & animated character style
@@ -223,9 +223,9 @@ const SINGING_REPERTOIRE: Array<{ text: string; allowedStates: string[]; minEner
 	{ text: "[sings] Doo doo doo doo, baby Pompom!", allowedStates: ["playful", "happy"], minEnergy: 40 },
 	// Humming & chill vibes
 	{ text: "[sings] Mmm bop, ba duba dop...", allowedStates: ["content", "happy"], minEnergy: 30 },
-	{ text: "[sings] Na na na na, na na na na, hey hey hey, goodbye bugs!", allowedStates: ["happy", "playful"], minEnergy: 40 },
-	{ text: "[sings] Shooby dooby doo wop...", allowedStates: ["content", "recovering"], minEnergy: 20 },
-	{ text: "[sings] Dum dee dum dee dum...", allowedStates: ["content", "happy", "recovering"], minEnergy: 20 },
+	{ text: "[sings] Na na na na, na na na na, hey hey hey, goodbye bugs!", allowedStates: ["happy", "playful", "bored"], minEnergy: 40 },
+	{ text: "[sings] Shooby dooby doo wop...", allowedStates: ["content", "recovering", "bored"], minEnergy: 20 },
+	{ text: "[sings] Dum dee dum dee dum...", allowedStates: ["content", "happy", "recovering", "bored"], minEnergy: 20 },
 	{ text: "[sings] Oh, what a beautiful morning, oh what a beautiful code!", allowedStates: ["happy", "blissful", "content"], minEnergy: 40 },
 	// Sleepy/tired songs
 	{ text: "[sings] Twinkle twinkle little star, how I wonder what bugs are...", allowedStates: ["content", "recovering"], minEnergy: 20 },
@@ -2189,35 +2189,36 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	let stateMsg = "";
 	// When Pompom is actively speaking, show a contextual shortcut hint that matches her words
 	if (speechTimer > 0 && speechText) {
-		const st = speechText.toLowerCase();
+		const cleanSpeech = speechText.replace(/^\[[^\]]+\]\s*/, "");
+		const st = cleanSpeech.toLowerCase();
 		if (st.includes("feed") || st.includes("food") || st.includes("hungry") || st.includes("snack") || st.includes("tummy"))
-			stateMsg = `${speechText}  —  ${mod}e to feed`;
+			stateMsg = `${cleanSpeech}  —  ${mod}e to feed`;
 		else if (st.includes("sleep") || st.includes("tired") || st.includes("nap") || st.includes("rest") || st.includes("eyes open"))
-			stateMsg = `${speechText}  —  ${mod}s to sleep`;
+			stateMsg = `${cleanSpeech}  —  ${mod}s to sleep`;
 		else if (st.includes("ball") || st.includes("play") || st.includes("catch"))
-			stateMsg = `${speechText}  —  ${mod}r to throw ball`;
+			stateMsg = `${cleanSpeech}  —  ${mod}r to throw ball`;
 		else if (st.includes("dance") || st.includes("groove") || st.includes("moves"))
-			stateMsg = `${speechText}  —  ${mod}x to dance`;
+			stateMsg = `${cleanSpeech}  —  ${mod}x to dance`;
 		else if (st.includes("flip") || st.includes("boing"))
-			stateMsg = `${speechText}  —  ${mod}z to flip`;
+			stateMsg = `${cleanSpeech}  —  ${mod}z to flip`;
 		else if (st.includes("treat") || st.includes("perk me up"))
-			stateMsg = `${speechText}  —  ${mod}t for treat`;
+			stateMsg = `${cleanSpeech}  —  ${mod}t for treat`;
 		else if (st.includes("pet") || st.includes("hug") || st.includes("cuddle"))
-			stateMsg = `${speechText}  —  ${mod}p to pet, ${mod}u to hug`;
+			stateMsg = `${cleanSpeech}  —  ${mod}p to pet, ${mod}u to hug`;
 		else if (st.includes("game") || st.includes("stars"))
-			stateMsg = `${speechText}  —  ${mod}g to play game`;
+			stateMsg = `${cleanSpeech}  —  ${mod}g to play game`;
 		else if (st.includes("umbrella"))
-			stateMsg = `${speechText}  —  /pompom give umbrella`;
+			stateMsg = `${cleanSpeech}  —  /pompom give umbrella`;
 		else if (st.includes("scarf"))
-			stateMsg = `${speechText}  —  /pompom give scarf`;
+			stateMsg = `${cleanSpeech}  —  /pompom give scarf`;
 		else if (st.includes("sunglasses"))
-			stateMsg = `${speechText}  —  /pompom give sunglasses`;
+			stateMsg = `${cleanSpeech}  —  /pompom give sunglasses`;
 		else if (st.includes("hat"))
-			stateMsg = `${speechText}  —  /pompom give hat`;
+			stateMsg = `${cleanSpeech}  —  /pompom give hat`;
 		else if (st.includes("music") || st.includes("sing") || st.includes("song"))
-			stateMsg = `${speechText}  —  ${mod}m for music`;
+			stateMsg = `${cleanSpeech}  —  ${mod}m for music`;
 		else
-			stateMsg = speechText; // show speech text as-is even without a shortcut match
+			stateMsg = cleanSpeech; // show speech text as-is even without a shortcut match
 	}
 	else if (hunger < 15) stateMsg = pick([
 		`Pompom's tummy won't stop growling... ${mod}e to feed`,
@@ -2542,7 +2543,6 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "m") {
 		isSleeping = false; currentState = "singing"; actionTimer = 5.0;
-		emitSfx("dance_sparkle");
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
@@ -2552,12 +2552,15 @@ export function pompomKeypress(key: string) {
 			} else if (state === "critical_tired") {
 				say("[whispers] A lullaby maybe...", 3.0, "user_action", 3, true);
 			} else if (state === "tired") {
+				emitSfx("dance_sparkle");
 				say("[sings] Twinkle twinkle... zzz...", 4.0, "user_action", 3, true);
 			} else if (state === "recovering") {
+				emitSfx("dance_sparkle");
 				const recovSongs = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes("recovering") && energy >= s.minEnergy);
 				const song = recovSongs.length > 0 ? recovSongs[Math.floor(Math.random() * recovSongs.length)] : null;
 				say(song ? song.text : "[sings] Food glorious food!", 4.0, "user_action", 3, true);
 			} else {
+				emitSfx("dance_sparkle");
 				const eligible = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes(state) && energy >= s.minEnergy);
 				const song = eligible.length > 0 ? eligible[Math.floor(Math.random() * eligible.length)] : null;
 				say(song ? song.text : "[sings] La la la!", 4.0, "user_action", 3, true);

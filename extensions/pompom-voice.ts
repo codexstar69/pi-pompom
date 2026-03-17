@@ -353,6 +353,8 @@ class KokoroEngine implements TTSEngine {
 		const cacheKey = `${voice}:${text}`;
 		const cached = kokoroCache.get(cacheKey);
 		if (cached) {
+			kokoroCache.delete(cacheKey);
+			kokoroCache.set(cacheKey, cached);
 			return cached;
 		}
 		const synth = await this.getSynth();
@@ -451,7 +453,7 @@ class ElevenLabsEngine implements TTSEngine {
 				text,
 				model_id: "eleven_v3",
 				voice_settings: {
-					stability: 0.35, // Low enough for expressive character voice, high enough to avoid garbled output
+					stability: 0.0, // Must be 0.0 for ElevenLabs v3 audio tag support ([laughs], [sighs], etc.)
 					similarity_boost: 0.75, // Natural clone fidelity without introducing artifacts
 					style: 0.65, // Emotional and animated, but not over-the-top
 					use_speaker_boost: true, // Enhances clarity for small-speaker playback
