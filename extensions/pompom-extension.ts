@@ -1187,9 +1187,7 @@ export default function (pi: ExtensionAPI) {
 		} else {
 			widgetVisible = true;
 			resumeAmbient();
-			if (companionActive) {
-				showCompanion();
-			}
+			showCompanion(); // no guard needed — showCompanion sets companionActive = true internally
 		}
 	}
 
@@ -1662,6 +1660,11 @@ export default function (pi: ExtensionAPI) {
 		description: "AI-powered session analysis — error patterns, approach assessment, recommendations",
 		handler: async (_args, commandContext) => {
 			await runSafely("pompom:analyze", async () => {
+				if (aiCommandInProgress) {
+					commandContext.ui.notify("Pompom is already working on a request. Please wait.", "info");
+					return;
+				}
+				aiCommandInProgress = true;
 				ctx = commandContext;
 				const model = commandContext.model;
 				if (!isModelLike(model)) {
@@ -1729,6 +1732,7 @@ export default function (pi: ExtensionAPI) {
 					pompomSay("Analysis hit a snag.", 3.0, "commentary", 2, true);
 					commandContext.ui.notify("pompom:analyze error - " + msg, "error");
 				} finally {
+					aiCommandInProgress = false;
 					overlayHint = null;
 					overlayHintUntil = 0;
 					applyAgentVisualState();

@@ -575,6 +575,14 @@ function getWeatherAndTime() {
 	gBot = k1.b[1] + factor * (k2.b[1] - k1.b[1]);
 	bBot = k1.b[2] + factor * (k2.b[2] - k1.b[2]);
 
+	// Snapshot old (pre-tint) colors BEFORE applying new weather tinting,
+	// so the blend interpolates from old weather colors to new weather colors
+	if (weather !== lastRenderedWeatherState) {
+		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
+		weatherBlend = 1.0;
+		lastRenderedWeatherState = weather;
+	}
+
 	// Weather tinting — overcast dims the sky, storm darkens further
 	if (weather === "cloudy") {
 		rTop = rTop * 0.7 + 40; gTop = gTop * 0.7 + 40; bTop = bTop * 0.7 + 40;
@@ -588,13 +596,6 @@ function getWeatherAndTime() {
 	} else if (weather === "snow") {
 		rTop = rTop * 0.6 + 60; gTop = gTop * 0.6 + 60; bTop = bTop * 0.6 + 70;
 		rBot = rBot * 0.6 + 60; gBot = gBot * 0.6 + 60; bBot = bBot * 0.6 + 70;
-	}
-
-	if (weather !== lastRenderedWeatherState) {
-		// Snapshot current tinted sky BEFORE applying new weather, so blend starts from correct state
-		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
-		weatherBlend = 1.0;
-		lastRenderedWeatherState = weather;
 	}
 
 	if (weatherBlend > 0) {
@@ -1241,26 +1242,6 @@ function getLinePoolForState(state: EmotionalState): BibleSpeechLine[] {
 
 function resolveAndSpeak(now: number): void {
 	const state = currentEmotionalState;
-
-	// ── A. Return greeting — fired on first speech tick after a long absence ──
-	// Only fires when speech slot is free and the absence was meaningful
-	if (speechTimer <= 0) {
-		const absenceMs = now - lastUserActivityAt;
-		if (absenceMs > 300_000) { // 5+ minutes away
-			if (absenceMs > 28_800_000) { // 8+ hours
-				say("[excited] You're back! I missed you SO much!", 4.0, "user_action", 3, true);
-			} else if (absenceMs > 7_200_000) { // 2+ hours
-				say("[happy] There you are! I was starting to worry!", 4.0, "user_action", 3, true);
-			} else if (absenceMs > 1_800_000) { // 30+ minutes
-				say("[happy] Welcome back! I kept your spot warm!", 4.0, "user_action", 3, true);
-			} else { // 5-30 minutes
-				say("[happy] Oh hey! You're back!", 3.0, "commentary", 2, true);
-			}
-			lastUserActivityAt = now;
-			lastEmotionalReactionAt = now;
-			return;
-		}
-	}
 
 	// ── B. Milestone celebration — checked once per minute ──
 	if (now - lastMilestoneCheckAt > 60_000) {
@@ -2175,7 +2156,18 @@ export function pompomKeypress(key: string) {
 	// Track any interaction for boredom detection
 	lastInteractionAt = nowMs;
 
-	// ─ Return greeting: update lastUserActivityAt on every keypress
+	// ─ Return greeting: check BEFORE updating lastUserActivityAt so we see the stale timestamp
+	const absenceMs = nowMs - lastUserActivityAt;
+	if (absenceMs > 300_000 && speechTimer <= 0) {
+		let greeting = "";
+		if (absenceMs > 28_800_000) greeting = "[excited] You're back! I missed you SO much!";
+		else if (absenceMs > 7_200_000) greeting = "[happy] There you are! I was starting to worry!";
+		else if (absenceMs > 1_800_000) greeting = "[happy] Welcome back! I kept your spot warm!";
+		else greeting = "[happy] Oh hey! You're back!";
+		say(greeting, 4.0, "user_action", 3, true);
+	}
+
+	// ─ Update lastUserActivityAt after the return greeting check
 	lastUserActivityAt = nowMs;
 
 	// ─ Milestone tracking: count every keypress
@@ -2228,10 +2220,10 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "f") {
 		isSleeping = false; currentState = "idle";
-		lastFedAt = nowMs;
 		if (foods.length >= 10) foods.shift(); // remove oldest
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.4, y: -0.8, vy: 0, createdAt: Date.now() });
 		// Food drop reaction — state-aware (eating reaction fires in updatePhysics)
+		// lastFedAt is set when food is actually eaten, not when dropped
 	}
 	else if (key === "b") {
 		isSleeping = false;
@@ -2288,12 +2280,11 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "t") {
 		isSleeping = false; currentState = "excited"; actionTimer = 2.5;
-		lastFedAt = nowMs;
 		if (foods.length >= 10) foods.shift(); // remove oldest
 		foods.push({ x: posX + (Math.random() - 0.5) * 0.3, y: -0.8, vy: 0, createdAt: Date.now() });
 		const state = currentEmotionalState;
 		const wasDesperate = hunger < 20;
-		hunger = Math.min(100, hunger + 30);
+		// Hunger restored when food is eaten (updatePhysics); lastFedAt also set there
 		if (!suppressSpeech) {
 			if (wasDesperate) say("[crying] Oh my gosh... a TREAT! Thank you so much!", 3.0, "user_action", 3, true);
 			else if (state === "recovering") say("[excited] ANOTHER treat? I don't deserve you!", 3.0, "user_action", 3, true);
