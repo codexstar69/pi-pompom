@@ -358,7 +358,8 @@ try {
 	if (!fs.existsSync(statsDir)) fs.mkdirSync(statsDir, { recursive: true });
 	if (fs.existsSync(STATS_FILE)) {
 		const data = JSON.parse(fs.readFileSync(STATS_FILE, "utf-8"));
-		sessionCount = (data.sessionCount || 0) + 1;
+		const raw = data.sessionCount;
+		sessionCount = (typeof raw === "number" && Number.isFinite(raw) && raw >= 1 ? raw : 0) + 1;
 	}
 	const statsTmp = STATS_FILE + ".tmp." + process.pid;
 	fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount }), "utf-8");
@@ -373,6 +374,8 @@ try {
 		fs.renameSync(statsTmp, STATS_FILE);
 	} catch { /* best-effort */ }
 }
+
+let firstSessionGreetingDone = false;
 
 // ─── Contextual Desires State ───────────────────────────────────────────────
 let lastContextualDesireCheckAt = 0;
@@ -1387,6 +1390,7 @@ function resolveAndSpeak(now: number): void {
 				if (l.oncePerPeriod && announcedTimePeriods.has(tod)) return false;
 				if (!isSpeechAllowed(state, "care_for_user")) return false;
 				if (l.minSessionMinutes && sessionMin < l.minSessionMinutes) return false;
+				if (l.firstSession && firstSessionGreetingDone) return false;
 				if (l.firstSession && sessionCount !== 1) return false;
 				if (!l.firstSession && sessionCount === 1 && TIME_AWARENESS_LINES.some(fl => fl.firstSession && fl.timeOfDay.includes(tod))) return false;
 				return true;
@@ -1397,6 +1401,7 @@ function resolveAndSpeak(now: number): void {
 				announcedTimePeriods.add(tod);
 				lastEmotionalReactionAt = now;
 				lastSpokenText = timeLine.text;
+				if (timeLine.firstSession) firstSessionGreetingDone = true;
 				say(timeLine.text, 4.0, "commentary", 2, true);
 				return;
 			}
@@ -2468,6 +2473,7 @@ export function resetPompom() {
 	lastFedAt = 0; lastRestedAt = 0; lastPlayedAt = 0;
 	lastInteractionAt = 0; lastDesireAt = 0;
 	currentEmotionalState = "content";
+	firstSessionGreetingDone = false;
 	lastTimeOfDayPeriod = ""; announcedTimePeriods = new Set<DetailedTimeOfDay>();
 	sessionStartedAt = Date.now(); lastSpokenText = "";
 	// Dopamine reward system variables

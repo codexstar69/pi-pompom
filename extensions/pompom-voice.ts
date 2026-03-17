@@ -134,6 +134,7 @@ let lastSpokenText = "";
 let lastSpeakTime = 0;
 let currentPlayback: childProcess.ChildProcess | null = null;
 let stopRequested = false;
+let consecutiveFailures = 0;
 
 function sanitizeSpeechText(text: string): string {
 	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -525,7 +526,6 @@ async function processQueue(): Promise<void> {
 		return;
 	}
 	isProcessingQueue = true;
-	let consecutiveFailures = 0;
 	try {
 		while (queue.length > 0 && config.enabled && interactive) {
 			if (stopRequested) break;
@@ -565,8 +565,10 @@ async function processQueue(): Promise<void> {
 							timeoutHandle = setTimeout(() => {
 								// Kill the stuck player process on timeout
 								if (currentPlayback) {
-									try { currentPlayback.kill("SIGTERM"); } catch { /* already dead */ }
+									const proc = currentPlayback;
+									try { proc.kill("SIGTERM"); } catch { /* already dead */ }
 									currentPlayback = null;
+									setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* already dead */ } }, 1000);
 								}
 								const err = new Error("Playback timeout");
 								err.name = "TimeoutError";
@@ -604,7 +606,11 @@ async function processQueue(): Promise<void> {
 		isProcessingQueue = false;
 		// Re-check: items may have been enqueued during processing
 		if (queue.length > 0 && config.enabled && interactive && !stopRequested) {
-			processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); });
+			if (consecutiveFailures >= 3 && queue.length > 0) {
+				setTimeout(() => { consecutiveFailures = 0; processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); }); }, 30000);
+			} else {
+				processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); });
+			}
 		}
 	}
 }
@@ -616,6 +622,7 @@ export function initVoice(isInteractive: boolean): void {
 		playbackActive = false;
 		stopRequested = false;
 		isProcessingQueue = false;
+		consecutiveFailures = 0;
 		lastSpeakTime = 0;
 		interactive = isInteractive;
 		config = loadVoiceConfig();
@@ -866,6 +873,7 @@ export function stopPlayback(): void {
 		queue = [];
 		playbackActive = false;
 		stopRequested = true;
+		consecutiveFailures = 0;
 		// Do NOT set isProcessingQueue = false here — let processQueue's own finally handle it.
 		// Setting it here would break mutual exclusion if processQueue is still running.
 		if (agentEndCooldownTimer) { clearTimeout(agentEndCooldownTimer); agentEndCooldownTimer = null; }
