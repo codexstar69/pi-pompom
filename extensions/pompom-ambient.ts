@@ -311,7 +311,6 @@ export async function setAmbientWeather(weather: Weather): Promise<void> {
 	// Process the latest desired weather (iterative, not recursive)
 	while (desiredWeather) {
 		const target: Weather = desiredWeather;
-		currentWeather = target;
 
 		if (!hasAudio(target)) {
 			generating = true;
@@ -326,6 +325,7 @@ export async function setAmbientWeather(weather: Weather): Promise<void> {
 		}
 
 		startPlayback(target);
+		currentWeather = target;
 		break;
 	}
 }

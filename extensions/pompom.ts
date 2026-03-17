@@ -343,6 +343,9 @@ let agentMood = "idle";
 
 let playfulUntil = 0;
 
+// ─── Weather Accessory Timers ────────────────────────────────────────────────
+const weatherAccessoryTimers: ReturnType<typeof setTimeout>[] = [];
+
 // ─── Dedup Ring Buffer ──────────────────────────────────────────────────────
 const spokenRing: string[] = [];
 const RING_SIZE = 20;
@@ -1544,27 +1547,30 @@ function updatePhysics(dt: number) {
 		const weather = weatherState;
 		if (weather === "rain" && !accessories.umbrella && !accessoryAsked.umbrella) {
 			accessoryAsked.umbrella = true;
-			setTimeout(() => {
+			const handle = setTimeout(() => {
 				if (weatherState === "rain" || weatherState === "storm") {
 					say("I wish I had an umbrella... /pompom give umbrella", 5.0, "system", 2, true);
 				}
 			}, 3000);
+			weatherAccessoryTimers.push(handle);
 		}
 		if (weather === "snow" && !accessories.scarf && !accessoryAsked.scarf) {
 			accessoryAsked.scarf = true;
-			setTimeout(() => {
+			const handle = setTimeout(() => {
 				if (weatherState === "snow") {
 					say("Brrr! A scarf would be nice... /pompom give scarf", 5.0, "system", 2, true);
 				}
 			}, 3000);
+			weatherAccessoryTimers.push(handle);
 		}
 		if (weather === "storm" && !accessories.umbrella && !accessoryAsked.umbrella) {
 			accessoryAsked.umbrella = true;
-			setTimeout(() => {
+			const handle = setTimeout(() => {
 				if (weatherState === "storm") {
 					say("This storm is scary! /pompom give umbrella", 5.0, "system", 2, true);
 				}
 			}, 2000);
+			weatherAccessoryTimers.push(handle);
 		}
 	}
 
@@ -2446,6 +2452,8 @@ export function pompomKeypress(key: string) {
 
 /** Reset companion state */
 export function resetPompom() {
+	for (const h of weatherAccessoryTimers) clearTimeout(h);
+	weatherAccessoryTimers.length = 0;
 	time = 0; currentState = "idle"; blinkFade = 0; actionTimer = 0;
 	speechTimer = 0; speechText = ""; lastFootstepTime = 0; lastEmotionalReactionAt = 0;
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;

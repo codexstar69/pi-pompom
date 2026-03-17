@@ -608,6 +608,12 @@ async function processQueue(): Promise<void> {
 
 export function initVoice(isInteractive: boolean): void {
 	try {
+		stopPlayback(); // kills player, clears queue, sets stopRequested
+		queue = [];
+		playbackActive = false;
+		stopRequested = false;
+		isProcessingQueue = false;
+		lastSpeakTime = 0;
 		interactive = isInteractive;
 		config = loadVoiceConfig();
 		detectedPlayer = detectPlayer();

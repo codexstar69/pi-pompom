@@ -503,6 +503,7 @@ export default function (pi: ExtensionAPI) {
 	// ─── AI-Generated Dynamic Speech ─────────────────────────────────────
 	let aiSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 	let aiSpeechCount = 0;
+	let sessionStartMs = 0;
 	const AI_SPEECH_MAX = 8;
 	const aiSpeechHistory: string[] = []; // last 10 AI-generated lines for dedup
 
@@ -552,8 +553,7 @@ export default function (pi: ExtensionAPI) {
 			const activeTools = getActiveToolDetails();
 			const hour = new Date().getHours();
 			const timeOfDay = hour < 6 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
-			const sessionStart = stats.lastEventAt > 0 ? stats.lastEventAt : Date.now();
-			const sessionMinutes = Math.round((Date.now() - sessionStart) / 60000);
+			const sessionMinutes = sessionStartMs > 0 ? Math.round((Date.now() - sessionStartMs) / 60000) : 0;
 			const toolDesc = activeTools.length > 0
 				? activeTools.map(t => t.toolName).join(", ")
 				: "idle";
@@ -677,10 +677,10 @@ export default function (pi: ExtensionAPI) {
 
 	function enablePompom(commandContext: ExtensionContext) {
 		enabled = true;
-		setVoiceEnabled(true);
+		setVoiceEnabled(getVoiceConfig().enabled);
 		// Only primary instance enables ambient audio to prevent duplicate sounds
 		if (isPrimaryInstance()) {
-			setAmbientEnabled(true);
+			setAmbientEnabled(getAmbientConfig().enabled);
 		}
 		showCompanion();
 		setupKeyHandler();
@@ -1076,6 +1076,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, startCtx) => {
 		await runSafely("session_start", async () => {
 			ctx = startCtx;
+			sessionStartMs = Date.now();
 			loadedVoiceHintShown = false;
 			registerInstance(startCtx.cwd);
 			initVoice(Boolean(startCtx.hasUI));
@@ -1114,6 +1115,8 @@ export default function (pi: ExtensionAPI) {
 			stopAmbient();
 			stopAmbientWeatherSync();
 			stopAiSpeech();
+			aiSpeechCount = 0;
+			sessionStartMs = 0;
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			pompomOnSpeech(null);
@@ -1138,6 +1141,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			stopAiSpeech();
 			aiSpeechCount = 0;
+			sessionStartMs = Date.now();
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			hideCompanion();
@@ -1821,11 +1825,13 @@ export default function (pi: ExtensionAPI) {
 				ctx = commandContext;
 				const model = commandContext.model;
 				if (!isModelLike(model)) {
+					aiCommandInProgress = false;
 					commandContext.ui.notify("No model selected.", "error");
 					return;
 				}
 				const apiKey = await commandContext.modelRegistry.getApiKey(model);
 				if (!apiKey) {
+					aiCommandInProgress = false;
 					commandContext.ui.notify("No API key for " + model.provider + "/" + model.id, "error");
 					return;
 				}
