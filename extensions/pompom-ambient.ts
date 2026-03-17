@@ -587,10 +587,14 @@ function playSfxFile(filePath: string): boolean {
 	return true;
 }
 
+/** Set by the extension when mic/voice input is active — suppresses all SFX */
+let micSilenced = false;
+export function setMicSilence(active: boolean): void { micSilenced = active; }
+
 /** Play a one-shot sound effect by name. Generates on first use.
  *  Respects per-SFX cooldown (8s) and global gap (3s) to prevent fatigue. */
 export async function playSfx(name: SfxName): Promise<void> {
-	if (!config.enabled || !interactive) return;
+	if (!config.enabled || !interactive || micSilenced) return;
 	const now = Date.now();
 
 	// Global gap — no SFX back-to-back

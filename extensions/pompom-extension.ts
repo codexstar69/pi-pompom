@@ -76,6 +76,7 @@ import {
 	startWeatherSfx,
 	stopWeatherSfx,
 	pregenerateSfx,
+	setMicSilence,
 	type SfxName,
 } from "./pompom-ambient";
 import {
@@ -88,6 +89,7 @@ import {
 	initVoice,
 	isPlayingTTS,
 	getPompomModel,
+	setMicRecording,
 	setVoiceEnabled,
 	setVoiceEngine,
 	setAgentBusy,
@@ -769,11 +771,25 @@ export default function (pi: ExtensionAPI) {
 		if (voiceCheckTimer) {
 			clearInterval(voiceCheckTimer);
 		}
+		let wasMicActive = false;
 		voiceCheckTimer = setInterval(() => {
 			const piListen = getPiListenState();
 			const isRecording = piListen.recording === true;
 			const isPlaying = isPlayingTTS();
 			pompomSetTalking(isRecording || isPlaying);
+
+			// Auto-silence Pompom when mic/voice input is active (pi listen, pi voice, etc.)
+			if (isRecording && !wasMicActive) {
+				wasMicActive = true;
+				setMicRecording(true);   // suppresses TTS + stops current playback
+				setMicSilence(true);     // suppresses SFX
+				duckAmbient();           // lower ambient volume
+			} else if (!isRecording && wasMicActive) {
+				wasMicActive = false;
+				setMicRecording(false);
+				setMicSilence(false);
+				unduckAmbient();
+			}
 
 			if (isPlaying) {
 				pompomSetTalkAudioLevel(getTTSAudioLevel());

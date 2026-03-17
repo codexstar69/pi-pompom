@@ -125,6 +125,7 @@ let config: VoiceConfig = loadVoiceConfig();
 let interactive = false;
 let detectedPlayer: AudioPlayer | null = null;
 let agentBusy = false;
+let micRecording = false;
 let agentEndCooldownTimer: ReturnType<typeof setTimeout> | null = null;
 let queue: SpeechEvent[] = [];
 let isProcessingQueue = false;
@@ -636,6 +637,19 @@ export function initVoice(isInteractive: boolean): void {
 	}
 }
 
+/** Set mic recording state — when true, all TTS is suppressed to avoid audio conflict */
+export function setMicRecording(active: boolean): void {
+	micRecording = active;
+	// If mic just activated while TTS is playing, stop playback immediately
+	if (active && playbackActive) {
+		stopPlayback();
+	}
+}
+
+export function isMicRecording(): boolean {
+	return micRecording;
+}
+
 export function setAgentBusy(busy: boolean): void {
 	agentBusy = busy;
 	if (busy) {
@@ -682,6 +696,10 @@ export function setVoice(voice: string): void {
 export function enqueueSpeech(event: SpeechEvent): void {
 	try {
 		if (!config.enabled || !interactive || !event.allowTts) {
+			return;
+		}
+		// Silence TTS when mic/voice input is active to avoid audio conflicts
+		if (micRecording) {
 			return;
 		}
 		// Clear stop flag — only high-priority speech should re-enable after a stop
