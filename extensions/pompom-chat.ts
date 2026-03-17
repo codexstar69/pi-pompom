@@ -250,6 +250,11 @@ export class PompomChatOverlay implements Component, Focusable {
 		// Dispose current agent
 		if (this.agentUnsub) { this.agentUnsub(); this.agentUnsub = null; }
 		this.agent.abort();
+		this.isStreaming = false;
+		this.streamingText = "";
+		this.toolStatus = "";
+		this.errorText = "";
+		this.stopSpinner();
 
 		// Create new agent with appropriate tools
 		const tools = enabled
@@ -299,7 +304,7 @@ export class PompomChatOverlay implements Component, Focusable {
 
 		const promptIndex = this.agent.state.messages.length; // index where user msg will appear
 		this.userInputTexts.set(promptIndex, trimmed);
-		const wasAtBottom = this.scrollOffset <= 1;
+		const wasAtBottom = this.scrollOffset === 0;
 		this.displayMessages.push({ role: "user", text: trimmed });
 		this.isStreaming = true;
 		this.streamingText = "";
@@ -396,8 +401,11 @@ export class PompomChatOverlay implements Component, Focusable {
 	handleInput(data: string): void {
 		try {
 			if (matchesKey(data, Key.escape)) {
-				if (this.isStreaming) this.agent.abort();
-				else this.dispose();
+				if (this.isStreaming) {
+					this.agent.abort();
+					this.isStreaming = false;
+					this.stopSpinner();
+				} else this.dispose();
 				return;
 			}
 			if (matchesKey(data, this.opts.shortcut as any)) { this.opts.onUnfocus(); return; }
@@ -500,7 +508,9 @@ export class PompomChatOverlay implements Component, Focusable {
 		try {
 			const dir = path.dirname(CHAT_HISTORY_FILE);
 			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-			const rawCapped = this.displayMessages.slice(-CHAT_HISTORY_MAX);
+			// Skip welcome greeting (index 0) and only persist user/pompom exchange messages
+			const toSave = this.displayMessages.slice(1).filter(m => m.role === "user" || m.role === "pompom");
+			const rawCapped = toSave.slice(-CHAT_HISTORY_MAX);
 			// Trim to even number to keep user+pompom pairs together
 			const capped = rawCapped.length % 2 === 0 ? rawCapped : rawCapped.slice(1);
 			const data = JSON.stringify({ v: 1, messages: capped }, null, 2);

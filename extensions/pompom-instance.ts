@@ -86,6 +86,7 @@ function instancePath(id: string): string {
 
 /** Register this instance and start heartbeat. Call on session_start. */
 export function registerInstance(cwd: string): void {
+	if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 	ensureDir(INSTANCES_DIR);
 	startedAt = Date.now();
 	writeHeartbeat(cwd);

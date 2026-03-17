@@ -361,7 +361,14 @@ try {
 	fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount }), "utf-8");
 	fs.renameSync(statsTmp, STATS_FILE);
 } catch {
-	// Stats file read/write failure — non-fatal, default to session 1
+	// Stats file read/write failure — write fresh stats so next launch sees sessionCount=2
+	try {
+		const statsDir = path.dirname(STATS_FILE);
+		if (!fs.existsSync(statsDir)) fs.mkdirSync(statsDir, { recursive: true });
+		const statsTmp = STATS_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount: 1 }), "utf-8");
+		fs.renameSync(statsTmp, STATS_FILE);
+	} catch { /* best-effort */ }
 }
 
 // ─── Contextual Desires State ───────────────────────────────────────────────
@@ -1370,7 +1377,7 @@ function resolveAndSpeak(now: number): void {
 		const tod = getDetailedTimeOfDay();
 		if (tod !== lastTimeOfDayPeriod) {
 			const sessionMin = (now - sessionStartedAt) / 60_000;
-			const timeLine = TIME_AWARENESS_LINES.find(l => {
+			const timeCandidates = TIME_AWARENESS_LINES.filter(l => {
 				if (!l.timeOfDay.includes(tod)) return false;
 				if (l.oncePerPeriod && announcedTimePeriods.has(tod)) return false;
 				if (!isSpeechAllowed(state, "care_for_user")) return false;
@@ -1379,6 +1386,7 @@ function resolveAndSpeak(now: number): void {
 				if (!l.firstSession && sessionCount === 1 && TIME_AWARENESS_LINES.some(fl => fl.firstSession && fl.timeOfDay.includes(tod))) return false;
 				return true;
 			});
+			const timeLine = timeCandidates.length > 0 ? timeCandidates[Math.floor(Math.random() * timeCandidates.length)] : undefined;
 			if (timeLine && speechTimer <= 0 && claimGreeting()) {
 				lastTimeOfDayPeriod = tod;
 				announcedTimePeriods.add(tod);
@@ -1446,8 +1454,6 @@ function resolveAndSpeak(now: number): void {
 			try { return d.condition(); } catch { return false; }
 		});
 		if (eligible.length > 0) {
-			// Clear ring if pool is too small to avoid deadlock
-			if (eligible.length <= RING_SIZE) spokenRing.length = 0;
 			const picked = eligible[Math.floor(Math.random() * eligible.length)];
 			contextualDesireCooldowns[picked.cooldownKey] = now;
 			lastEmotionalReactionAt = now;

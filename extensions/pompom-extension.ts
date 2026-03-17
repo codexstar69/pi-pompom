@@ -561,16 +561,15 @@ export default function (pi: ExtensionAPI) {
 			const systemPrompt = "You are Pompom, a small fluffy pink coding companion. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, and natural \u2014 never generic.";
 			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min`;
 
-			let aborted = false;
 			const response = await Promise.race([
 				completeSimple(
 					model as any,
 					{ messages: [createUserMessage(userPrompt)], systemPrompt },
 					{ apiKey },
 				),
-				new Promise<null>((_, reject) => setTimeout(() => { aborted = true; reject(new Error("timeout")); }, 3000)),
+				new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
 			]);
-			if (aborted || !response) return null;
+			if (!response) return null;
 			const text = extractTextContent((response as any).content);
 			if (!text || text.length < 3) return null;
 			return sanitizeAscii(text.slice(0, 140));
@@ -686,10 +685,12 @@ export default function (pi: ExtensionAPI) {
 		showCompanion();
 		setupKeyHandler();
 		startAmbientWeatherSync();
+		scheduleAiSpeech();
 	}
 
 	function disablePompom() {
 		enabled = false;
+		stopAiSpeech();
 		hideCompanion();
 		stopAmbient();
 		stopAmbientWeatherSync();
@@ -1088,7 +1089,7 @@ export default function (pi: ExtensionAPI) {
 			});
 			pompomOnSfx((sfx) => {
 				// Weather SFX only on primary; user-triggered SFX on all instances
-				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition"];
+				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip"];
 				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
 				void playSfx(sfx as SfxName);
 			});
@@ -1153,7 +1154,7 @@ export default function (pi: ExtensionAPI) {
 				}
 			});
 			pompomOnSfx((sfx) => {
-				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition"];
+				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip"];
 				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
 				void playSfx(sfx as SfxName);
 			});
