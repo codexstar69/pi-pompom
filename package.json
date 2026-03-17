@@ -1,6 +1,6 @@
 {
   "name": "@codexstar/pi-pompom",
-  "version": "6.3.2",
+  "version": "7.2.8",
   "description": "Pi-Pompom — A 3D raymarched virtual pet with voice, ambient weather sounds, AI side chat, agent tracking, and 23 layered sound effects for Pi CLI",
   "type": "module",
   "author": "Abhishek Tiwari <engazedigital@gmail.com> (https://abhishektiwari.co)",
