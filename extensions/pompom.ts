@@ -2184,7 +2184,39 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	// State message — varied and character-rich, rotates with time
 	const pick = (arr: string[]) => arr[Math.floor((time * 0.1) % arr.length)];
 	let stateMsg = "";
-	if (hunger < 15) stateMsg = pick([
+	// When Pompom is actively speaking, show a contextual shortcut hint that matches her words
+	if (speechTimer > 0 && speechText) {
+		const st = speechText.toLowerCase();
+		if (st.includes("feed") || st.includes("food") || st.includes("hungry") || st.includes("snack") || st.includes("tummy"))
+			stateMsg = `${speechText}  —  ${mod}e to feed`;
+		else if (st.includes("sleep") || st.includes("tired") || st.includes("nap") || st.includes("rest") || st.includes("eyes open"))
+			stateMsg = `${speechText}  —  ${mod}s to sleep`;
+		else if (st.includes("ball") || st.includes("play") || st.includes("catch"))
+			stateMsg = `${speechText}  —  ${mod}r to throw ball`;
+		else if (st.includes("dance") || st.includes("groove") || st.includes("moves"))
+			stateMsg = `${speechText}  —  ${mod}x to dance`;
+		else if (st.includes("flip") || st.includes("boing"))
+			stateMsg = `${speechText}  —  ${mod}z to flip`;
+		else if (st.includes("treat") || st.includes("perk me up"))
+			stateMsg = `${speechText}  —  ${mod}t for treat`;
+		else if (st.includes("pet") || st.includes("hug") || st.includes("cuddle"))
+			stateMsg = `${speechText}  —  ${mod}p to pet, ${mod}u to hug`;
+		else if (st.includes("game") || st.includes("stars"))
+			stateMsg = `${speechText}  —  ${mod}g to play game`;
+		else if (st.includes("umbrella"))
+			stateMsg = `${speechText}  —  /pompom give umbrella`;
+		else if (st.includes("scarf"))
+			stateMsg = `${speechText}  —  /pompom give scarf`;
+		else if (st.includes("sunglasses"))
+			stateMsg = `${speechText}  —  /pompom give sunglasses`;
+		else if (st.includes("hat"))
+			stateMsg = `${speechText}  —  /pompom give hat`;
+		else if (st.includes("music") || st.includes("sing") || st.includes("song"))
+			stateMsg = `${speechText}  —  ${mod}m for music`;
+		else
+			stateMsg = speechText; // show speech text as-is even without a shortcut match
+	}
+	else if (hunger < 15) stateMsg = pick([
 		`Pompom's tummy won't stop growling... ${mod}e to feed`,
 		`Pompom is desperately hungry... please feed her ${mod}e`,
 		`Pompom can't focus... she needs food ${mod}e`,
