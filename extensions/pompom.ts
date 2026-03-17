@@ -6,6 +6,9 @@
  */
 
 import type { SpeechEvent } from "./pompom-voice";
+import { claimGreeting } from "./pompom-instance";
+import * as path from "path";
+import * as fs from "fs";
 
 // ─── Rendering Config ────────────────────────────────────────────────────────
 // Widget dimensions — set once, used by renderPompom
@@ -219,7 +222,7 @@ function getDetailedTimeOfDay(): DetailedTimeOfDay {
 	return "deep_night";
 }
 
-const TIME_AWARENESS_LINES: Array<{ text: string; timeOfDay: DetailedTimeOfDay[]; oncePerPeriod: boolean; minSessionMinutes?: number }> = [
+const TIME_AWARENESS_LINES: Array<{ text: string; timeOfDay: DetailedTimeOfDay[]; oncePerPeriod: boolean; minSessionMinutes?: number; firstSession?: boolean }> = [
 	{ text: "[happy] Good morning! Ready to code?", timeOfDay: ["morning"], oncePerPeriod: true },
 	{ text: "[excited] Rise and shine! Let's build something!", timeOfDay: ["morning"], oncePerPeriod: true },
 	{ text: "[happy] A fresh day, a fresh terminal!", timeOfDay: ["morning"], oncePerPeriod: true },
@@ -238,6 +241,31 @@ const TIME_AWARENESS_LINES: Array<{ text: string; timeOfDay: DetailedTimeOfDay[]
 	{ text: "[curious] That was a long session... are you okay?", timeOfDay: ["day", "afternoon", "evening"], oncePerPeriod: false, minSessionMinutes: 180 },
 	{ text: "[happy] Take a break if you need one", timeOfDay: ["day", "afternoon", "evening"], oncePerPeriod: false, minSessionMinutes: 90 },
 	{ text: "[concerned] Your eyes must be tired... look away for 20 seconds?", timeOfDay: ["day", "afternoon", "evening", "late_night"], oncePerPeriod: false, minSessionMinutes: 120 },
+	// ─── Speech Variety Expansion: Morning ───
+	{ text: "[happy] What's on the agenda today?", timeOfDay: ["morning"], oncePerPeriod: true },
+	{ text: "[excited] Fresh terminal, fresh start!", timeOfDay: ["morning"], oncePerPeriod: true },
+	{ text: "[curious] Did you sleep well?", timeOfDay: ["morning"], oncePerPeriod: true },
+	// ─── Speech Variety Expansion: Dawn ───
+	{ text: "[whispers] The quiet before the code storm...", timeOfDay: ["dawn"], oncePerPeriod: true },
+	{ text: "[peaceful] Dawn debugging hits different", timeOfDay: ["dawn"], oncePerPeriod: true },
+	// ─── Speech Variety Expansion: Afternoon ───
+	{ text: "[curious] How's the flow going?", timeOfDay: ["afternoon"], oncePerPeriod: true },
+	{ text: "[happy] Afternoon energy check — doing okay?", timeOfDay: ["afternoon"], oncePerPeriod: true },
+	{ text: "[playful] Post-lunch productivity mode!", timeOfDay: ["afternoon"], oncePerPeriod: true },
+	// ─── Speech Variety Expansion: Evening ───
+	{ text: "[happy] Nice work today", timeOfDay: ["evening"], oncePerPeriod: true },
+	{ text: "[curious] Winding down or just getting started?", timeOfDay: ["evening"], oncePerPeriod: true },
+	{ text: "[peaceful] The day flew by, didn't it?", timeOfDay: ["evening"], oncePerPeriod: true },
+	// ─── Speech Variety Expansion: Late Night ───
+	{ text: "[whispers] The night owls inherit the code", timeOfDay: ["late_night"], oncePerPeriod: true },
+	{ text: "[concerned] Promise me you'll rest eventually?", timeOfDay: ["late_night"], oncePerPeriod: true },
+	// ─── Speech Variety Expansion: Deep Night ───
+	{ text: "[whispers] Just us and the cursor blinking...", timeOfDay: ["deep_night"], oncePerPeriod: true },
+	{ text: "[sad] Even the stars are yawning...", timeOfDay: ["deep_night"], oncePerPeriod: true },
+	// ─── First Session Lines ───
+	{ text: "[excited] Oh! Is this our first time meeting? Hi, I'm Pompom!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
+	{ text: "[happy] A brand new friend! I'm so excited to meet you!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
+	{ text: "[curious] Hello there! I'm Pompom, your coding companion!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
 ];
 
 // ─── Character Bible: Emotional State System ────────────────────────────────
@@ -314,6 +342,32 @@ let rapidRepeatCount = 0;
 let agentMood = "idle";
 
 let playfulUntil = 0;
+
+// ─── Dedup Ring Buffer ──────────────────────────────────────────────────────
+const spokenRing: string[] = [];
+const RING_SIZE = 20;
+
+// ─── Session Tracking ───────────────────────────────────────────────────────
+const STATS_FILE = path.join(process.env.HOME || "~", ".pi", "pompom", "stats.json");
+let sessionCount = 1;
+try {
+	const statsDir = path.dirname(STATS_FILE);
+	if (!fs.existsSync(statsDir)) fs.mkdirSync(statsDir, { recursive: true });
+	if (fs.existsSync(STATS_FILE)) {
+		const data = JSON.parse(fs.readFileSync(STATS_FILE, "utf-8"));
+		sessionCount = (data.sessionCount || 0) + 1;
+	}
+	const statsTmp = STATS_FILE + ".tmp." + process.pid;
+	fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount }), "utf-8");
+	fs.renameSync(statsTmp, STATS_FILE);
+} catch {
+	// Stats file read/write failure — non-fatal, default to session 1
+}
+
+// ─── Contextual Desires State ───────────────────────────────────────────────
+let lastContextualDesireCheckAt = 0;
+const contextualDesireCooldowns: Record<string, number> = {};
+let agentErrorCount = 0;
 
 // Milestone check interval (runs once per minute in needs tick)
 let lastMilestoneCheckAt = 0;
@@ -406,6 +460,12 @@ function say(
 	allowTts = true,
 ) {
 	const safeText = sanitizeSpeechText(text);
+	// Dedup ring buffer: skip if recently spoken (commentary/reaction only)
+	if (safeText && (source === "commentary" || source === "reaction")) {
+		if (spokenRing.includes(safeText)) return;
+		spokenRing.push(safeText);
+		if (spokenRing.length > RING_SIZE) spokenRing.shift();
+	}
 	speechText = safeText;
 	speechTimer = duration;
 	if (safeText && onSpeechCallback) {
@@ -1305,6 +1365,7 @@ function resolveAndSpeak(now: number): void {
 	}
 
 	// Time-of-day awareness (once per period, only in non-negative states)
+	// Multi-instance dedup: only speak if this instance wins the greeting claim
 	if (isSpeechAllowed(state, "time_awareness") || isSpeechAllowed(state, "care_for_user")) {
 		const tod = getDetailedTimeOfDay();
 		if (tod !== lastTimeOfDayPeriod) {
@@ -1314,9 +1375,11 @@ function resolveAndSpeak(now: number): void {
 				if (l.oncePerPeriod && announcedTimePeriods.has(tod)) return false;
 				if (!isSpeechAllowed(state, "care_for_user")) return false;
 				if (l.minSessionMinutes && sessionMin < l.minSessionMinutes) return false;
+				if (l.firstSession && sessionCount !== 1) return false;
+				if (!l.firstSession && sessionCount === 1 && TIME_AWARENESS_LINES.some(fl => fl.firstSession && fl.timeOfDay.includes(tod))) return false;
 				return true;
 			});
-			if (timeLine && speechTimer <= 0) {
+			if (timeLine && speechTimer <= 0 && claimGreeting()) {
 				lastTimeOfDayPeriod = tod;
 				announcedTimePeriods.add(tod);
 				lastEmotionalReactionAt = now;
@@ -1324,6 +1387,8 @@ function resolveAndSpeak(now: number): void {
 				say(timeLine.text, 4.0, "commentary", 2, true);
 				return;
 			}
+			// Even if we didn't speak, mark the period so we don't retry every frame
+			lastTimeOfDayPeriod = tod;
 		}
 	}
 
@@ -1357,6 +1422,41 @@ function resolveAndSpeak(now: number): void {
 		}
 	}
 
+	// ── Context-Aware Self-Requests — checked once per 60s, 5min cooldown per key ──
+	if (now - lastContextualDesireCheckAt > 60_000 && speechTimer <= 0 && !agentOverlayActive) {
+		lastContextualDesireCheckAt = now;
+		const weather = getWeather();
+		const idleMs = lastInteractionAt > 0 ? now - lastInteractionAt : now - sessionStartedAt;
+		const sessionMinutes = Math.floor((now - sessionStartedAt) / 60_000);
+		const CONTEXTUAL_DESIRES: Array<{ condition: () => boolean; text: string; cooldownKey: string }> = [
+			{ condition: () => (weather === "rain" || weather === "storm") && !accessories.umbrella, text: "[shivers] It's pouring... I wish I had an umbrella!", cooldownKey: "rain_umbrella" },
+			{ condition: () => weather === "snow" && !accessories.scarf, text: "[cold] Brr... a scarf would be so cozy right now", cooldownKey: "snow_scarf" },
+			{ condition: () => weather === "clear" && !accessories.sunglasses, text: "[squints] The sun is so bright today... sunglasses would help!", cooldownKey: "clear_sunglasses" },
+			{ condition: () => !accessories.hat && Math.random() < 0.5, text: "[curious] I wonder what I'd look like in a hat...", cooldownKey: "no_hat" },
+			{ condition: () => state === "bored" && energy > 50, text: "[playful] Wanna throw the ball? I'll catch it!", cooldownKey: "bored_ball" },
+			{ condition: () => state === "happy" && energy > 60, text: "[excited] I feel like dancing! Come on!", cooldownKey: "happy_dance" },
+			{ condition: () => energy < 30, text: "[hopeful] A little treat would really perk me up...", cooldownKey: "low_energy_treat" },
+			{ condition: () => agentErrorCount > 3, text: "[concerned] Things seem rough... need a hand?", cooldownKey: "agent_errors" },
+			{ condition: () => idleMs > 600_000, text: "[gentle] Just checking in... everything okay over there?", cooldownKey: "idle_checkin" },
+			{ condition: () => sessionMinutes >= 60, text: "[thoughtful] We've been at this a while... what a journey", cooldownKey: "session_milestone" },
+		];
+		const eligible = CONTEXTUAL_DESIRES.filter(d => {
+			const lastUsed = contextualDesireCooldowns[d.cooldownKey] || 0;
+			if (now - lastUsed < 300_000) return false;
+			try { return d.condition(); } catch { return false; }
+		});
+		if (eligible.length > 0) {
+			// Clear ring if pool is too small to avoid deadlock
+			if (eligible.length <= RING_SIZE) spokenRing.length = 0;
+			const picked = eligible[Math.floor(Math.random() * eligible.length)];
+			contextualDesireCooldowns[picked.cooldownKey] = now;
+			lastEmotionalReactionAt = now;
+			lastSpokenText = picked.text;
+			say(picked.text, 4.0, "commentary", 1, true);
+			return;
+		}
+	}
+
 	// ── D. Rare "golden" moments — strong prediction error, very low probability ──
 	const isPositiveState = state === "content" || state === "happy" || state === "blissful";
 	if (isPositiveState && now - lastGoldenLineAt > 600_000) {
@@ -1372,6 +1472,8 @@ function resolveAndSpeak(now: number): void {
 
 	// Pick a state-appropriate line
 	const pool = getLinePoolForState(state);
+	// Deadlock prevention: clear ring if pool is too small
+	if (pool.length <= RING_SIZE) spokenRing.length = 0;
 	const line = pickWeightedLine(pool, now);
 	if (line) {
 		lastEmotionalReactionAt = now;
@@ -2162,6 +2264,8 @@ export function pompomGetWeather(): Weather {
 
 /** Set the current agent mood so Pompom can offer comfort lines during errors */
 export function pompomSetAgentMood(mood: string) {
+	if (mood === "concerned") agentErrorCount++;
+	if (mood === "idle" && agentMood === "concerned") agentErrorCount = 0;
 	agentMood = mood;
 }
 
@@ -2173,8 +2277,9 @@ export function pompomKeypress(key: string) {
 	lastInteractionAt = nowMs;
 
 	// ─ Return greeting: check BEFORE updating lastUserActivityAt so we see the stale timestamp
+	// Skip if another terminal already greeted recently (multi-instance dedup via claimGreeting)
 	const absenceMs = nowMs - lastUserActivityAt;
-	if (absenceMs > 300_000 && speechTimer <= 0) {
+	if (absenceMs > 300_000 && speechTimer <= 0 && claimGreeting()) {
 		let greeting = "";
 		if (absenceMs > 28_800_000) greeting = "[excited] You're back! I missed you SO much!";
 		else if (absenceMs > 7_200_000) greeting = "[happy] There you are! I was starting to worry!";
@@ -2360,6 +2465,11 @@ export function resetPompom() {
 	agentMood = "idle";
 	playfulUntil = 0;
 	lastMilestoneCheckAt = 0;
+	// Dedup ring buffer + contextual desires + error tracking
+	spokenRing.length = 0;
+	lastContextualDesireCheckAt = 0;
+	agentErrorCount = 0;
+	for (const key of Object.keys(contextualDesireCooldowns)) delete contextualDesireCooldowns[key];
 	activeTheme = 0;
 	weatherOverride = null;
 	weatherState = "clear";

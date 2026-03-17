@@ -13,6 +13,7 @@ import type { Model } from "@mariozechner/pi-ai";
 import {
 	buildSessionContext,
 	convertToLlm,
+	createCodingTools,
 	createReadOnlyTools,
 	getSelectListTheme,
 	type ModelRegistry,
@@ -21,6 +22,9 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Editor, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from "@mariozechner/pi-tui";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const POMPOM_SYSTEM = `
 ---
@@ -43,6 +47,9 @@ Be concise, warm, and practical. This is for quick questions and status checks.
 If the user wants something the main agent is handling, suggest waiting for it to finish.`;
 
 const SPINNER = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"];
+
+const CHAT_HISTORY_FILE = path.join(os.homedir(), ".pi", "pompom", "chat-history.json");
+const CHAT_HISTORY_MAX = 100;
 
 interface PompomChatOptions {
 	tui: TUI;
@@ -74,6 +81,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private toolStatus = "";
 	private errorText = "";
 	private scrollOffset = 0;
+	private writeMode = false;
 
 	get focused() { return this._focused; }
 	set focused(v: boolean) { this._focused = v; this.editor.focused = v; }
@@ -104,6 +112,30 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.editor.onSubmit = (text) => this.onSubmit(text);
 
 		this.displayMessages.push({ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" });
+
+		// Load persisted chat history
+		try {
+			if (fs.existsSync(CHAT_HISTORY_FILE)) {
+				const raw = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
+				let msgs: unknown[];
+				if (Array.isArray(raw)) {
+					// Legacy: plain array — wrap
+					msgs = raw;
+				} else if (raw && typeof raw === "object" && raw.v === 1 && Array.isArray(raw.messages)) {
+					msgs = raw.messages;
+				} else {
+					console.warn("[pompom-chat] Unrecognized chat history format, resetting.");
+					msgs = [];
+				}
+				for (const m of msgs) {
+					if (m && typeof m === "object" && typeof (m as any).role === "string" && typeof (m as any).text === "string") {
+						this.displayMessages.push(m as { role: "user" | "pompom" | "tool" | "error"; text: string });
+					}
+				}
+			}
+		} catch (e) {
+			console.warn("[pompom-chat] Failed to load chat history:", e instanceof Error ? e.message : e);
+		}
 	}
 
 	private createPeekMain(sm: SessionManager): AgentTool {
@@ -185,13 +217,69 @@ export class PompomChatOverlay implements Component, Focusable {
 			this.localMessages.push({ role: "tool", text: "stuck — check if main agent is stuck" });
 			this.localMessages.push({ role: "tool", text: "recap — session summary" });
 			this.localMessages.push({ role: "tool", text: "status — quick status check" });
+			this.localMessages.push({ role: "tool", text: "/write [on|off] — toggle write mode" });
 			this.localMessages.push({ role: "tool", text: "help — show this list" });
 			this.localMessages.push({ role: "pompom", text: "Or just ask me anything in plain English!" });
 			this.syncMessages();
 			this.opts.tui.requestRender();
 			return true;
 		}
+		if (lower === "/write" || lower === "/write on") {
+			this.setWriteMode(true);
+			return true;
+		}
+		if (lower === "/write off") {
+			this.setWriteMode(false);
+			return true;
+		}
 		return false;
+	}
+
+	private setWriteMode(enabled: boolean) {
+		if (this.writeMode === enabled) {
+			this.localMessages = [];
+			this.localMessages.push({ role: "pompom", text: enabled
+				? "Write mode is already enabled."
+				: "Already in read-only mode." });
+			this.syncMessages();
+			this.opts.tui.requestRender();
+			return;
+		}
+		this.writeMode = enabled;
+
+		// Dispose current agent
+		if (this.agentUnsub) { this.agentUnsub(); this.agentUnsub = null; }
+		this.agent.abort();
+
+		// Create new agent with appropriate tools
+		const tools = enabled
+			? createCodingTools(this.opts.cwd)
+			: createReadOnlyTools(this.opts.cwd);
+
+		this.agent = new Agent({
+			initialState: {
+				systemPrompt: POMPOM_SYSTEM,
+				model: this.opts.model,
+				thinkingLevel: this.opts.thinkingLevel === "off" ? undefined : this.opts.thinkingLevel as any,
+				tools: [...tools, this.peekTool],
+				messages: [],
+			},
+			convertToLlm,
+			getApiKey: async (provider) => {
+				const key = await this.opts.modelRegistry.getApiKeyForProvider(provider);
+				if (!key) throw new Error("No API key");
+				return key;
+			},
+		});
+		this.agentUnsub = this.agent.subscribe((e) => this.onAgentEvent(e));
+		this.userInputTexts.clear();
+
+		this.localMessages = [];
+		this.localMessages.push({ role: "pompom", text: enabled
+			? "Write mode enabled \u2014 Pompom can now edit files. Use /write off to return to read-only."
+			: "Read-only mode restored." });
+		this.syncMessages();
+		this.opts.tui.requestRender();
 	}
 
 	private async onSubmit(text: string) {
@@ -211,11 +299,12 @@ export class PompomChatOverlay implements Component, Focusable {
 
 		const promptIndex = this.agent.state.messages.length; // index where user msg will appear
 		this.userInputTexts.set(promptIndex, trimmed);
+		const wasAtBottom = this.scrollOffset <= 1;
 		this.displayMessages.push({ role: "user", text: trimmed });
 		this.isStreaming = true;
 		this.streamingText = "";
 		this.errorText = "";
-		this.scrollOffset = 0;
+		if (wasAtBottom) this.scrollOffset = 0;
 		this.startSpinner();
 		this.opts.tui.requestRender();
 
@@ -232,8 +321,9 @@ export class PompomChatOverlay implements Component, Focusable {
 			this.toolStatus = "";
 			if (!this.disposed) {
 				this.syncMessages();
-				this.scrollOffset = 0;
+				if (wasAtBottom) this.scrollOffset = 0;
 				this.opts.tui.requestRender();
+				this.persistHistory();
 			}
 		}
 	}
@@ -319,6 +409,15 @@ export class PompomChatOverlay implements Component, Focusable {
 				this.scrollOffset = Math.max(0, this.scrollOffset - 3);
 				this.opts.tui.requestRender(); return;
 			}
+			// Plain Up/Down arrows for scrollback when already scrolled
+			if (matchesKey(data, Key.up) && this.scrollOffset > 0) {
+				this.scrollOffset = Math.min(this.scrollOffset + 1, 200);
+				this.opts.tui.requestRender(); return;
+			}
+			if (matchesKey(data, Key.down) && this.scrollOffset > 0) {
+				this.scrollOffset = Math.max(0, this.scrollOffset - 1);
+				this.opts.tui.requestRender(); return;
+			}
 			this.editor.handleInput(data);
 			this.opts.tui.requestRender();
 		} catch (error) {
@@ -339,9 +438,10 @@ export class PompomChatOverlay implements Component, Focusable {
 		// Themed header — rounded corners, kawaii face, sparkle when streaming
 		const pompomFace = theme.fg("success", "(o") + theme.fg("warning", "'") + theme.fg("success", "o)");
 		const sparkle = this.isStreaming ? theme.fg("warning", " " + SPINNER[this.spinnerFrame]) : theme.fg("dim", " \u2727");
+		const modeTag = this.writeMode ? theme.fg("warning", " [Write]") : theme.fg("dim", " [Read-only]");
 		const title = this._focused
-			? pompomFace + " " + theme.fg("accent", "Pompom Chat") + sparkle
-			: theme.fg("dim", "(o'o) Pompom Chat");
+			? pompomFace + " " + theme.fg("accent", "Pompom Chat") + modeTag + sparkle
+			: theme.fg("dim", "(o'o) Pompom Chat") + modeTag;
 		const status = this.toolStatus ? theme.fg("dim", " \u2022 " + this.toolStatus) : "";
 		lines.push(theme.fg(bc, "\u256d" + "\u2500".repeat(bw) + "\u256e"));
 		lines.push(this.frameLine(title + status, innerWidth));
@@ -379,8 +479,9 @@ export class PompomChatOverlay implements Component, Focusable {
 
 		// Footer — rounded bottom corners, kawaii hints
 		lines.push(theme.fg(bc, "\u251c" + "\u2500".repeat(bw) + "\u2524"));
+		const newIndicator = this.scrollOffset > 0 ? theme.fg("warning", "  \u2022  \u2193 new") : "";
 		const hints = this._focused
-			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + "  \u2022  Enter send  \u2022  " + this.opts.shortcut + " unfocus  \u2022  type help")
+			? theme.fg("dim", "Esc " + (this.isStreaming ? "stop" : "close") + "  \u2022  Enter send  \u2022  " + this.opts.shortcut + " unfocus  \u2022  type help") + newIndicator
 			: theme.fg("dim", this.opts.shortcut + " \u2192 focus");
 		lines.push(this.frameLine(hints, innerWidth));
 		lines.push(theme.fg(bc, "\u2570" + "\u2500".repeat(bw) + "\u256f"));
@@ -393,6 +494,22 @@ export class PompomChatOverlay implements Component, Focusable {
 		const fullText = prefix + text;
 		const wrapped = wrapTextWithAnsi(fullText, Math.max(4, maxW));
 		for (const line of wrapped) out.push(line);
+	}
+
+	private persistHistory() {
+		try {
+			const dir = path.dirname(CHAT_HISTORY_FILE);
+			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+			const rawCapped = this.displayMessages.slice(-CHAT_HISTORY_MAX);
+			// Trim to even number to keep user+pompom pairs together
+			const capped = rawCapped.length % 2 === 0 ? rawCapped : rawCapped.slice(1);
+			const data = JSON.stringify({ v: 1, messages: capped }, null, 2);
+			const tmp = CHAT_HISTORY_FILE + ".tmp." + process.pid;
+			fs.writeFileSync(tmp, data, "utf-8");
+			fs.renameSync(tmp, CHAT_HISTORY_FILE);
+		} catch (e) {
+			console.warn("[pompom-chat] Failed to persist chat history:", e instanceof Error ? e.message : e);
+		}
 	}
 
 	dispose() {

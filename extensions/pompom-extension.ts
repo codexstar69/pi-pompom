@@ -87,6 +87,7 @@ import {
 	hasVoiceBeenConfigured,
 	initVoice,
 	isPlayingTTS,
+	getPompomModel,
 	setVoiceEnabled,
 	setVoiceEngine,
 	setAgentBusy,
@@ -99,6 +100,16 @@ import {
 	type SpeechEvent,
 	type Personality,
 } from "./pompom-voice";
+import {
+	registerInstance,
+	deregisterInstance,
+	isPrimaryInstance,
+	getOtherInstances,
+	getInstanceCount,
+	hasRecentGreeting,
+	markGreeting,
+	type InstanceInfo,
+} from "./pompom-instance";
 
 type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
 
@@ -482,8 +493,120 @@ export default function (pi: ExtensionAPI) {
 			applyAgentVisualState();
 			return;
 		}
-		pompomSay(commentary, 4.6, "commentary", 1, true);
+		// Only primary instance speaks agent commentary to prevent duplicate audio
+		if (isPrimaryInstance()) {
+			pompomSay(commentary, 4.6, "commentary", 1, true);
+		}
 		applyAgentVisualState();
+	}
+
+	// ─── AI-Generated Dynamic Speech ─────────────────────────────────────
+	let aiSpeechTimer: ReturnType<typeof setTimeout> | null = null;
+	let aiSpeechCount = 0;
+	const AI_SPEECH_MAX = 8;
+	const aiSpeechHistory: string[] = []; // last 10 AI-generated lines for dedup
+
+	function jaccardSimilarity(a: string, b: string): number {
+		const setA = new Set(a.toLowerCase().split(/\s+/));
+		const setB = new Set(b.toLowerCase().split(/\s+/));
+		let intersection = 0;
+		for (const word of setA) {
+			if (setB.has(word)) intersection++;
+		}
+		const union = setA.size + setB.size - intersection;
+		return union === 0 ? 0 : intersection / union;
+	}
+
+	function isDuplicateAiLine(line: string): boolean {
+		for (const prev of aiSpeechHistory) {
+			if (jaccardSimilarity(line, prev) > 0.6) return true;
+		}
+		return false;
+	}
+
+	function trackAiLine(line: string): void {
+		aiSpeechHistory.push(line);
+		if (aiSpeechHistory.length > 10) aiSpeechHistory.shift();
+	}
+
+	async function generateDynamicLine(): Promise<string | null> {
+		try {
+			if (!ctx) return null;
+			const pompomModelId = getPompomModel();
+			let model: ModelLike | undefined;
+			if (pompomModelId) {
+				const all = ctx.modelRegistry.getAll();
+				const found = all.find(m => m.id === pompomModelId);
+				if (found) model = found;
+			}
+			if (!model) {
+				const ctxModel = ctx.model;
+				if (!ctxModel || !isModelLike(ctxModel)) return null;
+				model = ctxModel;
+			}
+			const apiKey = await ctx.modelRegistry.getApiKey(model as any);
+			if (!apiKey) return null;
+
+			const stats = getSessionStats();
+			const weather = pompomGetWeather();
+			const activeTools = getActiveToolDetails();
+			const hour = new Date().getHours();
+			const timeOfDay = hour < 6 ? "late night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
+			const sessionStart = stats.lastEventAt > 0 ? stats.lastEventAt : Date.now();
+			const sessionMinutes = Math.round((Date.now() - sessionStart) / 60000);
+			const toolDesc = activeTools.length > 0
+				? activeTools.map(t => t.toolName).join(", ")
+				: "idle";
+
+			const systemPrompt = "You are Pompom, a small fluffy pink coding companion. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, and natural \u2014 never generic.";
+			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min`;
+
+			let aborted = false;
+			const response = await Promise.race([
+				completeSimple(
+					model as any,
+					{ messages: [createUserMessage(userPrompt)], systemPrompt },
+					{ apiKey },
+				),
+				new Promise<null>((_, reject) => setTimeout(() => { aborted = true; reject(new Error("timeout")); }, 3000)),
+			]);
+			if (aborted || !response) return null;
+			const text = extractTextContent((response as any).content);
+			if (!text || text.length < 3) return null;
+			return sanitizeAscii(text.slice(0, 140));
+		} catch {
+			return null;
+		}
+	}
+
+	function scheduleAiSpeech() {
+		if (aiSpeechTimer) clearTimeout(aiSpeechTimer);
+		// 8-12 minutes randomized
+		const delayMs = (8 + Math.random() * 4) * 60 * 1000;
+		aiSpeechTimer = setTimeout(async () => {
+			try {
+				if (!enabled || !companionActive) { scheduleAiSpeech(); return; }
+				if (!isPrimaryInstance()) { scheduleAiSpeech(); return; }
+				if (aiSpeechCount >= AI_SPEECH_MAX) return; // no more this session
+				const stats = getSessionStats();
+				if (stats.isAgentActive) { scheduleAiSpeech(); return; }
+				if (isPlayingTTS()) { scheduleAiSpeech(); return; }
+
+				const line = await generateDynamicLine();
+				if (line && !isDuplicateAiLine(line)) {
+					trackAiLine(line);
+					pompomSay(line, 5.0, "commentary", 1, true);
+					aiSpeechCount++;
+				}
+			} catch {
+				// silent
+			}
+			if (aiSpeechCount < AI_SPEECH_MAX) scheduleAiSpeech();
+		}, delayMs);
+	}
+
+	function stopAiSpeech() {
+		if (aiSpeechTimer) { clearTimeout(aiSpeechTimer); aiSpeechTimer = null; }
 	}
 
 	async function runSafely(label: string, fn: () => Promise<void> | void) {
@@ -536,8 +659,11 @@ export default function (pi: ExtensionAPI) {
 			const weather = pompomGetWeather();
 			if (weather !== lastAmbientWeather) {
 				lastAmbientWeather = weather;
-				void setAmbientWeather(weather);
-				startWeatherSfx(); // restart periodic SFX for new weather
+				// Only primary instance plays ambient loops and weather SFX
+				if (isPrimaryInstance()) {
+					void setAmbientWeather(weather);
+					startWeatherSfx();
+				}
 			}
 			// TTS ducking: duck when TTS starts, unduck when it stops
 			const ttsPlaying = isPlayingTTS();
@@ -553,7 +679,10 @@ export default function (pi: ExtensionAPI) {
 	function enablePompom(commandContext: ExtensionContext) {
 		enabled = true;
 		setVoiceEnabled(true);
-		setAmbientEnabled(true);
+		// Only primary instance enables ambient audio to prevent duplicate sounds
+		if (isPrimaryInstance()) {
+			setAmbientEnabled(true);
+		}
 		showCompanion();
 		setupKeyHandler();
 		startAmbientWeatherSync();
@@ -947,19 +1076,28 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("session_start", async () => {
 			ctx = startCtx;
 			loadedVoiceHintShown = false;
+			registerInstance(startCtx.cwd);
 			initVoice(Boolean(startCtx.hasUI));
 			initAmbient(Boolean(startCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
+					// Only primary instance speaks TTS for non-user-triggered events
+					if (!isPrimaryInstance() && event.source !== "user_action") return;
 					enqueueSpeech(event);
 				}
 			});
-			pompomOnSfx((sfx) => { void playSfx(sfx as SfxName); });
+			pompomOnSfx((sfx) => {
+				// Weather SFX only on primary; user-triggered SFX on all instances
+				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition"];
+				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
+				void playSfx(sfx as SfxName);
+			});
 			restoreCompanionState(startCtx);
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
 				startAmbientWeatherSync();
+				scheduleAiSpeech();
 			}
 			showVoiceHint();
 			showAmbientHint();
@@ -968,11 +1106,13 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async () => {
 		await runSafely("session_shutdown", () => {
+			deregisterInstance();
 			persistAgentState();
 			setAgentBusy(false);
 			stopPlayback();
 			stopAmbient();
 			stopAmbientWeatherSync();
+			stopAiSpeech();
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			pompomOnSpeech(null);
@@ -989,30 +1129,40 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_switch", async (_event, switchCtx) => {
 		await runSafely("session_switch", () => {
+			deregisterInstance();
 			persistAgentState();
 			setAgentBusy(false);
 			stopPlayback();
 			stopAmbient();
 			stopAmbientWeatherSync();
+			stopAiSpeech();
+			aiSpeechCount = 0;
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
+			registerInstance(switchCtx.cwd);
 			loadedVoiceHintShown = false;
 			initVoice(Boolean(switchCtx.hasUI));
 			initAmbient(Boolean(switchCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
 				if (event.allowTts) {
+					if (!isPrimaryInstance() && event.source !== "user_action") return;
 					enqueueSpeech(event);
 				}
 			});
-			pompomOnSfx((sfx) => { void playSfx(sfx as SfxName); });
+			pompomOnSfx((sfx) => {
+				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition"];
+				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
+				void playSfx(sfx as SfxName);
+			});
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
 				setupKeyHandler();
 				startAmbientWeatherSync();
+				scheduleAiSpeech();
 			}
 			showVoiceHint();
 			showAmbientHint();
@@ -1285,6 +1435,8 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom:stuck        Check if agent is stuck\n` +
 						`  /pompom:analyze      AI session analysis\n` +
 						`  /pompom:ambient      Weather ambient sounds — on|off|volume\n` +
+						`  /pompom:terminals    Show all running Pompom terminals\n` +
+						`  /pompom-give-hat     Give Pompom a hat (also: umbrella, scarf, sunglasses)\n` +
 						`  /pompom-settings     Interactive settings panel`,
 						"info"
 					);
@@ -1773,6 +1925,65 @@ export default function (pi: ExtensionAPI) {
 	function stopHealthCheck() {
 		if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null; }
 	}
+
+	// ─── Standalone accessory commands ─────────────────────────────────────────
+	// These show as top-level /pompom-give-hat etc. in the command palette
+
+	const accessoryCommands: { name: string; item: string; desc: string }[] = [
+		{ name: "pompom-give-hat", item: "hat", desc: "Give Pompom a cute hat" },
+		{ name: "pompom-give-umbrella", item: "umbrella", desc: "Give Pompom an umbrella (shows in rain)" },
+		{ name: "pompom-give-scarf", item: "scarf", desc: "Give Pompom a scarf (shows in snow)" },
+		{ name: "pompom-give-sunglasses", item: "sunglasses", desc: "Give Pompom sunglasses (shows in clear weather)" },
+	];
+	for (const acc of accessoryCommands) {
+		pi.registerCommand(acc.name, {
+			description: acc.desc,
+			handler: async (_args, commandContext) => {
+				await runSafely(acc.name, async () => {
+					ctx = commandContext;
+					const result = pompomGiveAccessory(acc.item);
+					saveAccessories();
+					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
+					commandContext.ui.notify(result, "info");
+				});
+			},
+		});
+	}
+
+	// ─── Multi-terminal awareness ──────────────────────────────────────────────
+
+	pi.registerCommand("pompom:terminals", {
+		description: "Show all running Pi terminals with Pompom instances",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:terminals", () => {
+				ctx = commandContext;
+				const others = getOtherInstances();
+				const total = getInstanceCount();
+				const primary = isPrimaryInstance();
+				const role = primary ? "primary (audio active)" : "secondary (visual only)";
+				const lines = [
+					`Pompom Terminals — ${total} instance${total !== 1 ? "s" : ""} running`,
+					``,
+					`This terminal: ${role}`,
+					`  PID: ${process.pid}  CWD: ${commandContext.cwd}`,
+				];
+				if (others.length > 0) {
+					lines.push("", "Other terminals:");
+					for (const inst of others) {
+						const age = Math.round((Date.now() - inst.startedAt) / 1000);
+						lines.push(`  PID: ${inst.pid}  TTY: ${inst.tty}  CWD: ${inst.cwd}  (${age}s ago)`);
+					}
+				}
+				if (primary) {
+					lines.push("", "This terminal handles ambient audio, weather SFX, and greetings.");
+				} else {
+					lines.push("", "Audio is handled by the primary terminal. This one runs visual-only.");
+					lines.push("User-triggered SFX (pet, feed, etc.) still play here.");
+				}
+				commandContext.ui.notify(lines.join("\n"), "info");
+			});
+		},
+	});
 
 	// ─── Pompom Side Chat ───────────────────────────────────────────
 

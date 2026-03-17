@@ -21,6 +21,7 @@ import {
 	getCachedWeathers, getCustomWeathers, isAmbientPlaying, pregenerateAll,
 	getCustomAudioDir,
 } from "./pompom-ambient";
+import { getInstanceCount, isPrimaryInstance } from "./pompom-instance";
 
 type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker" | "model-picker";
 
@@ -588,6 +589,12 @@ class PompomSettingsPanel {
 		lines.push(line(`  ${BRT}Agent:${RST}       ${stats.isAgentActive ? "active" : "idle"} (${stats.mood})`));
 		lines.push(line(`  ${BRT}Tools:${RST}       ${stats.toolCalls} calls, ${stats.toolFailures} fails`));
 		lines.push(line(`  ${BRT}Model:${RST}       ${getPompomModel() || "(main agent)"}`));
+		lines.push(line(""));
+		const termCount = getInstanceCount();
+		const role = isPrimaryInstance() ? `${GRN}primary${RST} (audio active)` : `${DIM}secondary${RST} (visual only)`;
+		lines.push(line(`${ACC}Terminals${RST}`));
+		lines.push(line(`  ${BRT}Running:${RST}     ${termCount} instance${termCount !== 1 ? "s" : ""}`));
+		lines.push(line(`  ${BRT}This:${RST}        ${role}`));
 	}
 
 	private renderSubPicker(lines: string[], line: (s: string) => string, iw: number, w: number) {
