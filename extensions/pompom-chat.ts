@@ -82,6 +82,8 @@ export class PompomChatOverlay implements Component, Focusable {
 	private errorText = "";
 	private scrollOffset = 0;
 	private writeMode = false;
+	private lastTotalMsgLines = 0;
+	private lastMaxLines = 20;
 
 	get focused() { return this._focused; }
 	set focused(v: boolean) { this._focused = v; this.editor.focused = v; }
@@ -109,7 +111,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.agentUnsub = this.agent.subscribe((e) => this.onAgentEvent(e));
 		this.editor = new Editor(opts.tui, { borderColor: (t: string) => opts.theme.fg("borderMuted", t), selectList: getSelectListTheme() }, { paddingX: 0 });
 		this.editor.focused = true;
-		this.editor.onSubmit = (text) => this.onSubmit(text);
+		this.editor.onSubmit = (text) => { this.onSubmit(text).catch(err => console.error("[pompom-chat] onSubmit error:", err instanceof Error ? err.message : err)); };
 
 		this.displayMessages.push({ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" });
 
@@ -404,13 +406,16 @@ export class PompomChatOverlay implements Component, Focusable {
 				if (this.isStreaming) {
 					this.agent.abort();
 					this.isStreaming = false;
+					this.streamingText = "";
+					this.toolStatus = "";
+					this.errorText = "";
 					this.stopSpinner();
 				} else this.dispose();
 				return;
 			}
 			if (matchesKey(data, this.opts.shortcut as any)) { this.opts.onUnfocus(); return; }
 			if (matchesKey(data, Key.alt("up")) || matchesKey(data, "pageUp" as any)) {
-				this.scrollOffset = Math.min(this.scrollOffset + 3, 200);
+				this.scrollOffset = Math.min(this.scrollOffset + 3, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
 				this.opts.tui.requestRender(); return;
 			}
 			if (matchesKey(data, Key.alt("down")) || matchesKey(data, "pageDown" as any)) {
@@ -419,7 +424,7 @@ export class PompomChatOverlay implements Component, Focusable {
 			}
 			// Plain Up/Down arrows for scrollback when already scrolled
 			if (matchesKey(data, Key.up) && this.scrollOffset > 0) {
-				this.scrollOffset = Math.min(this.scrollOffset + 1, 200);
+				this.scrollOffset = Math.min(this.scrollOffset + 1, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
 				this.opts.tui.requestRender(); return;
 			}
 			if (matchesKey(data, Key.down) && this.scrollOffset > 0) {
@@ -472,6 +477,9 @@ export class PompomChatOverlay implements Component, Focusable {
 		if (this.streamingText) {
 			this.wrapInto(allMsgLines, theme.fg("success", "(o'o) "), 6, this.streamingText, innerWidth);
 		}
+
+		this.lastTotalMsgLines = allMsgLines.length;
+		this.lastMaxLines = maxLines;
 
 		// Scroll and display
 		const startIdx = Math.max(0, allMsgLines.length - maxLines - this.scrollOffset);

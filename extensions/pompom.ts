@@ -514,7 +514,7 @@ function drawSpeechBubble(text: string, bx: number, by: number) {
 	if (text.length > W - 10) text = text.substring(0, W - 13) + "...";
 	const pad = 2, width = text.length + pad * 2;
 	const startX = Math.floor(bx - width / 2), startY = Math.floor(by - 3);
-	if (startY < 0 || startY >= H) return;
+	if (startY < 0 || startY + 2 >= H) return;
 
 	const top = "╭" + "─".repeat(Math.max(0, width - 2)) + "╮";
 	const mid = "│ " + text + " │";
@@ -646,14 +646,6 @@ function getWeatherAndTime() {
 	gBot = k1.b[1] + factor * (k2.b[1] - k1.b[1]);
 	bBot = k1.b[2] + factor * (k2.b[2] - k1.b[2]);
 
-	// Snapshot old (pre-tint) colors BEFORE applying new weather tinting,
-	// so the blend interpolates from old weather colors to new weather colors
-	if (weather !== lastRenderedWeatherState) {
-		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
-		weatherBlend = 1.0;
-		lastRenderedWeatherState = weather;
-	}
-
 	// Weather tinting — overcast dims the sky, storm darkens further
 	if (weather === "cloudy") {
 		rTop = rTop * 0.7 + 40; gTop = gTop * 0.7 + 40; bTop = bTop * 0.7 + 40;
@@ -667,6 +659,14 @@ function getWeatherAndTime() {
 	} else if (weather === "snow") {
 		rTop = rTop * 0.6 + 60; gTop = gTop * 0.6 + 60; bTop = bTop * 0.6 + 70;
 		rBot = rBot * 0.6 + 60; gBot = gBot * 0.6 + 60; bBot = bBot * 0.6 + 70;
+	}
+
+	// Snapshot tinted colors AFTER weather tint is applied, so blend transitions
+	// from the old weather's tinted sky to the new weather's tinted sky
+	if (weather !== lastRenderedWeatherState) {
+		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
+		weatherBlend = 1.0;
+		lastRenderedWeatherState = weather;
 	}
 
 	if (weatherBlend > 0) {
@@ -1256,7 +1256,7 @@ function buildObjects(): RenderObj[] {
 		);
 	}
 
-	objects.sort((a, b) => a.z - b.z);
+	objects.sort((a, b) => b.z - a.z);
 	for (const obj of objects) {
 		if (obj.rot !== undefined) { obj.s = Math.sin(obj.rot); obj.c = Math.cos(obj.rot); }
 	}
@@ -2017,8 +2017,9 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	}
 
 	// Sub-step physics for stability
+	const safeDt = Math.min(dt, 0.5);
 	time += dt;
-	let remaining = dt;
+	let remaining = safeDt;
 	while (remaining > 0) {
 		const step = Math.min(remaining, PHYSICS_DT);
 		remaining -= step;

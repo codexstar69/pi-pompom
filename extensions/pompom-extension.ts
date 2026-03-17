@@ -182,7 +182,9 @@ function loadAccessories(): Record<string, boolean> {
 function saveAccessories(): void {
 	try {
 		fs.mkdirSync(SAVE_DIR, { recursive: true });
-		fs.writeFileSync(SAVE_FILE, JSON.stringify(pompomGetAccessories()));
+		const tmp = SAVE_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, JSON.stringify(pompomGetAccessories()));
+		fs.renameSync(tmp, SAVE_FILE);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom] saveAccessories failed: ${msg}`);
@@ -562,12 +564,13 @@ export default function (pi: ExtensionAPI) {
 			const systemPrompt = "You are Pompom, a small fluffy pink coding companion. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, and natural \u2014 never generic.";
 			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min`;
 
+			const apiCall = completeSimple(
+				model as any,
+				{ messages: [createUserMessage(userPrompt)], systemPrompt },
+				{ apiKey },
+			).catch(() => null);
 			const response = await Promise.race([
-				completeSimple(
-					model as any,
-					{ messages: [createUserMessage(userPrompt)], systemPrompt },
-					{ apiKey },
-				),
+				apiCall,
 				new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
 			]);
 			if (!response) return null;
@@ -661,13 +664,14 @@ export default function (pi: ExtensionAPI) {
 	function syncAmbientWeather() {
 		try {
 			const weather = pompomGetWeather();
-			if (weather !== lastAmbientWeather) {
-				lastAmbientWeather = weather;
-				// Only primary instance plays ambient loops and weather SFX
-				if (isPrimaryInstance()) {
-					void setAmbientWeather(weather);
+			if (isPrimaryInstance()) {
+				if (weather !== lastAmbientWeather || !isAmbientPlaying()) {
+					lastAmbientWeather = weather;
+					setAmbientWeather(weather).catch(err => { console.error(`[pompom] setAmbientWeather failed: ${err instanceof Error ? err.message : err}`); });
 					startWeatherSfx();
 				}
+			} else if (weather !== lastAmbientWeather) {
+				lastAmbientWeather = weather;
 			}
 			// TTS ducking: duck when TTS starts, unduck when it stops
 			const ttsPlaying = isPlayingTTS();
@@ -1159,6 +1163,8 @@ export default function (pi: ExtensionAPI) {
 			loadedAmbientHintShown = false;
 			lastAmbientWeather = null;
 			wasTTSPlaying = false;
+			lastProactiveAlertAt = 0;
+			widgetVisible = true;
 			initVoice(Boolean(switchCtx.hasUI));
 			initAmbient(Boolean(switchCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {
@@ -1642,7 +1648,7 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				if (sub.startsWith("volume ") || sub.startsWith("vol ")) {
-					const val = parseInt(sub.split(" ")[1]);
+					const val = parseInt(sub.replace(/^(volume|vol)\s+/, ""), 10);
 					if (isNaN(val) || val < 0 || val > 100) {
 						commandContext.ui.notify("Usage: /pompom:voice volume 0-100", "warning");
 						return;
@@ -1698,7 +1704,7 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				if (sub.startsWith("volume ") || sub.startsWith("vol ")) {
-					const val = parseInt(sub.split(" ")[1]);
+					const val = parseInt(sub.replace(/^(volume|vol)\s+/, ""), 10);
 					if (isNaN(val) || val < 0 || val > 100) {
 						commandContext.ui.notify("Usage: /pompom:ambient volume 0-100", "warning");
 						return;

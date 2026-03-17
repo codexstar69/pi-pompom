@@ -146,7 +146,10 @@ export function getOtherInstances(): InstanceInfo[] {
 /** Is this instance the elected primary (oldest live startedAt, tie-break by instanceId)? */
 export function isPrimaryInstance(): boolean {
 	const live = getLiveInstances();
-	if (live.length === 0) return true; // no peers = we're primary
+	// Ensure this instance is included even if file hasn't been written yet
+	if (!live.some(i => i.instanceId === instanceId)) {
+		live.push({ instanceId, pid, tty, cwd: "", startedAt: startedAt || Date.now(), heartbeat: Date.now() });
+	}
 	live.sort((a, b) => a.startedAt - b.startedAt || a.instanceId.localeCompare(b.instanceId));
 	return live[0].instanceId === instanceId;
 }

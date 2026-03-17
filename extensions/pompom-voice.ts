@@ -194,7 +194,9 @@ function loadVoiceConfig(): VoiceConfig {
 function saveVoiceConfig(): void {
 	try {
 		fs.mkdirSync(CONFIG_DIR, { recursive: true });
-		fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, "\t"));
+		const tmp = CONFIG_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, JSON.stringify(config, null, "\t"));
+		fs.renameSync(tmp, CONFIG_FILE);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom-voice] saveVoiceConfig failed: ${msg}`);
@@ -602,7 +604,7 @@ async function processQueue(): Promise<void> {
 		isProcessingQueue = false;
 		// Re-check: items may have been enqueued during processing
 		if (queue.length > 0 && config.enabled && interactive && !stopRequested) {
-			void processQueue();
+			processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); });
 		}
 	}
 }

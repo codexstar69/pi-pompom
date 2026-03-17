@@ -100,7 +100,9 @@ function loadConfig(): AmbientConfig {
 function saveConfig(): void {
 	try {
 		fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-		fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, "\t"));
+		const tmp = CONFIG_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, JSON.stringify(config, null, "\t"));
+		fs.renameSync(tmp, CONFIG_FILE);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom-ambient] saveConfig failed: ${msg}`);
@@ -266,6 +268,10 @@ export function initAmbient(isInteractive: boolean): void {
 	config = loadConfig();
 	// Ensure custom directory exists so users know where to drop files
 	try { fs.mkdirSync(CUSTOM_DIR, { recursive: true }); } catch { /* non-fatal */ }
+	sfxLastPlayedAt.clear();
+	lastAnySfxAt = 0;
+	sfxGenerating = false;
+	desiredWeather = null;
 }
 
 export function getAmbientConfig(): AmbientConfig {
@@ -616,8 +622,11 @@ function scheduleNextWeatherSfx(): void {
 
 	weatherSfxTimer = setTimeout(async () => {
 		if (!config.enabled || !interactive) return;
-		await playSfx(entry.sfx);
-		// Schedule next one
+		try {
+			await playSfx(entry.sfx);
+		} catch (err) {
+			console.error(`[pompom-ambient] weather SFX error: ${err instanceof Error ? err.message : err}`);
+		}
 		scheduleNextWeatherSfx();
 	}, delay);
 }
