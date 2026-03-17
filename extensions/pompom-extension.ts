@@ -516,6 +516,7 @@ export default function (pi: ExtensionAPI) {
 	// ─── AI-Generated Dynamic Speech ─────────────────────────────────────
 	let aiSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 	let aiSpeechCount = 0;
+	let aiSpeechEverScheduled = false;
 	let aiSpeechGeneration = 0;
 	let sessionStartMs = 0;
 	const AI_SPEECH_MAX = 15; // up to 15 unique AI-generated lines per session
@@ -574,7 +575,7 @@ export default function (pi: ExtensionAPI) {
 
 			const others = getOtherInstances();
 			const otherInfo = others.length > 0
-				? `other_terminals=${others.length} (dirs: ${others.map(o => o.cwd.split("/").pop()).join(", ")})`
+				? `other_terminals=${others.length} (dirs: ${others.map(o => (o.cwd.split("/").pop() ?? "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 40)).join(", ")})`
 				: "only_terminal=true";
 			const systemPrompt = "You are Pompom, a small fluffy pink coding companion who lives in the terminal. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, natural, and NEVER repeat yourself. Reference what's actually happening — the weather, time, what the agent is doing, or other terminals if they exist. Be a real companion, not a generic chatbot.";
 			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min, ${otherInfo}`;
@@ -586,7 +587,7 @@ export default function (pi: ExtensionAPI) {
 			).catch(() => null);
 			const response = await Promise.race([
 				apiCall,
-				new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+				new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
 			]);
 			if (!response) return null;
 			const text = extractTextContent((response as any).content);
@@ -601,7 +602,7 @@ export default function (pi: ExtensionAPI) {
 		if (aiSpeechTimer) clearTimeout(aiSpeechTimer);
 		const myGen = aiSpeechGeneration;
 		// First AI speech after 2-3 min, then every 4-6 min — keeps things lively
-		const isFirst = aiSpeechCount === 0;
+		const isFirst = !aiSpeechEverScheduled;
 		const delayMs = isFirst
 			? (2 + Math.random()) * 60 * 1000       // 2-3 min for first
 			: (4 + Math.random() * 2) * 60 * 1000;  // 4-6 min thereafter
@@ -620,6 +621,7 @@ export default function (pi: ExtensionAPI) {
 					trackAiLine(line);
 					pompomSay(line, 5.0, "commentary", 1, true);
 					aiSpeechCount++;
+					aiSpeechEverScheduled = true;
 				}
 			} catch {
 				// silent
@@ -1157,6 +1159,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			stopAiSpeech();
 			aiSpeechCount = 0;
+			aiSpeechEverScheduled = false;
 			aiSpeechHistory.length = 0;
 			sessionStartMs = 0;
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
@@ -1183,6 +1186,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			stopAiSpeech();
 			aiSpeechCount = 0;
+			aiSpeechEverScheduled = false;
 			aiSpeechHistory.length = 0;
 			sessionStartMs = Date.now();
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }

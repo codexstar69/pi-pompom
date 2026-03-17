@@ -246,6 +246,10 @@ function startPlayback(weather: Weather): void {
 				child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), file], { stdio: "ignore", detached: false });
 				break;
 			case "aplay":
+				if (file.endsWith(".mp3")) {
+					console.error("[pompom-ambient] aplay does not support .mp3 files, skipping: " + file);
+					return childProcess.spawn("true", [], { stdio: "ignore" });
+				}
 				child = childProcess.spawn("aplay", [file], { stdio: "ignore", detached: false });
 				break;
 			default:
@@ -272,10 +276,19 @@ function startPlayback(weather: Weather): void {
 			}
 		});
 
-		child.on("close", () => {
-			// If this child is still the active one, loop by spawning again
+		child.on("close", (code) => {
 			if (currentProcess === child && currentWeather === weather && config.enabled) {
-				currentProcess = spawnPlayer();
+				if (code !== 0) {
+					spawnRetries++;
+					if (spawnRetries > 3) { currentProcess = null; return; }
+					setTimeout(() => {
+						if (currentWeather === weather && config.enabled && !currentProcess) {
+							currentProcess = spawnPlayer();
+						}
+					}, 2000 * spawnRetries);
+				} else {
+					currentProcess = spawnPlayer();
+				}
 			} else if (currentProcess === child) {
 				currentProcess = null;
 			}
@@ -620,6 +633,10 @@ function playSfxFile(filePath: string): boolean {
 			child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), filePath], { stdio: "ignore", detached: false });
 			break;
 		case "aplay":
+			if (filePath.endsWith(".mp3")) {
+				console.error("[pompom-ambient] aplay does not support .mp3 files, skipping SFX: " + filePath);
+				return false;
+			}
 			child = childProcess.spawn("aplay", [filePath], { stdio: "ignore", detached: false });
 			break;
 		default:
