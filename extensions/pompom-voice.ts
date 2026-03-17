@@ -451,11 +451,11 @@ class ElevenLabsEngine implements TTSEngine {
 				text,
 				model_id: "eleven_v3",
 				voice_settings: {
-					stability: 0.0,
-					similarity_boost: 0.85,
-					style: 0.8,
-					use_speaker_boost: true,
-					speed: 1.1,
+					stability: 0.35, // Low enough for expressive character voice, high enough to avoid garbled output
+					similarity_boost: 0.75, // Natural clone fidelity without introducing artifacts
+					style: 0.65, // Emotional and animated, but not over-the-top
+					use_speaker_boost: true, // Enhances clarity for small-speaker playback
+					speed: 1.05, // Slightly snappy delivery without sounding rushed
 				},
 			}),
 			signal,
