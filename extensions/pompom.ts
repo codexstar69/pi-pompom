@@ -1560,6 +1560,10 @@ function resolveAndSpeak(now: number): void {
 			{ condition: () => agentErrorCount > 3, text: "[concerned] Things seem rough... need a hand?", cooldownKey: "agent_errors" },
 			{ condition: () => idleMs > 600_000, text: "[gentle] Just checking in... everything okay over there?", cooldownKey: "idle_checkin" },
 			{ condition: () => sessionMinutes >= 60, text: "[thoughtful] We've been at this a while... what a journey", cooldownKey: "session_milestone" },
+			{ condition: () => currentEmotionalState === "content" && energy > 70 && Date.now() - lastPlayedAt > 300_000, text: "[playful] Hey! Wanna play? Throw me a ball! Use /pompom ball", cooldownKey: "play_request" },
+			{ condition: () => currentEmotionalState === "happy" && energy > 60, text: "[excited] I feel like dancing! Press Alt+X or /pompom dance", cooldownKey: "dance_request" },
+			{ condition: () => currentEmotionalState === "bored" && energy > 40, text: "[curious] We could play a game! Try /pompom game", cooldownKey: "game_request" },
+			{ condition: () => currentEmotionalState === "content" && energy > 50 && !isSleeping, text: "[playful] Flip! Do a flip! Press Alt+Z!", cooldownKey: "flip_request" },
 		];
 		const eligible = CONTEXTUAL_DESIRES.filter(d => {
 			const lastUsed = contextualDesireCooldowns[d.cooldownKey] || 0;
@@ -1848,7 +1852,10 @@ function updatePhysics(dt: number) {
 			say(flipLines[Math.floor(Math.random() * flipLines.length)], 4.0, "reaction", 1, true);
 			emitSfx("flip_whoosh");
 		}
-		else if (now - lastIdleChaseAt > 120000 && Math.random() < 0.005) { lastIdleChaseAt = now; currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle"); }
+		else if (now - lastIdleChaseAt > 120000 && Math.random() < 0.005) { lastIdleChaseAt = now; currentState = "chasing"; actionTimer = 3.0; emitSfx("firefly_twinkle");
+			const chaseLines = ["[excited] Ooh, shiny!", "[curious] What's that light?", "[excited] Firefly! Come here!", "[playful] I'm gonna catch it!"];
+			say(chaseLines[Math.floor(Math.random() * chaseLines.length)], 2.0, "reaction", 1, true);
+		}
 		else if (Math.random() < 0.001 && speechTimer <= 0) {
 			// Only pick idle speech when in a non-negative state
 			const nowMs = Date.now();
@@ -1871,10 +1878,18 @@ function updatePhysics(dt: number) {
 		bounceY = -Math.abs(Math.sin(time * 10)) * 0.08;
 		lookX = dir * 0.5;
 		const nowMs = Date.now();
-		if (nowMs - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) { lastFootstepTime = nowMs; emitSfx("footstep_soft"); }
+		if (nowMs - lastFootstepTime >= FOOTSTEP_INTERVAL_MS) { lastFootstepTime = nowMs; emitSfx("footstep_soft");
+			if (Math.random() < 0.1) { // 10% chance per footstep = occasional hum while walking
+				const walkHums = ["[sings] Hmm hmm hmm...", "[sings] Dum dee dum...", "[sings] La la la..."];
+				say(walkHums[Math.floor(Math.random() * walkHums.length)], 2.0, "reaction", 1, true);
+			}
+		}
 		if (Math.abs(posX - targetX) < 0.05) {
 			isWalking = false; posX = targetX; bounceY = 0; lookX = 0;
-			if (Math.abs(posX) >= getScreenEdgeX() + 0.1) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; emitSfx("hide_tiptoe"); }
+			if (Math.abs(posX) >= getScreenEdgeX() + 0.1) { currentState = "offscreen"; actionTimer = 2.0 + Math.random() * 3.0; emitSfx("hide_tiptoe");
+				const hideLines = ["[playful] Catch me if you can!", "[whispers] I'll be hiding...", "[mischievously] Now you see me...", "[playful] Going on an adventure!", "[giggles] Bye bye for now!"];
+				say(hideLines[Math.floor(Math.random() * hideLines.length)], 2.0, "reaction", 1, true);
+			}
 			else currentState = "idle";
 		}
 	}
@@ -2492,6 +2507,7 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "m") {
 		isSleeping = false; currentState = "singing"; actionTimer = 5.0;
+		emitSfx("dance_sparkle");
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
@@ -2521,6 +2537,9 @@ export function pompomKeypress(key: string) {
 	else if (key === "o") { isSleeping = false; currentState = "walk"; targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); isWalking = true; }
 	else if (key === "x") {
 		isSleeping = false; currentState = "dance"; actionTimer = 4.0;
+		emitSfx("dance_sparkle");
+		const danceLines = ["[excited] Dance party!", "[sings] Shake shake shake!", "[happy] Let's groove!", "[excited] Watch my moves!"];
+		say(danceLines[Math.floor(Math.random() * danceLines.length)], 3.0, "reaction", 1, true);
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
