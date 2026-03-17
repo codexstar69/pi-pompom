@@ -333,7 +333,7 @@ class PompomSettingsPanel {
 		}
 	}
 
-	private cleanup() {
+	cleanup() {
 		if (this.statusTimer) { clearTimeout(this.statusTimer); this.statusTimer = null; }
 	}
 
@@ -677,7 +677,7 @@ export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSet
 
 	await ctx.ui.custom(
 		(_tui: any, _theme: any, _kb: any, done: (v?: any) => void) => {
-			panel.onClose = () => done();
+			panel.onClose = () => { panel.cleanup(); done(); };
 			return panel;
 		},
 		{

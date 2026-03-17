@@ -9,6 +9,7 @@ import type { SpeechEvent } from "./pompom-voice";
 import { claimGreeting, getOtherInstances } from "./pompom-instance";
 import * as path from "path";
 import * as fs from "fs";
+import os from "node:os";
 
 // ─── Rendering Config ────────────────────────────────────────────────────────
 // Widget dimensions — set once, used by renderPompom
@@ -369,7 +370,7 @@ const spokenRing: string[] = [];
 const RING_SIZE = 20;
 
 // ─── Session Tracking ───────────────────────────────────────────────────────
-const STATS_FILE = path.join(process.env.HOME || "~", ".pi", "pompom", "stats.json");
+const STATS_FILE = path.join(os.homedir(), ".pi", "pompom", "stats.json");
 let sessionCount = 1;
 try {
 	const statsDir = path.dirname(STATS_FILE);
@@ -1216,12 +1217,13 @@ function buildObjects(): RenderObj[] {
 	);
 
 	if (isSleeping) {
-		const eL = objects.find(o => o.id === "earL")!;
-		const eR = objects.find(o => o.id === "earR")!;
+		const eL = objects.find(o => o.id === "earL");
+		const eR = objects.find(o => o.id === "earR");
+		const pL = objects.find(o => o.id === "pawL");
+		const pR = objects.find(o => o.id === "pawR");
+		if (!eL || !eR || !pL || !pR) return objects; // skip frame if objects missing
 		eL.rot = 1.3; eL.y += 0.08; eL.x -= 0.08;
 		eR.rot = -1.3; eR.y += 0.08; eR.x += 0.08;
-		const pL = objects.find(o => o.id === "pawL")!;
-		const pR = objects.find(o => o.id === "pawR")!;
 		pL.y += 0.05; pL.x -= 0.1; pR.y += 0.05; pR.x += 0.1;
 	}
 
@@ -1584,6 +1586,8 @@ function updatePhysics(dt: number) {
 				if (weatherState === "rain" || weatherState === "storm") {
 					say("I wish I had an umbrella... /pompom give umbrella", 5.0, "system", 2, true);
 				}
+				const idx = weatherAccessoryTimers.indexOf(handle);
+				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
 			}, 3000);
 			weatherAccessoryTimers.push(handle);
 		}
@@ -1593,6 +1597,8 @@ function updatePhysics(dt: number) {
 				if (weatherState === "snow") {
 					say("Brrr! A scarf would be nice... /pompom give scarf", 5.0, "system", 2, true);
 				}
+				const idx = weatherAccessoryTimers.indexOf(handle);
+				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
 			}, 3000);
 			weatherAccessoryTimers.push(handle);
 		}
@@ -1602,6 +1608,8 @@ function updatePhysics(dt: number) {
 				if (weatherState === "storm") {
 					say("This storm is scary! /pompom give umbrella", 5.0, "system", 2, true);
 				}
+				const idx = weatherAccessoryTimers.indexOf(handle);
+				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
 			}, 2000);
 			weatherAccessoryTimers.push(handle);
 		}
@@ -2560,8 +2568,6 @@ export function pompomStatus(): { hunger: number; energy: number; mood: string; 
 /** Current widget height in character rows (scene + 1 status line).
  *  Returns a live value since H can change when renderPompom resizes. */
 export function pompomHeight(): number { return H + 1; }
-/** @deprecated Use pompomHeight() — this constant is stale after resize. */
-export const POMPOM_HEIGHT = H + 1;
 
 export function pompomGiveAccessory(item: string): string {
 	const key = item.toLowerCase().trim();

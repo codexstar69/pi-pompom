@@ -1363,6 +1363,10 @@ export default function (pi: ExtensionAPI) {
 				clearInterval(companionTimer);
 				companionTimer = null;
 			}
+			if (voiceCheckTimer) {
+				clearInterval(voiceCheckTimer);
+				voiceCheckTimer = null;
+			}
 			pauseAmbient();
 			try {
 				if (ctx?.hasUI) {
