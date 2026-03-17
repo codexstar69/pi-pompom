@@ -854,6 +854,12 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		// Sunglasses — dark reflective
 		r = 20; g = 20; b = 30;
 		gloss = 200;
+	} else if (hitObj.mat === 14) {
+		// Hat — soft navy blue with a subtle band pattern
+		r = 60; g = 70; b = 120;
+		const band = Math.abs(hitV - 0.4) < 0.1 ? 1 : 0;
+		if (band) { r = 90; g = 100; b = 150; } // lighter ribbon band
+		gloss = 16;
 	}
 
 	// Lighting
@@ -1165,6 +1171,16 @@ function buildObjects(): RenderObj[] {
 		objects.push(
 			{ id: "sunglasses", mat: 13, x: posX - 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 },
 			{ id: "sunglasses", mat: 13, x: posX + 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 }
+		);
+	}
+
+	// Hat — always visible when owned (a cute little beret/beanie on top of head)
+	if (accessories.hat) {
+		objects.push(
+			// Hat brim — wide flat ellipse sitting on top of head
+			{ id: "hat_brim", mat: 14, x: posX, y: baseY - 0.28, rx: 0.16, ry: 0.025, z: 0.22 },
+			// Hat crown — rounded dome above brim
+			{ id: "hat_crown", mat: 14, x: posX, y: baseY - 0.34, rx: 0.12, ry: 0.06, z: 0.22 }
 		);
 	}
 
