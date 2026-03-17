@@ -289,7 +289,7 @@ class PompomSettingsPanel {
 				if (this.onPregenerate) {
 					void this.onPregenerate().then((count) => {
 						this.showStatus(`Generated ${count} new tracks`);
-					});
+					}).catch(err => console.error("[pompom] pregenerateAll failed:", err instanceof Error ? err.message : err));
 				}
 			}
 			// row 3 = cache info (read-only)

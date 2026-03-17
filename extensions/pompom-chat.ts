@@ -360,6 +360,10 @@ export class PompomChatOverlay implements Component, Focusable {
 			}
 			msgIndex++;
 		}
+		const maxKey = this.agent.state.messages.length;
+		for (const key of this.userInputTexts.keys()) {
+			if (key < maxKey - 50) this.userInputTexts.delete(key);
+		}
 		// Append locally-injected messages (help output, etc.) — they survive agent syncs
 		for (const lm of this.localMessages) {
 			this.displayMessages.push(lm);

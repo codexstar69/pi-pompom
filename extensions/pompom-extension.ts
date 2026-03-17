@@ -181,15 +181,24 @@ function loadAccessories(): Record<string, boolean> {
 	}
 }
 
-function saveAccessories(): void {
+let savingAccessories = false;
+let accessoriesDirty = false;
+
+async function saveAccessories(): Promise<void> {
+	if (savingAccessories) { accessoriesDirty = true; return; }
+	savingAccessories = true;
 	try {
-		fs.mkdirSync(SAVE_DIR, { recursive: true });
+		const dir = SAVE_DIR;
+		await fs.promises.mkdir(dir, { recursive: true });
 		const tmp = SAVE_FILE + ".tmp." + process.pid;
-		fs.writeFileSync(tmp, JSON.stringify(pompomGetAccessories()));
-		fs.renameSync(tmp, SAVE_FILE);
+		await fs.promises.writeFile(tmp, JSON.stringify(pompomGetAccessories()));
+		await fs.promises.rename(tmp, SAVE_FILE);
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom] saveAccessories failed: ${msg}`);
+	} finally {
+		savingAccessories = false;
+		if (accessoriesDirty) { accessoriesDirty = false; void saveAccessories(); }
 	}
 }
 
@@ -1512,7 +1521,7 @@ export default function (pi: ExtensionAPI) {
 						return;
 					}
 					const result = pompomGiveAccessory(item);
-					saveAccessories();
+					void saveAccessories();
 					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
 					commandContext.ui.notify(result, "info");
 					return;
@@ -1985,7 +1994,7 @@ export default function (pi: ExtensionAPI) {
 				await runSafely(acc.name, async () => {
 					ctx = commandContext;
 					const result = pompomGiveAccessory(acc.item);
-					saveAccessories();
+					void saveAccessories();
 					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
 					commandContext.ui.notify(result, "info");
 				});

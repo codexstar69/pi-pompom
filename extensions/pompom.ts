@@ -1760,7 +1760,7 @@ function updatePhysics(dt: number) {
 			const fetchLines = ["[excited] Ball! I got it I got it!", "[excited] Ooh, ball incoming!", "[happy] Here I come!", "[excited] Mine mine mine!"];
 			say(fetchLines[Math.floor(Math.random() * fetchLines.length)], 2.0, "reaction", 2, true);
 		}
-		else if (Math.random() < 0.005) {
+		else if (Math.random() < 0.005 && !isTalking) {
 			if (Math.random() < 0.15) targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); // occasional sneaky walk — stays 20-30% visible
 			else targetX = (Math.random() - 0.5) * (getScreenEdgeX() * 0.6);
 			currentState = "walk"; isWalking = true;

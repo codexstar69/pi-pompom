@@ -120,6 +120,7 @@ const VOICE_CATALOG: Record<string, { name: string; id: string }[]> = {
 };
 
 const kokoroCache = new Map<string, { buffer: Buffer; durationMs: number }>();
+const MAX_KOKORO_CACHE = 10;
 
 let config: VoiceConfig = loadVoiceConfig();
 let interactive = false;
@@ -136,6 +137,7 @@ let lastSpeakTime = 0;
 let currentPlayback: childProcess.ChildProcess | null = null;
 let stopRequested = false;
 let consecutiveFailures = 0;
+let currentAbortController: AbortController | null = null;
 
 function sanitizeSpeechText(text: string): string {
 	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -362,9 +364,9 @@ class KokoroEngine implements TTSEngine {
 			buffer,
 			durationMs: estimateDurationMs(buffer),
 		};
-		if (kokoroCache.size >= 50) {
-			const firstKey = kokoroCache.keys().next().value;
-			if (firstKey) kokoroCache.delete(firstKey);
+		if (kokoroCache.size >= MAX_KOKORO_CACHE) {
+			const oldest = kokoroCache.keys().next().value;
+			if (oldest !== undefined) kokoroCache.delete(oldest);
 		}
 		kokoroCache.set(cacheKey, result);
 		return result;
@@ -394,6 +396,9 @@ class DeepgramEngine implements TTSEngine {
 		url.searchParams.set("encoding", "linear16");
 		url.searchParams.set("container", "wav");
 
+		const signal = currentAbortController
+			? AbortSignal.any([currentAbortController.signal, AbortSignal.timeout(15000)])
+			: AbortSignal.timeout(15000);
 		const response = await fetch(url.toString(), {
 			method: "POST",
 			headers: {
@@ -401,7 +406,7 @@ class DeepgramEngine implements TTSEngine {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ text }),
-			signal: AbortSignal.timeout(15000),
+			signal,
 		});
 		if (!response.ok) {
 			throw new Error(`Deepgram TTS failed: HTTP ${response.status}`);
@@ -432,6 +437,9 @@ class ElevenLabsEngine implements TTSEngine {
 		// voice can be a voice ID or a name — the API accepts both
 		const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`;
 
+		const signal = currentAbortController
+			? AbortSignal.any([currentAbortController.signal, AbortSignal.timeout(15000)])
+			: AbortSignal.timeout(15000);
 		const response = await fetch(url + "?enable_logging=false&output_format=pcm_24000", {
 			method: "POST",
 			headers: {
@@ -450,7 +458,7 @@ class ElevenLabsEngine implements TTSEngine {
 					speed: 1.1,
 				},
 			}),
-			signal: AbortSignal.timeout(15000),
+			signal,
 		});
 
 		if (!response.ok) {
@@ -534,6 +542,7 @@ async function processQueue(): Promise<void> {
 			if (!nextEvent) {
 				continue;
 			}
+			currentAbortController = new AbortController();
 			try {
 				const engine = await resolveEngine();
 				if (!engine) {
@@ -892,6 +901,7 @@ export function stopPlayback(): void {
 		playbackActive = false;
 		stopRequested = true;
 		consecutiveFailures = 0;
+		if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
 		// Do NOT set isProcessingQueue = false here — let processQueue's own finally handle it.
 		// Setting it here would break mutual exclusion if processQueue is still running.
 		if (agentEndCooldownTimer) { clearTimeout(agentEndCooldownTimer); agentEndCooldownTimer = null; }
