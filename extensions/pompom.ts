@@ -439,6 +439,7 @@ interface Particle {
 	char: string; r: number; g: number; b: number; life: number; type: string;
 }
 const particles: Particle[] = [];
+const MAX_PARTICLES = 200;
 
 let screenChars: string[][] = [];
 let screenColors: string[][] = [];
@@ -730,6 +731,7 @@ function getObjHit(px: number, py: number, objects: RenderObj[]) {
 				const nny = hitNx * obj.s + hitNy * obj.c;
 				hitNx = nnx; hitNy = nny;
 			}
+			break;
 		}
 	}
 	return { hitObj, hitNx, hitNy, hitNz, hitU, hitV };
@@ -1583,17 +1585,17 @@ function updatePhysics(dt: number) {
 	const weather = getWeather();
 	const effectDim = Math.max(40, Math.min(W, H * 4.5));
 	const wScale = 2.0 / effectDim;
-	if (weather === "rain" && Math.random() < 0.4) {
+	if (weather === "rain" && Math.random() < 0.4 && particles.length < MAX_PARTICLES) {
 		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.15, vy: 2.5 + Math.random(), char: "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
 	}
-	if (weather === "storm" && Math.random() < 0.6) {
+	if (weather === "storm" && Math.random() < 0.6 && particles.length < MAX_PARTICLES) {
 		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.4 + Math.random() * 0.3, vy: 3.0 + Math.random() * 2, char: "/", r: 180, g: 200, b: 255, life: 0.8, type: "rain" });
 		// Occasional lightning flash (brief bright particle)
 		if (Math.random() < 0.005) {
 			particles.push({ x: (Math.random() - 0.5) * W * wScale * 0.5, y: -H * wScale * 0.5, vx: 0, vy: 0, char: "#", r: 255, g: 255, b: 255, life: 0.1, type: "lightning" });
 		}
 	}
-	if (weather === "snow" && Math.random() < 0.2) {
+	if (weather === "snow" && Math.random() < 0.2 && particles.length < MAX_PARTICLES) {
 		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: (Math.random() - 0.5) * 0.3, vy: 0.4 + Math.random() * 0.3, char: ".", r: 240, g: 245, b: 255, life: 3.0, type: "snow" });
 	}
 

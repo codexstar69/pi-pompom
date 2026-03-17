@@ -266,7 +266,7 @@ function resolveMood(now = Date.now()): AgentMood {
 	if (state.lastToolFailedAt > 0 && now - state.lastToolFailedAt < 45000) {
 		return "concerned";
 	}
-	if (state.lastAgentEndAt > 0 && now - state.lastAgentEndAt < 18000 && state.lastToolSucceededAt >= state.lastToolFailedAt) {
+	if (state.lastAgentEndAt > 0 && now - state.lastAgentEndAt < 18000 && state.lastToolSucceededAt > 0 && state.lastToolSucceededAt >= state.lastToolFailedAt) {
 		return "celebrating";
 	}
 	if (activeToolCount >= 2) {

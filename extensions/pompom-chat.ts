@@ -512,7 +512,7 @@ export class PompomChatOverlay implements Component, Focusable {
 			const toSave = this.displayMessages.slice(1).filter(m => m.role === "user" || m.role === "pompom");
 			const rawCapped = toSave.slice(-CHAT_HISTORY_MAX);
 			// Trim to even number to keep user+pompom pairs together
-			const capped = rawCapped.length % 2 === 0 ? rawCapped : rawCapped.slice(1);
+			const capped = rawCapped.length % 2 === 0 ? rawCapped : rawCapped.slice(0, -1);
 			const data = JSON.stringify({ v: 1, messages: capped }, null, 2);
 			const tmp = CHAT_HISTORY_FILE + ".tmp." + process.pid;
 			fs.writeFileSync(tmp, data, "utf-8");

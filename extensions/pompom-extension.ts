@@ -503,6 +503,7 @@ export default function (pi: ExtensionAPI) {
 	// ─── AI-Generated Dynamic Speech ─────────────────────────────────────
 	let aiSpeechTimer: ReturnType<typeof setTimeout> | null = null;
 	let aiSpeechCount = 0;
+	let aiSpeechGeneration = 0;
 	let sessionStartMs = 0;
 	const AI_SPEECH_MAX = 8;
 	const aiSpeechHistory: string[] = []; // last 10 AI-generated lines for dedup
@@ -580,10 +581,12 @@ export default function (pi: ExtensionAPI) {
 
 	function scheduleAiSpeech() {
 		if (aiSpeechTimer) clearTimeout(aiSpeechTimer);
+		const myGen = aiSpeechGeneration;
 		// 8-12 minutes randomized
 		const delayMs = (8 + Math.random() * 4) * 60 * 1000;
 		aiSpeechTimer = setTimeout(async () => {
 			try {
+				if (myGen !== aiSpeechGeneration) return;
 				if (!enabled || !companionActive) { scheduleAiSpeech(); return; }
 				if (!isPrimaryInstance()) { scheduleAiSpeech(); return; }
 				if (aiSpeechCount >= AI_SPEECH_MAX) return; // no more this session
@@ -600,11 +603,13 @@ export default function (pi: ExtensionAPI) {
 			} catch {
 				// silent
 			}
+			if (myGen !== aiSpeechGeneration) return;
 			if (aiSpeechCount < AI_SPEECH_MAX) scheduleAiSpeech();
 		}, delayMs);
 	}
 
 	function stopAiSpeech() {
+		aiSpeechGeneration++;
 		if (aiSpeechTimer) { clearTimeout(aiSpeechTimer); aiSpeechTimer = null; }
 	}
 
@@ -1116,6 +1121,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			stopAiSpeech();
 			aiSpeechCount = 0;
+			aiSpeechHistory.length = 0;
 			sessionStartMs = 0;
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
@@ -1141,6 +1147,7 @@ export default function (pi: ExtensionAPI) {
 			stopAmbientWeatherSync();
 			stopAiSpeech();
 			aiSpeechCount = 0;
+			aiSpeechHistory.length = 0;
 			sessionStartMs = Date.now();
 			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
 			chatOverlayHandle = null;
@@ -1149,6 +1156,9 @@ export default function (pi: ExtensionAPI) {
 			ctx = switchCtx;
 			registerInstance(switchCtx.cwd);
 			loadedVoiceHintShown = false;
+			loadedAmbientHintShown = false;
+			lastAmbientWeather = null;
+			wasTTSPlaying = false;
 			initVoice(Boolean(switchCtx.hasUI));
 			initAmbient(Boolean(switchCtx.hasUI));
 			pompomOnSpeech((event: SpeechEvent) => {

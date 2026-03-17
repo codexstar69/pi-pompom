@@ -580,7 +580,7 @@ async function processQueue(): Promise<void> {
 			} catch (itemError) {
 				playbackActive = false;
 				const errName = itemError instanceof Error ? itemError.name : "";
-				if (errName === "AbortError" || errName === "TimeoutError") {
+				if ((errName === "AbortError" || errName === "TimeoutError") && stopRequested) {
 					// User-initiated stop or abort — not a synthesis failure
 					break;
 				}
@@ -598,6 +598,7 @@ async function processQueue(): Promise<void> {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom-voice] processQueue unexpected error: ${msg}`);
 	} finally {
+		playbackActive = false;
 		isProcessingQueue = false;
 		// Re-check: items may have been enqueued during processing
 		if (queue.length > 0 && config.enabled && interactive && !stopRequested) {
@@ -674,8 +675,9 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		if (!config.enabled || !interactive || !event.allowTts) {
 			return;
 		}
-		// Clear stop flag — new speech requested means user/system wants TTS active again
-		stopRequested = false;
+		// Clear stop flag — only high-priority speech should re-enable after a stop
+		if (event.priority >= 3) stopRequested = false;
+		if (stopRequested) return;
 		// Hard guard: don't enqueue anything while already playing
 		if (playbackActive) {
 			return;

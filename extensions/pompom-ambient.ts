@@ -316,7 +316,7 @@ export async function setAmbientWeather(weather: Weather): Promise<void> {
 			generating = true;
 			try {
 				const ok = await generateAudio(target);
-				if (!ok) break;
+				if (!ok || !config.enabled) break;
 			} finally {
 				generating = false;
 			}
@@ -562,12 +562,12 @@ async function ensureSfx(name: SfxName): Promise<string | null> {
 	}
 }
 
-function playSfxFile(filePath: string): void {
-	if (process.platform !== "darwin") return;
+function playSfxFile(filePath: string): boolean {
+	if (process.platform !== "darwin") return false;
 	// Don't interrupt another SFX that's playing
-	if (sfxProcess) return;
+	if (sfxProcess) return false;
 
-	const vol = (config.volume / 100 * 0.15).toFixed(2); // SFX at ~15% of ambient volume — barely-there accents, never distracting
+	const vol = Math.max(0.05, config.volume / 100 * 0.15).toFixed(2); // SFX at ~15% of ambient volume — barely-there accents, never distracting
 	const child = childProcess.spawn("afplay", ["-v", vol, filePath], {
 		stdio: "ignore",
 		detached: false,
@@ -578,6 +578,7 @@ function playSfxFile(filePath: string): void {
 		console.error(`[pompom-ambient] SFX playback error: ${err instanceof Error ? err.message : String(err)}`);
 		if (sfxProcess === child) sfxProcess = null;
 	});
+	return true;
 }
 
 /** Play a one-shot sound effect by name. Generates on first use.
@@ -595,9 +596,10 @@ export async function playSfx(name: SfxName): Promise<void> {
 
 	const file = await ensureSfx(name);
 	if (file) {
-		sfxLastPlayedAt.set(name, now);
-		lastAnySfxAt = now;
-		playSfxFile(file);
+		if (playSfxFile(file)) {
+			sfxLastPlayedAt.set(name, now);
+			lastAnySfxAt = now;
+		}
 	}
 }
 
