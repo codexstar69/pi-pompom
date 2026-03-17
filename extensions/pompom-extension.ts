@@ -518,7 +518,7 @@ export default function (pi: ExtensionAPI) {
 	let aiSpeechCount = 0;
 	let aiSpeechGeneration = 0;
 	let sessionStartMs = 0;
-	const AI_SPEECH_MAX = 8;
+	const AI_SPEECH_MAX = 15; // up to 15 unique AI-generated lines per session
 	const aiSpeechHistory: string[] = []; // last 10 AI-generated lines for dedup
 
 	function jaccardSimilarity(a: string, b: string): number {
@@ -572,8 +572,12 @@ export default function (pi: ExtensionAPI) {
 				? activeTools.map(t => t.toolName).join(", ")
 				: "idle";
 
-			const systemPrompt = "You are Pompom, a small fluffy pink coding companion. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, and natural \u2014 never generic.";
-			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min`;
+			const others = getOtherInstances();
+			const otherInfo = others.length > 0
+				? `other_terminals=${others.length} (dirs: ${others.map(o => o.cwd.split("/").pop()).join(", ")})`
+				: "only_terminal=true";
+			const systemPrompt = "You are Pompom, a small fluffy pink coding companion who lives in the terminal. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, natural, and NEVER repeat yourself. Reference what's actually happening — the weather, time, what the agent is doing, or other terminals if they exist. Be a real companion, not a generic chatbot.";
+			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min, ${otherInfo}`;
 
 			const apiCall = completeSimple(
 				model as any,
@@ -596,8 +600,11 @@ export default function (pi: ExtensionAPI) {
 	function scheduleAiSpeech() {
 		if (aiSpeechTimer) clearTimeout(aiSpeechTimer);
 		const myGen = aiSpeechGeneration;
-		// 8-12 minutes randomized
-		const delayMs = (8 + Math.random() * 4) * 60 * 1000;
+		// First AI speech after 2-3 min, then every 4-6 min — keeps things lively
+		const isFirst = aiSpeechCount === 0;
+		const delayMs = isFirst
+			? (2 + Math.random()) * 60 * 1000       // 2-3 min for first
+			: (4 + Math.random() * 2) * 60 * 1000;  // 4-6 min thereafter
 		aiSpeechTimer = setTimeout(async () => {
 			try {
 				if (myGen !== aiSpeechGeneration) return;
