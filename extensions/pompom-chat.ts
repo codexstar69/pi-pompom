@@ -84,6 +84,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private writeMode = false;
 	private lastTotalMsgLines = 0;
 	private lastMaxLines = 20;
+	private loadedHistory: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
 
 	get focused() { return this._focused; }
 	set focused(v: boolean) { this._focused = v; this.editor.focused = v; }
@@ -131,7 +132,9 @@ export class PompomChatOverlay implements Component, Focusable {
 				}
 				for (const m of msgs) {
 					if (m && typeof m === "object" && typeof (m as any).role === "string" && typeof (m as any).text === "string") {
-						this.displayMessages.push(m as { role: "user" | "pompom" | "tool" | "error"; text: string });
+						const entry = m as { role: "user" | "pompom" | "tool" | "error"; text: string };
+						this.loadedHistory.push(entry);
+						this.displayMessages.push(entry);
 					}
 				}
 			}
@@ -339,6 +342,8 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.displayMessages = [
 			{ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" },
 		];
+		// Re-add loaded history (from file) before current session's agent messages
+		for (const h of this.loadedHistory) this.displayMessages.push(h);
 		let msgIndex = 0;
 		for (const m of this.agent.state.messages) {
 			if (m.role === "user") {
@@ -422,8 +427,8 @@ export class PompomChatOverlay implements Component, Focusable {
 				this.scrollOffset = Math.max(0, this.scrollOffset - 3);
 				this.opts.tui.requestRender(); return;
 			}
-			// Plain Up/Down arrows for scrollback when already scrolled
-			if (matchesKey(data, Key.up) && this.scrollOffset > 0) {
+			// Plain Up/Down arrows — Up always initiates/continues scroll, Down only when scrolled
+			if (matchesKey(data, Key.up) && this.lastTotalMsgLines > this.lastMaxLines) {
 				this.scrollOffset = Math.min(this.scrollOffset + 1, Math.max(0, this.lastTotalMsgLines - this.lastMaxLines));
 				this.opts.tui.requestRender(); return;
 			}

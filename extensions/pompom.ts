@@ -6,7 +6,7 @@
  */
 
 import type { SpeechEvent } from "./pompom-voice";
-import { claimGreeting } from "./pompom-instance";
+import { claimGreeting, getOtherInstances } from "./pompom-instance";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -266,6 +266,24 @@ const TIME_AWARENESS_LINES: Array<{ text: string; timeOfDay: DetailedTimeOfDay[]
 	{ text: "[excited] Oh! Is this our first time meeting? Hi, I'm Pompom!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
 	{ text: "[happy] A brand new friend! I'm so excited to meet you!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
 	{ text: "[curious] Hello there! I'm Pompom, your coding companion!", timeOfDay: ["dawn", "morning", "day", "afternoon", "evening", "late_night", "deep_night"], oncePerPeriod: true, firstSession: true },
+];
+
+// ─── Multi-Terminal Aware Greetings ──────────────────────────────────────────
+// When Pompom detects other terminals are running, she says something contextual
+// instead of repeating the same time-of-day greeting
+const MULTI_TERMINAL_GREETINGS = [
+	"[curious] Another window! What are we working on here?",
+	"[happy] I see you've got another project going! Let's go!",
+	"[excited] A new terminal! I'll keep an eye on things here too",
+	"[curious] I peeked at your other terminal... busy day huh?",
+	"[playful] Terminal number {count}! You're on a roll!",
+	"[happy] Back for more? I'm here whenever you need me",
+	"[curious] Different project or same one? Either way, I'm ready!",
+	"[excited] Opening up a new workspace! What's the mission?",
+	"[happy] Oh hi! I'm already running next door, but happy to help here too!",
+	"[curious] What's on the agenda for this terminal?",
+	"[playful] Multitasking mode activated! Let's do this!",
+	"[happy] I'll coordinate with my other self to keep things quiet for you",
 ];
 
 // ─── Character Bible: Emotional State System ────────────────────────────────
@@ -1400,9 +1418,17 @@ function resolveAndSpeak(now: number): void {
 				lastTimeOfDayPeriod = tod;
 				announcedTimePeriods.add(tod);
 				lastEmotionalReactionAt = now;
-				lastSpokenText = timeLine.text;
 				if (timeLine.firstSession) firstSessionGreetingDone = true;
-				say(timeLine.text, 4.0, "commentary", 2, true);
+				// If other terminals are running, use a multi-terminal-aware greeting instead
+				const others = getOtherInstances();
+				let greetText = timeLine.text;
+				if (others.length > 0 && !timeLine.firstSession) {
+					const pool = MULTI_TERMINAL_GREETINGS;
+					greetText = pool[Math.floor(Math.random() * pool.length)]
+						.replace("{count}", String(others.length + 1));
+				}
+				lastSpokenText = greetText;
+				say(greetText, 4.0, "commentary", 2, true);
 				return;
 			}
 			// Even if we didn't speak, mark the period so we don't retry every frame

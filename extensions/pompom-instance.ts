@@ -25,7 +25,7 @@ const GREETING_FILE = path.join(POMPOM_DIR, "last-greeting.json");
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STALE_THRESHOLD_MS = 15_000;
-const GREETING_COOLDOWN_MS = 60_000;
+const GREETING_COOLDOWN_MS = 1_800_000; // 30 minutes — one greeting per time-of-day period
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
