@@ -589,8 +589,32 @@ export default function (pi: ExtensionAPI) {
 			const otherInfo = others.length > 0
 				? `other_terminals=${others.length} (dirs: ${others.map(o => (o.cwd.split("/").pop() ?? "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 40)).join(", ")})`
 				: "only_terminal=true";
-			const systemPrompt = "You are Pompom, a small fluffy pink coding companion who lives in the terminal. Generate ONE short line (under 15 words) that Pompom would say right now. Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful]. Be warm, caring, natural, and NEVER repeat yourself. Reference what's actually happening — the weather, time, what the agent is doing, or other terminals if they exist. Be a real companion, not a generic chatbot.";
-			const userPrompt = `State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min, ${otherInfo}`;
+			// Grab a brief snapshot of recent conversation so Pompom can comment on actual work
+			let workContext = "";
+			try {
+				const recent = buildRecentSessionMessages(ctx);
+				if (recent.length > 0) {
+					// Take last 2-3 messages, truncate heavily — just enough for topic awareness
+					const last = recent.slice(-3);
+					workContext = last.map(m => {
+						const text = extractTextContent(m.content);
+						return `${m.role}: ${text.slice(0, 80)}`;
+					}).join("\n");
+				}
+			} catch { /* non-fatal */ }
+
+			const systemPrompt = [
+				"You are Pompom, a small fluffy pink coding companion who lives in the terminal.",
+				"Generate ONE short line (under 15 words) that Pompom would say right now.",
+				"Use an emotion tag at the start like [happy], [curious], [excited], [whispers], [concerned], [playful].",
+				"Be warm, caring, natural, and NEVER repeat yourself.",
+				"If recent conversation context is provided, you may briefly and naturally reference what the user is working on — but keep it casual, not technical. You're a pet commenting on the vibes, not a code reviewer.",
+				"Only interrupt about the work rarely. Most of the time, comment on weather, time, mood, or just be cute.",
+			].join(" ");
+			const userPrompt = [
+				`State: mood=${stats.mood}, weather=${weather}, time=${timeOfDay}, agent=${toolDesc}, session=${sessionMinutes}min, ${otherInfo}`,
+				workContext ? `\nRecent work:\n${workContext}` : "",
+			].join("");
 
 			const apiCall = completeSimple(
 				model as any,
@@ -625,7 +649,9 @@ export default function (pi: ExtensionAPI) {
 				if (!isPrimaryInstance()) { scheduleAiSpeech(); return; }
 				if (aiSpeechCount >= AI_SPEECH_MAX) return; // no more this session
 				const stats = getSessionStats();
-				if (stats.isAgentActive) { scheduleAiSpeech(); return; }
+				// During active agent work, only interrupt rarely (20% chance) — most of
+				// Pompom's best comments come from watching the user work, not from silence
+				if (stats.isAgentActive && Math.random() > 0.2) { scheduleAiSpeech(); return; }
 				if (isPlayingTTS()) { scheduleAiSpeech(); return; }
 
 				const line = await generateDynamicLine();
