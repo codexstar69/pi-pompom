@@ -88,7 +88,7 @@ const SHORTCUT_GROUPS: { section: string; items: [string, string][] }[] = [
 		section: "Pet Actions",
 		items: [
 			["Alt+P", "Pet Pompom"],
-			["Alt+E", "Feed Pompom"],
+			["Alt+N", "Feed Pompom"],
 			["Alt+T", "Give treat"],
 			["Alt+U", "Hug Pompom"],
 			["Alt+R", "Throw ball"],

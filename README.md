@@ -120,6 +120,7 @@ Pompom narrates each feature as it happens — interactions, weather transitions
 | `/pompom:stuck` | Check if agent is stuck in error loop |
 | `/pompom:analyze` | Deep AI-powered session analysis |
 | `/pompom:terminals` | Show all running Pompom instances |
+| `/pompom:window` | Toggle native floating window (requires glimpseui) |
 | `/pompom-settings` | Interactive settings panel (9 tabs) |
 
 ## Keyboard Shortcuts
@@ -127,7 +128,7 @@ Pompom narrates each feature as it happens — interactions, weather transitions
 | macOS | Windows/Linux | Action |
 |-------|--------------|--------|
 | `⌥p` | `Alt+p` | Pet |
-| `⌥e` | `Alt+e` | Feed |
+| `⌥n` | `Alt+n` | Feed |
 | `⌥t` | `Alt+t` | Treat |
 | `⌥u` | `Alt+u` | Hug |
 | `⌥r` | `Alt+r` | Ball |
@@ -246,7 +247,7 @@ SFX features: micro-variations (3 variants per sound), time-of-day filtering (cr
 ### Contextual Shortcut Bar
 The status bar below Pompom shows only the 3-4 most relevant shortcuts for her current state:
 - Sleeping: only `⌥a Wake`
-- Hungry: `⌥e Feed` highlighted in peach
+- Hungry: `⌥n Feed` highlighted in peach
 - Tired: `⌥s Sleep` highlighted in lavender
 - State-specific: idle/walk/singing/game each get their own relevant shortcuts
 - Bold keys with paw icon prefix, dim labels, right-aligned state message
@@ -288,7 +289,8 @@ Monitors consecutive error streaks, stalled progress (>5 min), high error rate (
 ### Multi-Terminal Awareness
 - Primary instance election via heartbeat files (oldest terminal wins)
 - Only the primary terminal plays ambient audio, weather SFX, and greetings
-- Secondary terminals run visual-only (animation renders, no audio)
+- Secondary terminals stay visual-only for passive audio; `/pompom demo`
+  narration plays in the terminal that starts the demo
 - User-triggered SFX (pet, feed, etc.) play on the active terminal
 - `/pompom:terminals` shows all running instances
 

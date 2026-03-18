@@ -111,6 +111,7 @@ import {
 	stopPlayback,
 	playDemoLine,
 	isDemoCached,
+	isDemoLineCached,
 	type SpeechEvent,
 	type Personality,
 } from "./pompom-voice";
@@ -1015,9 +1016,14 @@ export default function (pi: ExtensionAPI) {
 		if (!enabled || !event.allowTts) {
 			return false;
 		}
-		// During demo, block all live TTS — cached demo audio handles voiceover
-		if (demoRunning) {
+		// During demo, block ambient/reaction TTS — but allow system-priority
+		// lines through in the terminal that started the demo so uncached demo
+		// lines can still get live TTS even when this instance is not primary.
+		if (demoRunning && event.source !== "system") {
 			return false;
+		}
+		if (demoRunning && event.source === "system") {
+			return true;
 		}
 		if (!isPrimaryInstance() && event.source !== "user_action") {
 			return false;
@@ -1831,7 +1837,7 @@ export default function (pi: ExtensionAPI) {
 	};
 	const shortcutActions: [string, string][] = [
 		["alt+p", "p"],  // Pet
-		["alt+e", "f"],  // Eat (feed)
+		["alt+n", "f"],  // Noms (feed)
 		["alt+r", "b"],  // thRow (ball)
 		["alt+z", "d"],  // Zoom flip
 		["alt+u", "h"],  // hUg
@@ -1998,6 +2004,7 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
+
 				if (sub === "help" || sub === "?") {
 					const modifier = process.platform === "darwin" ? "⌥" : "Alt+";
 					commandContext.ui.notify(
@@ -2006,7 +2013,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom off          Everything off (chat stays)\n` +
 						`  /pompom toggle       Toggle view         ${modifier}v\n` +
 						`  /pompom pet          Pet Pompom          ${modifier}p\n` +
-						`  /pompom feed         Drop food            ${modifier}e\n` +
+						`  /pompom feed         Drop food            ${modifier}n\n` +
 						`  /pompom treat        Special treat       ${modifier}t\n` +
 						`  /pompom hug          Give a hug          ${modifier}u\n` +
 						`  /pompom ball         Throw a ball        ${modifier}r\n` +
@@ -2030,7 +2037,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom:ambient      Weather ambient sounds — on|off|volume|pregenerate|reset\n` +
 						`  /pompom:terminals    Show all running Pompom terminals\n` +
 						`  /pompom-give-hat     Give Pompom a hat (also: umbrella, scarf, sunglasses)\n` +
-						`  /pompom window       Toggle native floating window\n` +
+						`  /pompom:window       Toggle native floating window (glimpseui)\n` +
 						`  /pompom demo         Autonomous ~135s showcase\n` +
 						`  /pompom-settings     Interactive settings panel`,
 						"info"
@@ -2149,15 +2156,17 @@ export default function (pi: ExtensionAPI) {
 					const q = (ms: number, fn: () => void) => {
 						activeDemoTimers.push(setTimeout(() => { if (demoRunning) fn(); }, ms));
 					};
-					// Show bubble + play cached audio. allowTts=true so the speech system works normally.
-					// The live TTS queue will try to synthesize but we stop it immediately after playing cached.
+					// Show bubble + play cached audio per-line. Lines with a cached WAV
+					// play from disk; lines without fall back to live TTS synthesis.
 					const say = (key: string, text: string, dur = 3.0) => {
 						// Clear transient particles (sparkles/notes) but keep weather
 						pompomClearParticles("transient");
-						if (cached) {
+						if (isDemoLineCached(key)) {
 							pompomSay(text, dur, "system", 10, false);
-							if (isPrimaryInstance()) { stopPlayback(); playDemoLine(key); }
+							stopPlayback();
+							playDemoLine(key);
 						} else {
+							// allowTts=true so live TTS can synthesize this line
 							pompomSay(text, dur, "system", 10, true);
 						}
 					};
@@ -2255,7 +2264,9 @@ export default function (pi: ExtensionAPI) {
 					t += 4500;
 					q(t, () => stopDemo());
 
-					commandContext.ui.notify(`Demo${cached ? " with voiceover" : ""} (~${Math.round(t / 1000)}s). /pompom demo to stop.`, "info");
+					const cachedCount = demoKeys.filter(k => isDemoLineCached(k)).length;
+					const voiceLabel = cached ? " with voiceover" : cachedCount > 0 ? ` with voiceover (${cachedCount}/${demoKeys.length} cached)` : "";
+					commandContext.ui.notify(`Demo${voiceLabel} (~${Math.round(t / 1000)}s). /pompom demo to stop.`, "info");
 					return;
 				}
 
@@ -2803,6 +2814,29 @@ export default function (pi: ExtensionAPI) {
 		pompomSetAntennaGlow({ intensity: 0 });
 		pompomSetAgentEarBoost({ amount: 0 });
 	}
+
+	pi.registerCommand("pompom:window", {
+		description: "Toggle native floating window (requires glimpseui)",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:window", async () => {
+				ctx = commandContext;
+				const available = await isGlimpseAvailable();
+				if (!available) {
+					commandContext.ui.notify(
+						"Native window requires the 'glimpseui' package.\n" +
+						"Install with: bun add glimpseui",
+						"warning"
+					);
+					return;
+				}
+				const opened = await toggleNativeWindow();
+				commandContext.ui.notify(
+					opened ? "Native window opened." : "Native window closed.",
+					"info"
+				);
+			});
+		},
+	});
 
 	pi.registerCommand("pompom:demo", {
 		description: "Run an autonomous showcase of Pompom (~135s, social-media ready)",

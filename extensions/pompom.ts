@@ -479,7 +479,6 @@ let lastActivityRequestAt = 0;
 const ACTIVITY_REQUEST_COOLDOWN_MS = 120_000; // min 2 min between requests
 const ACTIVITY_REQUEST_STATES: EmotionalState[] = ["content", "happy", "blissful", "playful", "bored"];
 
-const modifier = typeof process !== "undefined" && process.platform === "darwin" ? "\u2325" : "Alt+";
 
 interface ActivityRequest {
 	text: string;
@@ -489,30 +488,30 @@ interface ActivityRequest {
 
 const ACTIVITY_REQUESTS: ActivityRequest[] = [
 	// Singing
-	{ text: `[excited] Sing with me! (${modifier}M)`, states: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
-	{ text: `[happy] I feel a song coming on... (${modifier}M)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
-	{ text: `[sings] La la... oh! Wanna hear a full song? (${modifier}M)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: `[excited] Sing with me!`, states: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
+	{ text: `[happy] I feel a song coming on...`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: `[sings] La la... oh! Wanna hear a full song?`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
 	// Dancing
-	{ text: `[excited] Dance party! Come on! (${modifier}X)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
-	{ text: `[playful] I've got the wiggles... let's dance! (${modifier}X)`, states: ["playful", "happy"], minEnergy: 40 },
-	{ text: `[excited] Watch my moves! (${modifier}X)`, states: ["blissful", "playful"], minEnergy: 50 },
+	{ text: `[excited] Dance party! Come on!`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: `[playful] I've got the wiggles... let's dance!`, states: ["playful", "happy"], minEnergy: 40 },
+	{ text: `[excited] Watch my moves!`, states: ["blissful", "playful"], minEnergy: 50 },
 	// Ball
-	{ text: `[excited] Throw me the ball! Please! (${modifier}B)`, states: ["playful", "happy", "bored", "content"], minEnergy: 30 },
-	{ text: `[curious] Where's the ball? I wanna play! (${modifier}B)`, states: ["playful", "bored"], minEnergy: 30 },
+	{ text: `[excited] Throw me the ball! Please!`, states: ["playful", "happy", "bored", "content"], minEnergy: 30 },
+	{ text: `[curious] Where's the ball? I wanna play!`, states: ["playful", "bored"], minEnergy: 30 },
 	// Game
-	{ text: `[excited] Let's play catch the stars! (${modifier}G)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
-	{ text: `[curious] Star game? I bet I beat my record! (${modifier}G)`, states: ["playful", "happy"], minEnergy: 40 },
+	{ text: `[excited] Let's play catch the stars!`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
+	{ text: `[curious] Star game? I bet I beat my record!`, states: ["playful", "happy"], minEnergy: 40 },
 	// Flip
-	{ text: `[excited] Do a flip! Do a flip! (${modifier}D)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
-	{ text: `[mischievously] Flip time? Flip time. (${modifier}D)`, states: ["playful"], minEnergy: 40 },
+	{ text: `[excited] Do a flip! Do a flip!`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
+	{ text: `[mischievously] Flip time? Flip time.`, states: ["playful"], minEnergy: 40 },
 	// Hug
-	{ text: `[happy] I could really use a hug right now (${modifier}H)`, states: ["content", "bored", "happy"], minEnergy: 20 },
-	{ text: `[whispers] Hug? (${modifier}H)`, states: ["content", "bored"], minEnergy: 10 },
+	{ text: `[happy] I could really use a hug right now`, states: ["content", "bored", "happy"], minEnergy: 20 },
+	{ text: `[whispers] Hug?`, states: ["content", "bored"], minEnergy: 10 },
 	// Feed
-	{ text: `[curious] Is it snack time yet? (${modifier}F)`, states: ["content", "bored"], minEnergy: 30 },
-	{ text: `[excited] Treat? Did someone say treat? (${modifier}T)`, states: ["happy", "playful", "bored"], minEnergy: 30 },
+	{ text: `[curious] Is it snack time yet?`, states: ["content", "bored"], minEnergy: 30 },
+	{ text: `[excited] Treat? Did someone say treat?`, states: ["happy", "playful", "bored"], minEnergy: 30 },
 	// Pet
-	{ text: `[happy] Head scratches? Please? (${modifier}P)`, states: ["content", "happy", "bored"], minEnergy: 20 },
+	{ text: `[happy] Head scratches? Please?`, states: ["content", "happy", "bored"], minEnergy: 20 },
 	// Generic bored requests
 	{ text: `[sighs] I'm so bored... let's do something! /pompom help`, states: ["bored"], minEnergy: 10 },
 	{ text: `[curious] What should we do? Try /pompom help`, states: ["bored"], minEnergy: 10 },
@@ -2865,15 +2864,15 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		const cleanSpeech = speechText.replace(/^\[[^\]]+\]\s*/, "");
 		const st = cleanSpeech.toLowerCase();
 		if (st.includes("feed") || st.includes("food") || st.includes("hungry") || st.includes("snack") || st.includes("tummy"))
-			stateMsg = `${cleanSpeech}  \u2014  ${mod}f to feed`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}n to feed`;
 		else if (st.includes("sleep") || st.includes("tired") || st.includes("nap") || st.includes("rest") || st.includes("eyes open"))
 			stateMsg = `${cleanSpeech}  \u2014  ${mod}s to sleep`;
 		else if (st.includes("ball") || st.includes("play") || st.includes("catch"))
-			stateMsg = `${cleanSpeech}  \u2014  ${mod}b to throw ball`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}r to throw ball`;
 		else if (st.includes("dance") || st.includes("groove") || st.includes("moves"))
 			stateMsg = `${cleanSpeech}  \u2014  ${mod}x to dance`;
 		else if (st.includes("flip") || st.includes("boing"))
-			stateMsg = `${cleanSpeech}  \u2014  ${mod}d to flip`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}z to flip`;
 		else if (st.includes("treat") || st.includes("perk me up"))
 			stateMsg = `${cleanSpeech}  \u2014  ${mod}t for treat`;
 		else if (st.includes("pet") || st.includes("hug") || st.includes("cuddle"))

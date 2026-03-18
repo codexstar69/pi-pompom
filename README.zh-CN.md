@@ -110,7 +110,7 @@ pi install @codexstar/pi-pompom
 | macOS | Windows/Linux | 动作 |
 |-------|--------------|------|
 | `⌥p` | `Alt+p` | 抚摸 |
-| `⌥e` | `Alt+e` | 喂食 |
+| `⌥n` | `Alt+n` | 喂食 |
 | `⌥t` | `Alt+t` | 零食 |
 | `⌥u` | `Alt+u` | 拥抱 |
 | `⌥r` | `Alt+r` | 扔球 |

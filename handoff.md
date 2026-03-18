@@ -1,5 +1,64 @@
 # Handoff
 
+## Most Recent Work — 2026-03-18 23:51 IST
+
+- Traced the silent `/pompom demo` report to two live runtime issues:
+  - installed package copy at `/Users/codex/node_modules/@codexstar/pi-pompom`
+    does not contain `demo-audio/`
+  - demo playback still only spoke from the elected primary terminal, so a
+    secondary terminal could show demo UI and text with no voice
+- Kept the existing `extensions/pompom-voice.ts` fallback that checks both the
+  package demo directory and `~/.pi/pompom/demo-audio/`, because the user data
+  directory does contain cached demo WAVs at runtime
+- Updated `extensions/pompom-extension.ts` so demo system speech can fall back
+  to live TTS during demo playback and cached demo WAVs play in the terminal
+  that starts `/pompom demo`, even if that terminal is not primary
+- Updated `README.md`, `CHANGELOG.md`, and bumped `package.json` to `7.8.19`
+- Verification:
+  - `pnpm typecheck`: passed
+  - `pnpm exec tsc -p tsconfig.json`: passed
+- Residual risk:
+  - `d26.wav` is still missing from `~/.pi/pompom/demo-audio/`, so the finale
+    line still depends on live TTS fallback until that cached file exists
+
+## Latest Prompts
+
+- "go ahead and fix it - andd if this is not the real issue - change it back
+  and fix real issue"
+
+## Most Recent Work — 2026-03-19 01:09 IST
+
+- Ran another full read-only audit for optimization, bugs, compatibility,
+  issues, and reliability against the current working tree.
+- Verification:
+  - `bun run typecheck`: failed locally because Bun's postinstall was not run
+    in this workspace install
+  - `pnpm exec tsc -p tsconfig.json`: passed
+- Re-checked the earlier March 18 audio findings and confirmed they are fixed
+  in the current source:
+  - `extensions/pompom-ambient.ts` now falls back from unsupported non-WAV
+    custom ambient files on WAV-only backends
+  - `extensions/pompom-voice.ts` now records `lastSpokenText` only after
+    successful playback, so failed playback no longer suppresses retries
+- Confirmed one remaining compatibility edge in
+  `extensions/pompom-ambient.ts`:
+  - `pregenerateAll()` still skips any weather that has a custom file based on
+    `hasCustomAudio()`, even when that custom file is unusable on WAV-only
+    backends like `aplay`/PowerShell
+  - the folder/help copy in `extensions/pompom-extension.ts` still advertises
+    all custom formats without warning about the WAV-only backend limitation
+- Confirmed one release-hygiene issue:
+  - `package.json` was already changed during the audit and now reports
+    `7.8.14`, while `CHANGELOG.md` still starts at `7.8.10`
+- No code changes were made in this pass beyond this `handoff.md` update.
+- Residual risk remains around missing automated tests and the lack of a live
+  Pi CLI smoke test in this isolated package environment.
+
+## Latest Prompts
+
+- "› run a complete code audit for optimization, bugs, compatibility, issues
+  and reliability"
+
 ## Most Recent Work — 2026-03-18 23:06 IST
 
 - Implemented the validated compatibility and lifecycle fixes from
@@ -448,7 +507,7 @@
 - High: clearing agent weather override resets the natural weather system to
   clear instead of restoring the in-progress weather arc.
 - Medium: non-Kitty keyboard fallback paths still miss public shortcuts like
-  Alt+E feed because the ESC-prefix branch listens for internal action keys.
+  Alt+N feed because the ESC-prefix branch listens for internal action keys.
 - Medium: custom ambient files still break on ALSA-only Linux when custom
   audio resolves to a non-WAV format.
 

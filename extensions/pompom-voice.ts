@@ -1030,14 +1030,28 @@ export function speakTest(): void {
 
 // ─── Demo voiceover pre-generation + cached playback ─────────────────────────
 
-// Demo audio ships with the package — look in the repo's demo-audio/ directory
+// Demo audio: shipped with package OR generated into user data dir
 const MODULE_DIR = path.dirname(url.fileURLToPath(import.meta.url));
-const DEMO_AUDIO_DIR = path.join(MODULE_DIR, "..", "demo-audio");
+const PKG_DEMO_DIR = path.join(MODULE_DIR, "..", "demo-audio");
+const USER_DEMO_DIR = path.join(os.homedir(), ".pi", "pompom", "demo-audio");
+
+/** Resolve the WAV path for a demo line, checking package dir then user dir. */
+function demoPaths(key: string): { wavPath: string | null; writeDir: string } {
+	const pkgPath = path.join(PKG_DEMO_DIR, `${key}.wav`);
+	if (fs.existsSync(pkgPath) && fs.statSync(pkgPath).size > 1000) {
+		return { wavPath: pkgPath, writeDir: USER_DEMO_DIR };
+	}
+	const userPath = path.join(USER_DEMO_DIR, `${key}.wav`);
+	if (fs.existsSync(userPath) && fs.statSync(userPath).size > 1000) {
+		return { wavPath: userPath, writeDir: USER_DEMO_DIR };
+	}
+	return { wavPath: null, writeDir: USER_DEMO_DIR };
+}
 
 /** Synthesize a line and save to disk. Returns true if cached file exists or was generated. */
 export async function pregenerateDemoLine(key: string, text: string): Promise<boolean> {
-	const wavPath = path.join(DEMO_AUDIO_DIR, `${key}.wav`);
-	if (fs.existsSync(wavPath) && fs.statSync(wavPath).size > 1000) return true; // already cached
+	const { wavPath: existing, writeDir } = demoPaths(key);
+	if (existing) return true; // already cached (package or user dir)
 	try {
 		const engine = await resolveEngine();
 		if (!engine) return false;
@@ -1046,7 +1060,8 @@ export async function pregenerateDemoLine(key: string, text: string): Promise<bo
 			: config.deepgramVoice;
 		const speechText = engine.name === "elevenlabs" ? text : stripAudioTags(text);
 		const audio = await engine.synthesize(speechText, voice);
-		fs.mkdirSync(DEMO_AUDIO_DIR, { recursive: true });
+		fs.mkdirSync(writeDir, { recursive: true });
+		const wavPath = path.join(writeDir, `${key}.wav`);
 		const tmp = wavPath + ".tmp." + process.pid;
 		fs.writeFileSync(tmp, audio.buffer);
 		fs.renameSync(tmp, wavPath);
@@ -1059,8 +1074,15 @@ export async function pregenerateDemoLine(key: string, text: string): Promise<bo
 
 /** Play a pre-generated demo audio file. Stops any previous playback first. */
 export function playDemoLine(key: string): void {
-	const wavPath = path.join(DEMO_AUDIO_DIR, `${key}.wav`);
-	if (!fs.existsSync(wavPath) || !detectedPlayer) return;
+	const { wavPath } = demoPaths(key);
+	if (!wavPath) {
+		console.error(`[pompom-voice] playDemoLine(${key}): WAV not found in package or ${USER_DEMO_DIR}`);
+		return;
+	}
+	if (!detectedPlayer) {
+		console.error(`[pompom-voice] playDemoLine(${key}): no audio player detected`);
+		return;
+	}
 	try {
 		stopPlayback();
 		if (detectedPlayer.command === "aplay" || detectedPlayer.command === "powershell") {
@@ -1078,17 +1100,29 @@ export function playDemoLine(key: string): void {
 		);
 		currentPlayback = proc;
 		playbackActive = true;
-		proc.on("close", () => { if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; } });
-		proc.on("error", () => { if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; } });
-	} catch { /* best-effort */ }
+		proc.on("close", (code) => {
+			if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; }
+			if (code !== 0 && code !== null) {
+				console.error(`[pompom-voice] playDemoLine(${key}): ${detectedPlayer!.command} exited with code ${code}`);
+			}
+		});
+		proc.on("error", (err) => {
+			if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; }
+			console.error(`[pompom-voice] playDemoLine(${key}): spawn error: ${err.message}`);
+		});
+	} catch (err) {
+		console.error(`[pompom-voice] playDemoLine(${key}): ${err instanceof Error ? err.message : err}`);
+	}
 }
 
 /** Check if all demo lines are cached. */
 export function isDemoCached(keys: string[]): boolean {
-	return keys.every(k => {
-		const p = path.join(DEMO_AUDIO_DIR, `${k}.wav`);
-		return fs.existsSync(p) && fs.statSync(p).size > 1000;
-	});
+	return keys.every(k => isDemoLineCached(k));
+}
+
+/** Check if a single demo line has a cached WAV file (package or user dir). */
+export function isDemoLineCached(key: string): boolean {
+	return demoPaths(key).wavPath !== null;
 }
 
 export function stopPlayback(): void {

@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.19] - 2026-03-18
+
+### Patch Changes
+
+- demo narration now plays in the terminal that starts `/pompom demo`, even if
+  that terminal is not the elected primary instance
+- uncached demo lines such as missing `d26.wav` can now fall back to live TTS
+  during demo playback on secondary instances too
+
+## [7.8.18] - 2026-03-18
+
+### Changes
+
+- feed shortcut changed from `⌥E`/`Alt+E` to `⌥N`/`Alt+N` — `Option+E`
+  conflicts with macOS Finder (accent input). "N" for noms.
+- `/pompom:window` registered as a standalone command so it appears in the
+  slash-command list (previously only available as `/pompom window` subcommand)
+
+### Bug Fixes
+
+- demo voiceover path resolution now checks both the package directory and
+  `~/.pi/pompom/demo-audio/` — fixes silent demo when WAVs exist in the user
+  data dir but the npm package doesn't ship them
+- demo voiceover now plays per-line from cache instead of requiring all lines
+  to be cached — missing `d26.wav` no longer silences the entire demo
+- uncached demo lines fall back to live TTS instead of being blocked by the
+  `demoRunning` guard in `canForwardSpeech`
+- activity request speech lines no longer embed shortcut key hints — prevents
+  TTS from reading out `Alt+F` or `⌥F` aloud
+- footer shortcut hints now show correct Alt keys (`n` for feed, `r` for ball,
+  `z` for flip) instead of internal action keys (`f`, `b`, `d`)
+
 ## [7.8.16] - 2026-03-18
 
 ### Features
