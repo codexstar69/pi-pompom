@@ -944,7 +944,8 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 				const inIris2 = Math.abs(ex2) < irisW && Math.abs(ey2) < irisH;
 				if (inIris1 || inIris2) {
 					r = 60; g = 40; b = 25;
-					if ((inIris1 && ey1 > 0.015) || (inIris2 && ey2 > 0.015)) { r = 80; g = 55; b = 35; }
+					// Lighter gradient at bottom of iris (world Y negative = screen bottom)
+					if ((inIris1 && ey1 < -0.015) || (inIris2 && ey2 < -0.015)) { r = 80; g = 55; b = 35; }
 
 					// Layer 3: Dark pupil
 					const pupilW = 0.035, pupilH = 0.028 * eyeOpen;
@@ -955,14 +956,14 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 					}
 				}
 
-				// Chunky white highlight block (upper-left of eye) — big enough for 1-2 cells
-				const hl1 = ex1 > -0.08 && ex1 < -0.03 && ey1 > -0.055 && ey1 < -0.015;
-				const hl2 = ex2 > -0.08 && ex2 < -0.03 && ey2 > -0.055 && ey2 < -0.015;
+				// Chunky white highlight block (upper-left of eye in screen space = positive Y in world)
+				const hl1 = ex1 > -0.08 && ex1 < -0.03 && ey1 > 0.015 && ey1 < 0.055;
+				const hl2 = ex2 > -0.08 && ex2 < -0.03 && ey2 > 0.015 && ey2 < 0.055;
 				if ((hl1 || hl2) && !isTired) { r = 255; g = 255; b = 255; }
 
-				// Small warm highlight (lower-right)
-				const hl1b = ex1 > 0.02 && ex1 < 0.06 && ey1 > 0.01 && ey1 < 0.04;
-				const hl2b = ex2 > 0.02 && ex2 < 0.06 && ey2 > 0.01 && ey2 < 0.04;
+				// Small warm highlight (lower-right in screen = negative Y in world)
+				const hl1b = ex1 > 0.02 && ex1 < 0.06 && ey1 > -0.04 && ey1 < -0.01;
+				const hl2b = ex2 > 0.02 && ex2 < 0.06 && ey2 > -0.04 && ey2 < -0.01;
 				if ((hl1b || hl2b) && !isTired) { r = 220; g = 230; b = 250; }
 			}
 		}
