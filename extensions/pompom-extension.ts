@@ -2135,6 +2135,7 @@ export default function (pi: ExtensionAPI) {
 						["d23", "[happy] I can peek at what your agent is doing and explain it all to you"],
 						["d24", "[excited] Three voice engines, twenty three sound effects, and six different personalities!"],
 						["d25", "[excited] Try me! pi install at codexstar slash pi pompom"],
+						["d26", "[happy] See you on the terminal super soon! Bye bye!"],
 					];
 					const demoKeys = DL.map(l => l[0]);
 
@@ -2249,7 +2250,9 @@ export default function (pi: ExtensionAPI) {
 					q(t, () => say("d24", DL[23][1], 5.5));
 					t += 6200;
 					q(t, () => { pompomKeypress("d"); say("d25", DL[24][1], 5.0); });
-					t += 5000;
+					t += 5500;
+					q(t, () => { pompomKeypress("p"); say("d26", DL[25][1], 3.5); });
+					t += 4500;
 					q(t, () => stopDemo());
 
 					commandContext.ui.notify(`Demo${cached ? " with voiceover" : ""} (~${Math.round(t / 1000)}s). /pompom demo to stop.`, "info");
