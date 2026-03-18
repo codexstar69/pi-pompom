@@ -77,7 +77,8 @@ const I = {
 	bed:     "\uf236",   // nf-fa-bed
 	gamepad: "\uf11b",   // nf-fa-gamepad
 	code:    "\uf121",   // nf-fa-code
-	sep:     "\ue0b0",   // Powerline right arrow
+	sep:     "\ue0b0",   // Powerline right arrow (thick)
+	sepThin: "\ue0b1",   // Powerline right arrow (thin)
 };
 
 // ─── Mood → Face + Color ─────────────────────────────────────────────────────
@@ -111,9 +112,9 @@ const WEATHER_STYLES: Record<string, { icon: string; color: string }> = {
 function miniBar(value: number, width: number, colors: [string, string, string]): string {
 	const pct = Math.max(0, Math.min(100, value));
 	const filled = Math.round((pct / 100) * width);
-	const empty = width - filled;
+	const empty = Math.max(0, width - filled);
 	const barColor = pct <= 25 ? colors[2] : pct <= 50 ? colors[1] : colors[0];
-	return `${barColor}${"█".repeat(filled)}${C.surface1}${"░".repeat(empty)}${C.rst}`;
+	return `${barColor}${"\u25b0".repeat(filled)}${C.surface1}${"\u25b1".repeat(empty)}${C.rst}`;
 }
 
 function contextBar(ctx: ExtensionContext, width: number): string {
@@ -124,10 +125,11 @@ function contextBar(ctx: ExtensionContext, width: number): string {
 	const pct = Math.min(100, (used / total) * 100);
 	const barWidth = Math.max(width - 8, 1);
 	const filled = Math.round((pct / 100) * barWidth);
-	const empty = barWidth - filled;
+	const empty = Math.max(0, barWidth - filled);
 	const barColor = pct > 85 ? C.red : pct > 65 ? C.peach : C.sapphire;
-	const bar = `${barColor}${"■".repeat(filled)}${C.surface2}${"─".repeat(empty)}${C.rst}`;
-	return `${C.overlay0}${I.tokens}${C.rst} ${bar} ${C.subtext0}${Math.round(pct)}%${C.rst}`;
+	const bar = `${barColor}${"\u25b0".repeat(filled)}${C.surface1}${"\u25b1".repeat(empty)}${C.rst}`;
+	const pctStr = String(Math.round(pct)).padStart(3, " ");
+	return `${C.overlay0}${I.tokens}${C.rst} ${bar} ${C.text}${pctStr}%${C.rst}`;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -203,7 +205,7 @@ function renderLine1(width: number, sessionStartMs: number, thinkingLevel: strin
 	const thinkingStr = thinkingLevel && thinkingLevel !== "off" ? ` ${C.overlay2}\u2022 ${thinkingLevel}${C.rst}` : "";
 	const timeSec = `${C.overlay1}${I.clock} ${formatTime(sessionStartMs)}${C.rst}${thinkingStr}`;
 
-	const sep = ` ${C.overlay0}${I.sep}${C.rst} `;
+	const sep = ` ${C.overlay0}${I.sepThin}${C.rst} `;
 	return assembleLine([pompomSec, vitalsSec, envSec, timeSec], sep, width);
 }
 
@@ -232,7 +234,7 @@ function renderLine2(width: number, ctx: ExtensionContext): string {
 	const modelSec = `${C.lavender}${C.bold}${I.model} ${shortModel}${C.rst}`;
 
 	// Adaptive: try full → medium → small
-	const sep = ` ${C.surface2}${I.sep}${C.rst} `;
+	const sep = ` ${C.surface2}${I.sepThin}${C.rst} `;
 	const full = [locationSec, ctxBar, costStr, voiceStr, modelSec].filter(Boolean);
 	const fullLine = full.join(sep);
 	if (visibleWidth(fullLine) <= width) return fullLine;
