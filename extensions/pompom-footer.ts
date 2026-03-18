@@ -1,19 +1,20 @@
 /**
- * Pompom Footer — Enterprise-polished status bar for Pi CLI.
+ * Pompom Footer — Single-line enterprise status bar for Pi CLI.
  *
- * A meticulously crafted two-line footer with Powerline-style separators and
- * Nerd Font icons, designed for clarity, beauty, and utility.
+ * One line. Every character earns its place. Information hierarchy through
+ * color intensity — bright for critical, dim for context.
  *
- * Features:
- *   - Line 1: Pompom's identity, vitals (health/energy), and current state.
- *   - Line 2: Developer context like location, token usage, cost, and model status.
- *   - Palette: Catppuccin Mocha for a comfortable, modern aesthetic.
- *   - Mood-Reactive: Pompom's name changes color to reflect its current mood.
- *   - Dynamic Bars: Vitals and context bars use color to indicate urgency (green → yellow → red).
- *   - Adaptive Layout: Gracefully hides less critical information on narrower terminals.
- *   - Polished Details: Subtle use of bolding, dimmed text, and icons for visual hierarchy.
+ * Layout (wide 100+ cols):
+ *   (◕ᴗ◕) Pompom  ♥▰▰▱▱ 52%  ☀ clear  working  12m     ▰▰▰▱▱ 34%  $0.42  opus • med
  *
- * Designed by Gemini + Claude. Catppuccin Mocha palette throughout.
+ * Layout (medium 60-100 cols):
+ *   (◕ᴗ◕) Pompom  ♥▰▰▱▱ 52%  ☀ clear     ▰▰▰▱▱ 34%  opus • med
+ *
+ * Layout (narrow <60 cols):
+ *   (◕ᴗ◕) Pompom     opus • med
+ *
+ * Catppuccin Mocha palette. Nerd Font icons. Parallelogram bars (▰▱).
+ * Thin Powerline separators (). Mood-reactive name color.
  */
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -23,13 +24,11 @@ import { getSessionStats } from "./pompom-agent";
 import { getVoiceConfig } from "./pompom-voice";
 import { getAmbientConfig, isAmbientPlaying } from "./pompom-ambient";
 
-// ─── Palette & Style ─────────────────────────────────────────────────────────
+// ─── Catppuccin Mocha ────────────────────────────────────────────────────────
 
 function fg(r: number, g: number, b: number): string { return `\x1b[38;2;${r};${g};${b}m`; }
 
 const C = {
-	rosewater: fg(245, 224, 220),
-	flamingo:  fg(242, 205, 205),
 	pink:      fg(245, 194, 231),
 	mauve:     fg(203, 166, 247),
 	red:       fg(243, 139, 168),
@@ -42,212 +41,176 @@ const C = {
 	sapphire:  fg(116, 199, 236),
 	blue:      fg(137, 180, 250),
 	lavender:  fg(180, 190, 254),
+	flamingo:  fg(242, 205, 205),
 	text:      fg(205, 214, 244),
-	subtext1:  fg(186, 194, 222),
 	subtext0:  fg(166, 173, 200),
-	overlay2:  fg(147, 153, 178),
 	overlay1:  fg(127, 132, 156),
 	overlay0:  fg(108, 112, 134),
-	surface2:  fg(88, 91, 112),
 	surface1:  fg(69, 71, 90),
-	surface0:  fg(49, 50, 68),
 	rst:       "\x1b[0m",
 	bold:      "\x1b[1m",
 };
 
-// ─── Nerd Font Icons ─────────────────────────────────────────────────────────
+// ─── Icons ───────────────────────────────────────────────────────────────────
 
-const I = {
-	heart:   "\uf004",   // nf-fa-heart
-	bolt:    "\uf0e7",   // nf-fa-bolt
-	sun:     "\ue30d",   // nf-weather-day_sunny
-	cloud:   "\ue312",   // nf-weather-cloudy
-	rain:    "\ue318",   // nf-weather-rain
-	snow:    "\ue31a",   // nf-weather-snow
-	storm:   "\ue31d",   // nf-weather-thunderstorm
-	music:   "\uf001",   // nf-fa-music
-	speaker: "\uf028",   // nf-fa-volume_up
-	folder:  "\uf115",   // nf-fa-folder_open
-	branch:  "\ue725",   // nf-dev-git_branch
-	clock:   "\uf017",   // nf-fa-clock_o
-	model:   "\uf2db",   // nf-fa-microchip
-	tokens:  "\uf521",   // nf-mdi-database
-	cost:    "\uf155",   // nf-fa-dollar
-	paw:     "\uf1b0",   // nf-fa-paw
-	bed:     "\uf236",   // nf-fa-bed
-	gamepad: "\uf11b",   // nf-fa-gamepad
-	code:    "\uf121",   // nf-fa-code
-	sep:     "\ue0b0",   // Powerline right arrow (thick)
-	sepThin: "\ue0b1",   // Powerline right arrow (thin)
+const SEP = `${C.overlay0}\ue0b1${C.rst}`; // Thin Powerline
+
+const MOOD: Record<string, { face: string; color: string; icon: string }> = {
+	happy:    { face: "(\u25d5\u1d17\u25d5)",  color: C.green,    icon: "\uf1b0" },
+	content:  { face: "(\u25d5\u203f\u25d5)",  color: C.teal,     icon: "\uf1b0" },
+	hungry:   { face: "(\u25d5\ufe35\u25d5)",  color: C.peach,    icon: "\uf004" },
+	sleeping: { face: "(\u2013\u203f\u2013)",  color: C.lavender, icon: "\uf236" },
+	playful:  { face: "(\u25d5\u03c9\u25d5)",  color: C.pink,     icon: "\uf11b" },
+	musical:  { face: "(\u25d5\u2200\u25d5)",  color: C.mauve,    icon: "\uf001" },
+	tired:    { face: "(\u25d5\u2313\u25d5)",  color: C.maroon,   icon: "\uf236" },
+};
+const MOOD_DEFAULT = MOOD.content;
+
+const WEATHER_ICON: Record<string, { i: string; c: string }> = {
+	clear:  { i: "\ue30d", c: C.yellow },
+	cloudy: { i: "\ue312", c: C.overlay1 },
+	rain:   { i: "\ue318", c: C.blue },
+	snow:   { i: "\ue31a", c: C.sky },
+	storm:  { i: "\ue31d", c: C.mauve },
 };
 
-// ─── Mood → Face + Color ─────────────────────────────────────────────────────
+// ─── Components ──────────────────────────────────────────────────────────────
 
-interface MoodStyle { face: string; nameColor: string; stateIcon: string }
-
-const MOOD_STYLES: Record<string, MoodStyle> = {
-	happy:    { face: "(◕ᴗ◕)",  nameColor: C.green,    stateIcon: I.paw },
-	content:  { face: "(◕‿◕)",  nameColor: C.teal,     stateIcon: I.paw },
-	hungry:   { face: "(◕︵◕)",  nameColor: C.peach,    stateIcon: I.heart },
-	sleeping: { face: "(–‿–)",  nameColor: C.lavender,  stateIcon: I.bed },
-	playful:  { face: "(◕ω◕)",  nameColor: C.pink,     stateIcon: I.gamepad },
-	musical:  { face: "(◕∀◕)",  nameColor: C.mauve,    stateIcon: I.music },
-	tired:    { face: "(◕⌓◕)",  nameColor: C.maroon,   stateIcon: I.bed },
-	thinking: { face: "(◕¸.◕)", nameColor: C.sapphire, stateIcon: I.code },
-};
-const DEFAULT_MOOD: MoodStyle = MOOD_STYLES.content;
-
-// ─── Weather → Icon + Color ──────────────────────────────────────────────────
-
-const WEATHER_STYLES: Record<string, { icon: string; color: string }> = {
-	clear:  { icon: I.sun,   color: C.yellow },
-	cloudy: { icon: I.cloud, color: C.overlay1 },
-	rain:   { icon: I.rain,  color: C.blue },
-	snow:   { icon: I.snow,  color: C.sky },
-	storm:  { icon: I.storm, color: C.mauve },
-};
-
-// ─── UI Components ───────────────────────────────────────────────────────────
-
-function miniBar(value: number, width: number, colors: [string, string, string]): string {
-	const pct = Math.max(0, Math.min(100, value));
-	const filled = Math.round((pct / 100) * width);
-	const empty = Math.max(0, width - filled);
-	const barColor = pct <= 25 ? colors[2] : pct <= 50 ? colors[1] : colors[0];
-	return `${barColor}${"\u25b0".repeat(filled)}${C.surface1}${"\u25b1".repeat(empty)}${C.rst}`;
+function bar(val: number, w: number, good: string, warn: string, bad: string): string {
+	const pct = Math.max(0, Math.min(100, val));
+	const f = Math.round((pct / 100) * w);
+	const e = Math.max(0, w - f);
+	const color = pct <= 25 ? bad : pct <= 50 ? warn : good;
+	return `${color}${"\u25b0".repeat(f)}${C.surface1}${"\u25b1".repeat(e)}${C.rst}`;
 }
 
-function contextBar(ctx: ExtensionContext, width: number): string {
-	const usage = (ctx as any).getContextUsage?.();
-	if (!usage) return "";
-	const total = Math.max(1, Number(usage.contextWindow) || 200000);
-	const used = Math.max(0, Number(usage.tokens) || 0);
-	const pct = Math.min(100, (used / total) * 100);
-	const barWidth = Math.max(width - 8, 1);
-	const filled = Math.round((pct / 100) * barWidth);
-	const empty = Math.max(0, barWidth - filled);
-	const barColor = pct > 85 ? C.red : pct > 65 ? C.peach : C.sapphire;
-	const bar = `${barColor}${"\u25b0".repeat(filled)}${C.surface1}${"\u25b1".repeat(empty)}${C.rst}`;
-	const pctStr = String(Math.round(pct)).padStart(3, " ");
-	return `${C.overlay0}${I.tokens}${C.rst} ${bar} ${C.text}${pctStr}%${C.rst}`;
+function fmtTime(ms: number): string {
+	if (ms <= 0) return "0m";
+	const m = Math.round((Date.now() - ms) / 60000);
+	return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m" : ""}`;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getSessionCost(ctx: ExtensionContext): number {
-	try {
-		return (ctx.sessionManager.getBranch() as any[]).reduce((total: number, entry: any) => {
-			return total + (Number(entry.message?.usage?.cost?.total) || 0);
-		}, 0);
-	} catch { return 0; }
-}
-
-function formatTime(startMs: number): string {
-	if (startMs <= 0) return "0m";
-	const mins = Math.round((Date.now() - startMs) / 60000);
-	if (mins < 60) return `${mins}m`;
-	const h = Math.floor(mins / 60);
-	const rem = mins % 60;
-	return rem > 0 ? `${h}h${rem}m` : `${h}h`;
-}
-
-function formatPath(cwd: string): string {
+function shortPath(cwd: string): string {
 	const home = process.env.HOME || "";
 	const p = home && cwd.startsWith(home) ? "~" + cwd.slice(home.length) : cwd;
 	const parts = p.split("/").filter(Boolean);
-	if (parts.length <= 2) return parts.join("/");
-	return `\u2026/${parts.slice(-2).join("/")}`;
+	return parts.length > 2 ? parts[parts.length - 1] : parts.join("/");
 }
 
-/** Join non-empty segments with a separator, dropping lowest-priority segments if too wide. */
-function assembleLine(segments: (string | null | undefined)[], separator: string, width: number): string {
-	const live = segments.filter((s): s is string => !!s);
-	let line = live.join(separator);
-	// Drop segments from the middle (lowest priority) until it fits
-	while (visibleWidth(line) > width && live.length > 2) {
-		live.splice(Math.floor(live.length / 2), 1);
-		line = live.join(separator);
+function getCost(ctx: ExtensionContext): number {
+	try {
+		return (ctx.sessionManager.getBranch() as any[]).reduce((t: number, e: any) =>
+			t + (Number(e.message?.usage?.cost?.total) || 0), 0);
+	} catch { return 0; }
+}
+
+function ctxPct(ctx: ExtensionContext): number {
+	const u = (ctx as any).getContextUsage?.();
+	if (!u) return 0;
+	const total = Math.max(1, Number(u.contextWindow) || 200000);
+	const used = Math.max(0, Number(u.tokens) || 0);
+	return Math.min(100, Math.round((used / total) * 100));
+}
+
+// ─── Render ──────────────────────────────────────────────────────────────────
+
+function renderFooter(width: number, sessionMs: number, thinkingLevel: string, ctx: ExtensionContext): string {
+	if (width <= 0) return "";
+
+	const status = pompomStatus();
+	const weather = pompomGetWeather();
+	const stats = getSessionStats();
+	const mood = MOOD[stats.isAgentActive ? "content" : status.mood] || MOOD_DEFAULT;
+	const wx = WEATHER_ICON[weather] || WEATHER_ICON.clear;
+
+	// ─ Left: Identity (always shown)
+	const face = `${C.pink}${mood.face}${C.rst}`;
+	const name = `${mood.color}${C.bold}Pompom${C.rst}`;
+	const left = `${face} ${name}`;
+
+	// ─ Right: Model + thinking (always shown)
+	const modelName = ((ctx.model as any)?.name || (ctx.model as any)?.id || "Claude")
+		.replace(/^(claude|gemini)-/i, "").replace(/(-preview|-pro|@latest)/g, "") || "Claude";
+	const thinking = thinkingLevel && thinkingLevel !== "off" ? ` ${C.overlay0}\u2022 ${thinkingLevel}${C.rst}` : "";
+	const right = `${C.lavender}\uf2db ${modelName}${C.rst}${thinking}`;
+
+	// ─ Available space for middle content
+	const leftW = visibleWidth(left);
+	const rightW = visibleWidth(right);
+	const sepW = 3; // " SEP "
+	const minGap = leftW + rightW + sepW * 2;
+
+	if (width < minGap + 4) {
+		// Ultra-narrow: just face + model, right-aligned
+		const gap = Math.max(1, width - leftW - rightW);
+		return truncateToWidth(`${left}${" ".repeat(gap)}${right}`, width);
 	}
+
+	// ─ Build middle segments by priority
+	const mid: string[] = [];
+	const available = width - leftW - rightW - sepW * 2;
+
+	// Priority 1: Critical vital (whichever is lower)
+	if (available >= 12) {
+		const showHunger = status.hunger <= status.energy;
+		const val = showHunger ? status.hunger : status.energy;
+		const icon = showHunger ? `${C.peach}\uf004${C.rst}` : `${C.green}\uf0e7${C.rst}`;
+		const b = bar(val, 4, showHunger ? C.peach : C.green, C.yellow, C.red);
+		mid.push(`${icon}${b}${C.subtext0}${val}%${C.rst}`);
+	}
+
+	// Priority 2: Weather
+	if (available >= 22) {
+		mid.push(`${wx.c}${wx.i}${C.rst}${C.subtext0}${weather}${C.rst}`);
+	}
+
+	// Priority 3: Agent state
+	if (available >= 32) {
+		if (stats.isAgentActive) {
+			mid.push(`${C.mauve}\uf121 working${C.rst}`);
+		} else {
+			const ambient = getAmbientConfig().enabled && isAmbientPlaying();
+			mid.push(`${C.overlay1}${mood.icon}${C.rst}${ambient ? ` ${C.teal}\uf001${C.rst}` : ""}`);
+		}
+	}
+
+	// Priority 4: Session time
+	if (available >= 38) {
+		mid.push(`${C.overlay0}\uf017 ${fmtTime(sessionMs)}${C.rst}`);
+	}
+
+	// Priority 5: Context %
+	if (available >= 52) {
+		const pct = ctxPct(ctx);
+		const ctxColor = pct > 85 ? C.red : pct > 65 ? C.peach : C.sapphire;
+		const ctxBar = bar(pct, 6, C.sapphire, C.peach, C.red);
+		mid.push(`${ctxBar}${ctxColor}${pct}%${C.rst}`);
+	}
+
+	// Priority 6: Cost
+	if (available >= 62) {
+		const cost = getCost(ctx);
+		if (cost > 0.005) {
+			const cc = cost > 5 ? C.red : cost > 2 ? C.yellow : C.green;
+			mid.push(`${cc}\uf155${cost.toFixed(2)}${C.rst}`);
+		}
+	}
+
+	// Priority 7: Voice indicator
+	if (available >= 66 && getVoiceConfig().enabled) {
+		mid.push(`${C.flamingo}\uf028${C.rst}`);
+	}
+
+	// ─ Compose: left SEP mid... SEP right
+	const midStr = mid.length > 0 ? mid.join(` ${SEP} `) : "";
+	const leftPart = midStr ? `${left} ${SEP} ${midStr}` : left;
+	const totalUsed = visibleWidth(leftPart) + visibleWidth(right);
+	const gap = Math.max(1, width - totalUsed);
+	const line = `${leftPart}${" ".repeat(gap)}${right}`;
 	return truncateToWidth(line, width);
 }
 
-// ─── Line 1: Pompom Status ──────────────────────────────────────────────────
-
-function renderLine1(width: number, sessionStartMs: number, thinkingLevel: string): string {
-	const status = pompomStatus();
-	const weather = pompomGetWeather();
-	const agentStats = getSessionStats();
-
-	const moodKey = agentStats.isAgentActive ? "thinking" : status.mood;
-	const mood = MOOD_STYLES[moodKey] || DEFAULT_MOOD;
-	const weatherStyle = WEATHER_STYLES[weather] || WEATHER_STYLES.clear;
-
-	// Identity
-	const pompomSec = `${C.pink}${mood.face}${C.rst} ${mood.nameColor}${C.bold}Pompom${C.rst}`;
-
-	// Vitals (hidden on narrow terminals)
-	const hungerBar = miniBar(status.hunger, 4, [C.peach, C.yellow, C.red]);
-	const energyBar = miniBar(status.energy, 4, [C.green, C.yellow, C.red]);
-	const vitalsSec = width >= 70
-		? `${C.peach}${I.heart}${C.rst} ${hungerBar} ${C.subtext0}${status.hunger}%${C.rst}  ${C.green}${I.bolt}${C.rst}${energyBar} ${C.subtext0}${status.energy}%${C.rst}`
-		: null;
-
-	// Environment (hidden on very narrow terminals)
-	const stateLabel = agentStats.isAgentActive
-		? `${C.mauve}${I.code} working${C.rst}`
-		: `${C.overlay1}${mood.stateIcon} ${status.mood}${C.rst}`;
-	const musicIcon = getAmbientConfig().enabled && isAmbientPlaying() ? ` ${C.teal}${I.music}${C.rst}` : "";
-	const envSec = width >= 100
-		? `${weatherStyle.color}${weatherStyle.icon}${C.rst} ${C.subtext0}${weather}${C.rst}  ${stateLabel}${musicIcon}`
-		: null;
-
-	// Time + thinking
-	const thinkingStr = thinkingLevel && thinkingLevel !== "off" ? ` ${C.overlay2}\u2022 ${thinkingLevel}${C.rst}` : "";
-	const timeSec = `${C.overlay1}${I.clock} ${formatTime(sessionStartMs)}${C.rst}${thinkingStr}`;
-
-	const sep = ` ${C.overlay0}${I.sepThin}${C.rst} `;
-	return assembleLine([pompomSec, vitalsSec, envSec, timeSec], sep, width);
-}
-
-// ─── Line 2: Dev Info ────────────────────────────────────────────────────────
-
-function renderLine2(width: number, ctx: ExtensionContext): string {
-	const modelName = (ctx.model as any)?.name || (ctx.model as any)?.id || "Claude";
-	const shortModel = modelName.replace(/^(claude|gemini)-/i, "").replace(/(-preview|-pro|@latest)/g, "");
-
-	// Location
-	const locationSec = `${C.blue}${I.folder} ${formatPath(ctx.cwd)}${C.rst}`;
-
-	// Context bar (adaptive width, hidden if too narrow)
-	const ctxBarWidth = width >= 100 ? 20 : width >= 80 ? 12 : 0;
-	const ctxBar = ctxBarWidth > 0 ? contextBar(ctx, ctxBarWidth) : null;
-
-	// Cost (color-coded thresholds)
-	const cost = getSessionCost(ctx);
-	const costColor = cost > 5 ? C.red : cost > 2 ? C.yellow : C.green;
-	const costStr = cost > 0.005 ? `${costColor}${I.cost} ${cost.toFixed(2)}${C.rst}` : null;
-
-	// Voice indicator
-	const voiceStr = getVoiceConfig().enabled ? `${C.flamingo}${I.speaker}${C.rst}` : null;
-
-	// Model (always shown, bold for emphasis)
-	const modelSec = `${C.lavender}${C.bold}${I.model} ${shortModel}${C.rst}`;
-
-	// Adaptive: try full → medium → small
-	const sep = ` ${C.surface2}${I.sepThin}${C.rst} `;
-	const full = [locationSec, ctxBar, costStr, voiceStr, modelSec].filter(Boolean);
-	const fullLine = full.join(sep);
-	if (visibleWidth(fullLine) <= width) return fullLine;
-
-	const medium = [locationSec, ctxBar, modelSec].filter(Boolean);
-	const mediumLine = medium.join(sep);
-	if (visibleWidth(mediumLine) <= width) return mediumLine;
-
-	const small = [locationSec, modelSec];
-	return truncateToWidth(small.join(sep), width);
-}
-
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── API ─────────────────────────────────────────────────────────────────────
 
 export function installPompomFooter(
 	ctx: ExtensionContext,
@@ -258,17 +221,14 @@ export function installPompomFooter(
 
 	ctx.ui.setFooter((_tui, _theme, _footerData) => {
 		let disposed = false;
-
 		return {
 			invalidate() {},
 			dispose() { disposed = true; },
 			render(width: number): string[] {
 				if (disposed || width <= 0) return ["", ""];
 				try {
-					return [
-						renderLine1(width, getSessionStartMs(), getThinkingLevel()),
-						renderLine2(width, ctx),
-					];
+					const line = renderFooter(width, getSessionStartMs(), getThinkingLevel(), ctx);
+					return [truncateToWidth(line, width), ""];
 				} catch {
 					return ["", ""];
 				}

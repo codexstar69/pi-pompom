@@ -796,11 +796,19 @@ export default function (pi: ExtensionAPI) {
 
 	function safeRender(width: number): string[] {
 		try {
+			const w = Math.max(1, width);
 			const now = Date.now();
 			const dt = Math.min(0.1, (now - lastRenderTime) / 1000);
 			lastRenderTime = now;
 			const piListen = getPiListenState();
-			return renderPompom(Math.max(40, width), piListen.audioLevel || 0, dt);
+			const lines = renderPompom(w, piListen.audioLevel || 0, dt);
+			// Safety: ensure no line exceeds terminal width (Pi TUI crashes otherwise)
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].length > w * 4) { // rough ANSI-inclusive check (true-color codes inflate length)
+					lines[i] = lines[i].slice(0, w * 4);
+				}
+			}
+			return lines;
 		} catch {
 			return [" ".repeat(Math.max(1, width))];
 		}
