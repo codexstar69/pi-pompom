@@ -451,6 +451,53 @@ let lastContextualDesireCheckAt = 0;
 const contextualDesireCooldowns: Record<string, number> = {};
 let agentErrorCount = 0;
 
+// ─── Activity Request System ─────────────────────────────────────────────────
+// Pompom spontaneously asks the user to play, sing, dance, etc.
+// Fires every 2-5 minutes in positive emotional states.
+// Each request includes the shortcut hint so the user knows what to press.
+let lastActivityRequestAt = 0;
+const ACTIVITY_REQUEST_COOLDOWN_MS = 120_000; // min 2 min between requests
+const ACTIVITY_REQUEST_STATES: EmotionalState[] = ["content", "happy", "blissful", "playful", "bored"];
+
+const modifier = typeof process !== "undefined" && process.platform === "darwin" ? "\u2325" : "Alt+";
+
+interface ActivityRequest {
+	text: string;
+	states: EmotionalState[];
+	minEnergy: number;
+}
+
+const ACTIVITY_REQUESTS: ActivityRequest[] = [
+	// Singing
+	{ text: `[excited] Sing with me! (${modifier}M)`, states: ["happy", "blissful", "playful", "content"], minEnergy: 40 },
+	{ text: `[happy] I feel a song coming on... (${modifier}M)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: `[sings] La la... oh! Wanna hear a full song? (${modifier}M)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	// Dancing
+	{ text: `[excited] Dance party! Come on! (${modifier}X)`, states: ["happy", "blissful", "playful"], minEnergy: 50 },
+	{ text: `[playful] I've got the wiggles... let's dance! (${modifier}X)`, states: ["playful", "happy"], minEnergy: 40 },
+	{ text: `[excited] Watch my moves! (${modifier}X)`, states: ["blissful", "playful"], minEnergy: 50 },
+	// Ball
+	{ text: `[excited] Throw me the ball! Please! (${modifier}R)`, states: ["playful", "happy", "bored", "content"], minEnergy: 30 },
+	{ text: `[curious] Where's the ball? I wanna play! (${modifier}R)`, states: ["playful", "bored"], minEnergy: 30 },
+	// Game
+	{ text: `[excited] Let's play catch the stars! (${modifier}G)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
+	{ text: `[curious] Star game? I bet I beat my record! (${modifier}G)`, states: ["playful", "happy"], minEnergy: 40 },
+	// Flip
+	{ text: `[excited] Do a flip! Do a flip! (${modifier}Z)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
+	{ text: `[mischievously] Flip time? Flip time. (${modifier}Z)`, states: ["playful"], minEnergy: 40 },
+	// Hug
+	{ text: `[happy] I could really use a hug right now (${modifier}U)`, states: ["content", "bored", "happy"], minEnergy: 20 },
+	{ text: `[whispers] Hug? (${modifier}U)`, states: ["content", "bored"], minEnergy: 10 },
+	// Feed
+	{ text: `[curious] Is it snack time yet? (${modifier}E)`, states: ["content", "bored"], minEnergy: 30 },
+	{ text: `[excited] Treat? Did someone say treat? (${modifier}T)`, states: ["happy", "playful", "bored"], minEnergy: 30 },
+	// Pet
+	{ text: `[happy] Head scratches? Please? (${modifier}P)`, states: ["content", "happy", "bored"], minEnergy: 20 },
+	// Generic bored requests
+	{ text: `[sighs] I'm so bored... let's do something! /pompom help`, states: ["bored"], minEnergy: 10 },
+	{ text: `[curious] What should we do? Try /pompom help`, states: ["bored"], minEnergy: 10 },
+];
+
 // Milestone check interval (runs once per minute in needs tick)
 let lastMilestoneCheckAt = 0;
 
@@ -1437,7 +1484,25 @@ function resolveAndSpeak(now: number): void {
 		}
 	}
 
-	// ── F. Agent comfort lines — support user during errors ──
+	// ── F. Activity requests — Pompom asks the user to play, sing, dance, etc. ──
+	if (ACTIVITY_REQUEST_STATES.includes(state) && speechTimer <= 0 && now - lastActivityRequestAt > ACTIVITY_REQUEST_COOLDOWN_MS) {
+		// Roll chance: ~3% per second (checked once per needs tick = 1s)
+		if (Math.random() < 0.03) {
+			const eligible = ACTIVITY_REQUESTS.filter(r =>
+				r.states.includes(state) && energy >= r.minEnergy && r.text !== lastSpokenText
+			);
+			if (eligible.length > 0) {
+				const picked = eligible[Math.floor(Math.random() * eligible.length)];
+				lastActivityRequestAt = now;
+				lastEmotionalReactionAt = now;
+				lastSpokenText = picked.text;
+				say(picked.text, 5.0, "commentary", 2, true);
+				return;
+			}
+		}
+	}
+
+	// ── G. Agent comfort lines — support user during errors ──
 	if (agentMood === "concerned" && isSpeechAllowed(state, "care_for_user") && speechTimer <= 0) {
 		if (Math.random() < 0.05 && now - lastEmotionalReactionAt > 60_000) {
 			const comfortLines = [
@@ -2681,9 +2746,10 @@ export function resetPompom() {
 	agentMood = "idle";
 	playfulUntil = 0;
 	lastMilestoneCheckAt = 0;
-	// Dedup ring buffer + contextual desires + error tracking
+	// Dedup ring buffer + contextual desires + error tracking + activity requests
 	spokenRing.length = 0;
 	lastContextualDesireCheckAt = 0;
+	lastActivityRequestAt = 0;
 	agentErrorCount = 0;
 	for (const key of Object.keys(contextualDesireCooldowns)) delete contextualDesireCooldowns[key];
 	activeTheme = 0;
