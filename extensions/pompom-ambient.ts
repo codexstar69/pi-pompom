@@ -280,7 +280,11 @@ function hasAudio(weather: Weather): boolean {
 }
 
 function hasCustomAudio(weather: Weather): boolean {
-	return findCustomAudio(weather) !== null;
+	const custom = findCustomAudio(weather);
+	if (!custom) return false;
+	// On WAV-only backends (aplay/powershell), non-WAV custom files are not usable
+	if (requiresWavPlayback(detectedAmbientPlayer) && !isWavPath(custom)) return false;
+	return true;
 }
 
 async function generateAudio(weather: Weather): Promise<boolean> {

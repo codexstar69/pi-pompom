@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.16] - 2026-03-18
+
+### Features
+
+- native floating window via glimpseui integration — Pompom renders in a
+  frameless pixel-art canvas window alongside the terminal widget
+- `/pompom window` command and settings panel toggle for the native window
+- demo farewell line d26: "See you on the terminal super soon!"
+
+### Bug Fixes
+
+- ambient pre-generation now respects WAV-only backends (aplay/PowerShell) —
+  `hasCustomAudio()` no longer treats non-WAV custom files as valid on those
+  platforms, so `/pompom:ambient pregenerate` correctly generates fallback WAV
+- custom audio folder help text now notes that Linux aplay and Windows
+  PowerShell only support .wav files
+- `session_switch` now closes and reopens the native window
+- `loadGlimpse()` race condition fixed — concurrent callers share a single
+  import promise instead of getting stale null
+
 ## [7.8.10] - 2026-03-18
 
 ### Patch Changes

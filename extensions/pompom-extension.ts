@@ -2477,6 +2477,7 @@ export default function (pi: ExtensionAPI) {
 						`Drop your own ambient loops here as:\n` +
 						`  clear.mp3   cloudy.mp3   rain.mp3   snow.mp3   storm.mp3\n\n` +
 						`Supports: .mp3 .m4a .wav .aac .aiff .flac .ogg\n` +
+						`Note: Linux aplay and Windows PowerShell only support .wav\n` +
 						`Custom files override AI-generated ones.\n` +
 						(custom.length > 0
 							? `\nCustom files found: ${custom.join(", ")}`
