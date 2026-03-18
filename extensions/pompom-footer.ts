@@ -109,11 +109,10 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 	// ─ Left: Identity
 	const left = `${c(mood.hex, mood.face)} ${bold(mood.hex, "Pompom")}`;
 
-	// ─ Right: Model + thinking
-	const modelName = ((ctx.model as any)?.name || (ctx.model as any)?.id || "Claude")
-		.replace(/^(claude|gemini)-/i, "").replace(/(-preview|-pro|@latest)/g, "") || "Claude";
-	const thinkStr = thinkingLevel && thinkingLevel !== "off" ? `\u00b7${thinkingLevel}` : "";
-	const right = dim(`${modelName}${thinkStr}`);
+	// ─ Right: Model + thinking (keep full name for clarity)
+	const rawModel = (ctx.model as any)?.name || (ctx.model as any)?.id || "Claude";
+	const thinkStr = thinkingLevel && thinkingLevel !== "off" ? ` ${dim("\u2022")} ${c(PAL.mauve, thinkingLevel)}` : "";
+	const right = `${c(PAL.lavender, rawModel)}${thinkStr}`;
 
 	// ─ Middle: Progressive segments
 	const midParts: string[] = [];
@@ -140,16 +139,30 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 		const activity = stats.isAgentActive ? "working" : status.mood;
 		midParts.push(`${c(PAL.sapphire, "\u{f015b}")} ${txt(activity)} ${dim(fmtTime(sessionMs))}`);
 	}
-	// Context bar (110+ cols)
+	// Context bar + token counts (110+ cols)
 	if (width >= 110) {
-		const pct = ctxPct(ctx);
+		const usage = (ctx as any).getContextUsage?.();
+		const total = Math.max(1, Number(usage?.contextWindow) || 200000);
+		const used = Math.max(0, Number(usage?.tokens) || 0);
+		const pct = Math.min(100, Math.round((used / total) * 100));
+		const usedK = Math.round(used / 1000);
+		const totalK = Math.round(total / 1000);
 		const ctxHex = pct > 85 ? PAL.red : pct > 65 ? PAL.peach : PAL.sapphire;
 		const filled = Math.round(pct / 20);
 		const empty = 5 - filled;
-		midParts.push(`${c(ctxHex, "\u25b0".repeat(filled))}${dim("\u25b1".repeat(empty))}${txt(`${pct}%`.padStart(4, " "))}`);
+		midParts.push(`${c(ctxHex, "\u25b0".repeat(filled))}${dim("\u25b1".repeat(empty))} ${txt(`${usedK}k`)}${dim("/")}${dim(`${totalK}k`)}`);
 	}
-	// Cost (120+ cols)
-	if (width >= 120) {
+	// Path (118+ cols)
+	if (width >= 118) {
+		const home = process.env.HOME || "";
+		let cwd = ctx.cwd || "";
+		if (home && cwd.startsWith(home)) cwd = "~" + cwd.slice(home.length);
+		const parts = cwd.split("/").filter(Boolean);
+		const short = parts.length > 2 ? parts[parts.length - 1] : parts.join("/");
+		midParts.push(`${c(PAL.blue, "\uf115")} ${dim(short)}`);
+	}
+	// Cost (125+ cols)
+	if (width >= 125) {
 		const cost = getCost(ctx);
 		if (cost > 0.005) {
 			const costHex = cost > 5 ? PAL.red : cost > 2 ? PAL.yellow : PAL.green;
