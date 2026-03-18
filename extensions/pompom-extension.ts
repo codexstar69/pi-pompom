@@ -108,6 +108,7 @@ import {
 	type SpeechEvent,
 	type Personality,
 } from "./pompom-voice";
+import { installPompomFooter } from "./pompom-footer";
 import {
 	registerInstance,
 	deregisterInstance,
@@ -1212,6 +1213,7 @@ export default function (pi: ExtensionAPI) {
 				pompomOnEmotionalState((state) => {
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
+				installPompomFooter(startCtx, () => sessionStartMs, () => pi.getThinkingLevel());
 				restoreCompanionState(startCtx);
 				if (enabled) {
 					showCompanion();
@@ -1293,6 +1295,7 @@ export default function (pi: ExtensionAPI) {
 				pompomOnEmotionalState((state) => {
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
+			installPompomFooter(switchCtx, () => sessionStartMs, () => pi.getThinkingLevel());
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
