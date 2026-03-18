@@ -124,9 +124,10 @@ function detectAmbientPlayer(): AmbientPlayer {
 const AMBIENT_DIR = path.join(os.homedir(), ".pi", "pompom", "ambient");
 const CUSTOM_DIR = path.join(AMBIENT_DIR, "custom");
 const CONFIG_FILE = path.join(os.homedir(), ".pi", "pompom", "ambient-config.json");
-const AMBIENT_DURATION_S = 60;
+const ELEVENLABS_SOUND_MAX_DURATION_S = 30;
+const AMBIENT_DURATION_S = ELEVENLABS_SOUND_MAX_DURATION_S;
 const AMBIENT_CROSSFADE_MS = 2000; // overlap new loop 2s before old one ends
-const AMBIENT_VERSION = 2; // bump when duration changes — forces re-generation of cached files
+const AMBIENT_VERSION = 3; // bump when duration changes — forces re-generation of cached files
 const AMBIENT_VERSION_FILE = path.join(AMBIENT_DIR, ".version");
 const PLAYBACK_TMP_DIR = path.join(os.tmpdir(), "pompom-ambient");
 

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.20] - 2026-03-19
+
+### Patch Changes
+
+- ambient ElevenLabs generation in `extensions/pompom-ambient.ts` now uses the
+  supported 30 second ceiling instead of 60 seconds, so live ambient creation
+  no longer fails with HTTP 400 `invalid_generation_settings`
+- ambient cache version bumped so previously generated weather loops refresh
+  against the new duration automatically
+
 ## [7.8.19] - 2026-03-18
 
 ### Patch Changes

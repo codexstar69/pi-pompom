@@ -1,5 +1,26 @@
 # Handoff
 
+## Most Recent Work — 2026-03-19 10:54 IST
+
+- Traced the demo-video ambient failure to `extensions/pompom-ambient.ts`:
+  ambient generation still posted `duration_seconds: 60` to ElevenLabs sound
+  generation, which now rejects values above 30 with HTTP 400
+  `invalid_generation_settings`
+- Reduced ambient generation duration to the supported 30 second ceiling and
+  kept the playback loop/crossfade timing aligned to that same duration
+- Bumped `AMBIENT_VERSION` so cached generated ambient loops are cleared and
+  refreshed automatically after the duration change
+- Updated `CHANGELOG.md` and bumped `package.json` to `7.8.20`
+- Verification:
+  - `pnpm typecheck`: passed
+- Residual risk:
+  - no live Pi CLI / ElevenLabs runtime check was run in this workspace, so the
+    fix is validated statically plus against the returned ElevenLabs 400 error
+
+## Latest Prompts
+
+- "saw this issue in demo video - can we fix it"
+
 ## Most Recent Work — 2026-03-18 23:51 IST
 
 - Traced the silent `/pompom demo` report to two live runtime issues:
