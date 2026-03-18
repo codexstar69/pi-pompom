@@ -31,6 +31,7 @@ import {
 	getCustomAudioDir, pregenerateSfx, getSfxCacheStatus,
 } from "./pompom-ambient";
 import { getInstanceCount, isPrimaryInstance } from "./pompom-instance";
+import { isWindowOpen, isWindowEnabled } from "./pompom-glimpse";
 
 type SubMode = "main" | "voice-picker" | "engine-picker" | "personality-picker" | "model-picker";
 
@@ -167,6 +168,7 @@ class PompomSettingsPanel {
 	public onPregenerate?: () => Promise<number>;
 	public onAmbientToggle?: (enabled: boolean) => void;
 	public onAccessoryChange?: (change: AccessoryChange) => void | Promise<void>;
+	public onWindowToggle?: () => Promise<boolean>;
 
 	private inv() { this.cw = undefined; this.cl = undefined; }
 
@@ -267,7 +269,7 @@ class PompomSettingsPanel {
 	}
 
 	private rowCount(): number {
-		if (this.tab === TAB_POMPOM) return POMPOM_ACTIONS.length + 1; // +1 for on/off toggle
+		if (this.tab === TAB_POMPOM) return POMPOM_ACTIONS.length + 2; // +1 on/off toggle, +1 window toggle
 		if (this.tab === TAB_VOICE) return 5; // engine, voice, volume, status, test
 		if (this.tab === TAB_AMBIENT) return 6; // ambient on/off, volume, pregenerate ambient, cache, pregenerate SFX, SFX cache
 		if (this.tab === TAB_PERSONALITY) return PERSONALITY_OPTIONS.length;
@@ -285,8 +287,21 @@ class PompomSettingsPanel {
 				this.pompomEnabled = !this.pompomEnabled;
 				if (this.onTogglePompom) this.onTogglePompom(this.pompomEnabled);
 				this.showStatus(this.pompomEnabled ? "Pompom ON" : "Pompom OFF (chat stays)");
+			} else if (this.row === 1) {
+				// Native window toggle — second row
+				if (this.onWindowToggle) {
+					void Promise.resolve(this.onWindowToggle()).then((opened) => {
+						this.showStatus(opened ? "Native window opened" : "Native window closed");
+						this.inv();
+					}).catch(() => {
+						this.showStatus("glimpseui not installed");
+						this.inv();
+					});
+				} else {
+					this.showStatus("Window toggle not available");
+				}
 			} else {
-				const action = POMPOM_ACTIONS[this.row - 1]; // offset by 1 for toggle row
+				const action = POMPOM_ACTIONS[this.row - 2]; // offset by 2 for toggle rows
 				if (action) {
 					pompomKeypress(action.key);
 					this.showStatus(action.label);
@@ -489,6 +504,12 @@ class PompomSettingsPanel {
 			? `${GRN}ON${RST}` + (iw >= 40 ? `  ${DIM}animation, voice, ambient active${RST}` : "")
 			: `${YEL}OFF${RST}` + (iw >= 40 ? ` ${DIM}muted \u2014 chat still works${RST}` : "");
 		lines.push(line(`${togglePre}${BRT}Pompom: ${toggleLabel}`));
+
+		// Native window toggle — second row
+		const winPre = this.row === 1 ? `${SEL}\u25b8 ` : `  `;
+		const winState = isWindowOpen() ? `${GRN}ON${RST}` : `${DIM}OFF${RST}`;
+		const winHint = iw >= 45 ? `  ${DIM}floating pixel-art window${RST}` : "";
+		lines.push(line(`${winPre}${BRT}Native Window: ${winState}${winHint}`));
 		lines.push(line(""));
 
 		// Status section — responsive layout
@@ -521,14 +542,14 @@ class PompomSettingsPanel {
 			for (let i = 0; i < POMPOM_ACTIONS.length; i += 2) {
 				const a1 = POMPOM_ACTIONS[i];
 				const a2 = i + 1 < POMPOM_ACTIONS.length ? POMPOM_ACTIONS[i + 1] : null;
-				const pre1 = (i + 1) === this.row ? `${SEL}\u25b8` : ` `;
+				const pre1 = (i + 2) === this.row ? `${SEL}\u25b8` : ` `;
 				const desc1 = truncateToWidth(a1.description, Math.max(4, colW - a1.label.length - 5));
 				let col1 = `${pre1} ${BRT}${a1.label}${RST} ${DIM}${desc1}${RST}`;
 				const col1W = visibleWidth(col1);
 				const gap = Math.max(1, colW - col1W);
 				col1 += " ".repeat(gap);
 				if (a2) {
-					const pre2 = (i + 2) === this.row ? `${SEL}\u25b8` : ` `;
+					const pre2 = (i + 3) === this.row ? `${SEL}\u25b8` : ` `;
 					const desc2 = truncateToWidth(a2.description, Math.max(4, colW - a2.label.length - 5));
 					lines.push(line(`${col1}${pre2} ${BRT}${a2.label}${RST} ${DIM}${desc2}${RST}`));
 				} else {
@@ -539,7 +560,7 @@ class PompomSettingsPanel {
 			// Single column — truncate descriptions to fit
 			for (let i = 0; i < POMPOM_ACTIONS.length; i++) {
 				const a = POMPOM_ACTIONS[i];
-				const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
+				const pre = (i + 2) === this.row ? `${SEL}\u25b8 ` : `  `;
 				if (iw >= 30) {
 					const desc = truncateToWidth(a.description, Math.max(4, iw - a.label.length - 6));
 					lines.push(line(`${pre}${BRT}${a.label}${RST} ${DIM}${desc}${RST}`));
@@ -845,6 +866,7 @@ export interface PompomSettingsOptions {
 	onTogglePompom?: (enabled: boolean) => void;
 	onAmbientToggle?: (enabled: boolean) => void;
 	onAccessoryChange?: (change: AccessoryChange) => void | Promise<void>;
+	onWindowToggle?: () => Promise<boolean>;
 }
 
 export interface AccessoryChange {
@@ -859,6 +881,7 @@ export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSet
 	panel.onTogglePompom = opts?.onTogglePompom;
 	panel.onAmbientToggle = opts?.onAmbientToggle;
 	panel.onAccessoryChange = opts?.onAccessoryChange;
+	panel.onWindowToggle = opts?.onWindowToggle;
 
 	// Wire pregenerate callback
 	panel.onPregenerate = async () => {

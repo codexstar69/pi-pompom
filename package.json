@@ -49,6 +49,7 @@
     "@mariozechner/pi-tui": "*"
   },
   "optionalDependencies": {
+    "glimpseui": "*",
     "kokoro-js": "*"
   },
   "engines": {

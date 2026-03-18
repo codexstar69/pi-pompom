@@ -3481,3 +3481,108 @@ export function pompomRestoreAccessories(items: Partial<Accessories>): void {
 		hat: items.hat === true,
 	};
 }
+
+// ─── Native Window Frame Data ────────────────────────────────────────────────
+
+export interface FrameData {
+	width: number;
+	height: number;
+	/** RGB triplets for foreground color per cell, length = width * height * 3 */
+	fg: Uint8Array;
+	/** RGB triplets for background color per cell, length = width * height * 3 */
+	bg: Uint8Array;
+	/** Unicode code points per cell, length = width * height */
+	chars: Uint16Array;
+	speechText: string;
+	status: { hunger: number; energy: number; mood: string; theme: string };
+}
+
+/**
+ * Extract raw pixel data from the current frame buffers.
+ * Call after renderPompom() so screenChars/screenColors are populated.
+ */
+export function getFrameData(): FrameData {
+	const w = W;
+	const h = H;
+	const totalCells = w * h;
+	const fg = new Uint8Array(totalCells * 3);
+	const bg = new Uint8Array(totalCells * 3);
+	const chars = new Uint16Array(totalCells);
+
+	for (let cy = 0; cy < h; cy++) {
+		for (let cx = 0; cx < w; cx++) {
+			const idx = cy * w + cx;
+			const colorStr = screenColors[cy]?.[cx] || "";
+			const charStr = screenChars[cy]?.[cx] || " ";
+
+			// Parse foreground: \x1b[38;2;R;G;Bm or \x1b[38;5;Nm
+			const fgMatch = colorStr.match(/\x1b\[38;2;(\d+);(\d+);(\d+)m/);
+			if (fgMatch) {
+				fg[idx * 3] = parseInt(fgMatch[1], 10);
+				fg[idx * 3 + 1] = parseInt(fgMatch[2], 10);
+				fg[idx * 3 + 2] = parseInt(fgMatch[3], 10);
+			} else {
+				const fg256 = colorStr.match(/\x1b\[38;5;(\d+)m/);
+				if (fg256) {
+					const [r, g, b] = ansi256ToRgb(parseInt(fg256[1], 10));
+					fg[idx * 3] = r;
+					fg[idx * 3 + 1] = g;
+					fg[idx * 3 + 2] = b;
+				}
+			}
+
+			// Parse background: \x1b[48;2;R;G;Bm or \x1b[48;5;Nm
+			const bgMatch = colorStr.match(/\x1b\[48;2;(\d+);(\d+);(\d+)m/);
+			if (bgMatch) {
+				bg[idx * 3] = parseInt(bgMatch[1], 10);
+				bg[idx * 3 + 1] = parseInt(bgMatch[2], 10);
+				bg[idx * 3 + 2] = parseInt(bgMatch[3], 10);
+			} else {
+				const bg256 = colorStr.match(/\x1b\[48;5;(\d+)m/);
+				if (bg256) {
+					const [r, g, b] = ansi256ToRgb(parseInt(bg256[1], 10));
+					bg[idx * 3] = r;
+					bg[idx * 3 + 1] = g;
+					bg[idx * 3 + 2] = b;
+				}
+			}
+
+			chars[idx] = charStr.codePointAt(0) || 0x20;
+		}
+	}
+
+	return {
+		width: w,
+		height: h,
+		fg,
+		bg,
+		chars,
+		speechText: speechTimer > 0 ? speechText : "",
+		status: pompomStatus(),
+	};
+}
+
+/** Convert ANSI 256-color index to RGB. */
+function ansi256ToRgb(n: number): [number, number, number] {
+	if (n < 16) {
+		// Standard 16 colors (approximate)
+		const table: [number, number, number][] = [
+			[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+			[0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],
+			[128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+			[0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+		];
+		return table[n];
+	}
+	if (n < 232) {
+		// 6x6x6 color cube
+		const i = n - 16;
+		const r = Math.floor(i / 36);
+		const g = Math.floor((i % 36) / 6);
+		const b = i % 6;
+		return [r ? r * 40 + 55 : 0, g ? g * 40 + 55 : 0, b ? b * 40 + 55 : 0];
+	}
+	// Grayscale ramp
+	const v = (n - 232) * 10 + 8;
+	return [v, v, v];
+}

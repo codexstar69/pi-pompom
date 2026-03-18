@@ -125,6 +125,13 @@ import {
 	getInstanceCount,
 	markGreeting,
 } from "./pompom-instance";
+import {
+	isGlimpseAvailable,
+	isWindowEnabled,
+	openNativeWindow,
+	closeNativeWindow,
+	toggleNativeWindow,
+} from "./pompom-glimpse";
 
 type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
 
@@ -981,6 +988,10 @@ export default function (pi: ExtensionAPI) {
 		setupKeyHandler();
 		startAmbientWeatherSync();
 		scheduleAiSpeech();
+		// Open native window if available + enabled + primary instance
+		if (isPrimaryInstance() && isWindowEnabled()) {
+			void isGlimpseAvailable().then(ok => { if (ok && enabled) void openNativeWindow(); });
+		}
 	}
 
 	function disablePompom() {
@@ -993,6 +1004,7 @@ export default function (pi: ExtensionAPI) {
 		stopAmbient();
 		stopAmbientWeatherSync();
 		stopPlayback();
+		closeNativeWindow();
 		// Session-only mute: stop playback without persisting disabled state to disk.
 		// This way /pompom on can restore the user's saved preferences.
 		resetPompom();
@@ -1601,6 +1613,10 @@ export default function (pi: ExtensionAPI) {
 					setupKeyHandler();
 					startAmbientWeatherSync();
 					scheduleAiSpeech();
+					// Auto-open native window on session start (primary only)
+					if (isPrimaryInstance() && isWindowEnabled()) {
+						void isGlimpseAvailable().then(ok => { if (ok && enabled) void openNativeWindow(); });
+					}
 				}
 				showVoiceHint();
 				showAmbientHint();
@@ -1610,6 +1626,7 @@ export default function (pi: ExtensionAPI) {
 		pi.on("session_shutdown", async () => {
 			await runSafely("session_shutdown", async () => {
 				const wasPrimary = isPrimaryInstance();
+				closeNativeWindow();
 				deregisterInstance();
 				stopDemo();
 				cancelAiCommand();
@@ -1653,6 +1670,7 @@ export default function (pi: ExtensionAPI) {
 				stopPlayback();
 				stopAmbient();
 				stopAmbientWeatherSync();
+				closeNativeWindow();
 				resetAiSpeechState();
 				sessionStartMs = Date.now();
 				cleanupSessionUiState();
@@ -1691,6 +1709,9 @@ export default function (pi: ExtensionAPI) {
 				setupKeyHandler();
 				startAmbientWeatherSync();
 				scheduleAiSpeech();
+				if (isPrimaryInstance() && isWindowEnabled()) {
+					void isGlimpseAvailable().then(ok => { if (ok && enabled) void openNativeWindow(); });
+				}
 			}
 			showVoiceHint();
 			showAmbientHint();
@@ -1918,6 +1939,9 @@ export default function (pi: ExtensionAPI) {
 					onAccessoryChange: async () => {
 						await saveAccessories();
 					},
+					onWindowToggle: async () => {
+						return toggleNativeWindow();
+					},
 				});
 			});
 		},
@@ -1956,6 +1980,24 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
+				if (sub === "window") {
+					const available = await isGlimpseAvailable();
+					if (!available) {
+						commandContext.ui.notify(
+							"Native window requires the 'glimpseui' package.\n" +
+							"Install with: bun add glimpseui",
+							"warning"
+						);
+						return;
+					}
+					const opened = await toggleNativeWindow();
+					commandContext.ui.notify(
+						opened ? "Native window opened." : "Native window closed.",
+						"info"
+					);
+					return;
+				}
+
 				if (sub === "help" || sub === "?") {
 					const modifier = process.platform === "darwin" ? "⌥" : "Alt+";
 					commandContext.ui.notify(
@@ -1988,6 +2030,7 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom:ambient      Weather ambient sounds — on|off|volume|pregenerate|reset\n` +
 						`  /pompom:terminals    Show all running Pompom terminals\n` +
 						`  /pompom-give-hat     Give Pompom a hat (also: umbrella, scarf, sunglasses)\n` +
+						`  /pompom window       Toggle native floating window\n` +
 						`  /pompom demo         Autonomous ~135s showcase\n` +
 						`  /pompom-settings     Interactive settings panel`,
 						"info"
