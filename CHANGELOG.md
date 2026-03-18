@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.2.9] - 2026-03-18
+
+### Patch Changes
+
+- live session speech gate in `extensions/pompom-extension.ts` so `/pompom off` stops commentary and forwarded TTS events without overwriting saved voice preferences
+- widget remount path in `extensions/pompom-extension.ts` so hide/show restores the companion view even when behavioral timers stay active
+- ALSA ambient blocked-state handling in `extensions/pompom-ambient.ts` so unsupported `.mp3` playback stops the 5-second retry loop instead of logging forever
+
 ## [2.3.1] - 2026-03-15
 
 ### Patch Changes

@@ -12,5 +12,5 @@
       "@mariozechner/*": ["node_modules/@mariozechner/*"]
     }
   },
-  "include": ["extensions/**/*.ts"]
+  "include": ["extensions/**/*.ts", "skills/**/*.ts"]
 }

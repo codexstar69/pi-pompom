@@ -497,6 +497,7 @@ let isTalking = false;
 let talkAudioLevel = 0;
 let onSpeechCallback: ((event: SpeechEvent) => void) | null = null;
 let onSfxCallback: ((sfx: string) => void) | null = null;
+let onEmotionalStateCallback: ((state: string) => void) | null = null;
 let lastFootstepTime = 0;
 const FOOTSTEP_INTERVAL_MS = 3000; // one step every 3s — felt, not heard
 
@@ -1417,6 +1418,7 @@ function resolveAndSpeak(now: number): void {
 				`[happy] ${milestone} moments... each one special!`,
 			];
 			say(lines[Math.floor(Math.random() * lines.length)], 4.0, "system", 3, true);
+			emitSfx("milestone_chime");
 			lastEmotionalReactionAt = now;
 			return;
 		}
@@ -1429,6 +1431,7 @@ function resolveAndSpeak(now: number): void {
 		if (sessionMilestone && speechTimer <= 0 && isSpeechAllowed(state, "care_for_user")) {
 			lastSessionMilestone = sessionMilestone.minutes;
 			say(sessionMilestone.line, 4.0, "commentary", 2, true);
+			emitSfx("milestone_chime");
 			lastEmotionalReactionAt = now;
 			return;
 		}
@@ -1622,12 +1625,23 @@ function updatePhysics(dt: number) {
 	const now = Date.now();
 	if (now - lastNeedsTick > 1000) {
 		lastNeedsTick = now;
+		const prevHunger = hunger;
+		const prevEnergy = energy;
 		if (!isSleeping) { energy = Math.max(0, energy - 0.5); hunger = Math.max(0, hunger - 0.8); }
 		else { energy = Math.min(100, energy + 5.0); hunger = Math.max(0, hunger - 0.2); }
+		// Threshold-crossing SFX (fire once per crossing, not every tick)
+		if (!isSleeping) {
+			if (prevHunger >= 30 && hunger < 30) emitSfx("hunger_rumble");
+			if (prevEnergy >= 30 && energy < 30) emitSfx("tired_yawn");
+		}
 
 		// Character bible: resolve emotional state and speak
 		if (!isSleeping) {
+			const prevState = currentEmotionalState;
 			currentEmotionalState = resolveEmotionalState(now);
+			if (currentEmotionalState !== prevState && onEmotionalStateCallback) {
+				try { onEmotionalStateCallback(currentEmotionalState); } catch { /* non-fatal */ }
+			}
 			resolveAndSpeak(now);
 		}
 	}
@@ -1724,7 +1738,7 @@ function updatePhysics(dt: number) {
 	if (ballY !== -10 && !hasBall) {
 		ballVy += dt * 5.0;
 		ballX += ballVx * dt; ballY += ballVy * dt;
-		if (ballY > 0.55) { ballY = 0.55; ballVy *= -0.7; ballVx *= 0.8; if (Math.abs(ballVy) < 0.2) ballVy = 0; if (Math.abs(ballVx) < 0.1) ballVx = 0; }
+		if (ballY > 0.55) { ballY = 0.55; ballVy *= -0.7; ballVx *= 0.8; if (Math.abs(ballVy) > 0.5) emitSfx("ball_bounce"); if (Math.abs(ballVy) < 0.2) ballVy = 0; if (Math.abs(ballVx) < 0.1) ballVx = 0; }
 		if (ballX < -getScreenEdgeX() + 0.1) { ballX = -getScreenEdgeX() + 0.1; ballVx *= -0.8; }
 		if (ballX > getScreenEdgeX() - 0.1) { ballX = getScreenEdgeX() - 0.1; ballVx *= -0.8; }
 	}
@@ -1924,7 +1938,7 @@ function updatePhysics(dt: number) {
 	if (currentState === "flip") {
 		flipPhase += dt * Math.PI * 2.0;
 		bounceY = -Math.sin(flipPhase) * 0.6;
-		if (flipPhase >= Math.PI * 2) { isFlipping = false; bounceY = 0; currentState = "idle"; }
+		if (flipPhase >= Math.PI * 2) { isFlipping = false; bounceY = 0; currentState = "idle"; emitSfx("flip_land"); }
 	}
 	if (currentState === "sleep") {
 		blinkFade = 1.0;
@@ -1937,6 +1951,7 @@ function updatePhysics(dt: number) {
 		if (actionTimer <= 0) {
 			currentState = "idle"; isSleeping = false;
 			lastRestedAt = Date.now();
+			emitSfx("wake_yawn");
 			if (hunger < 30) {
 				const hungryWake = ["[sighs] Good nap... but I'm hungry now!", "[sad] I slept well but... my tummy...", "[sighs] Rested but starving..."];
 				say(hungryWake[Math.floor(Math.random() * hungryWake.length)], 4.0, "reaction", 1, true);
@@ -1980,6 +1995,7 @@ function updatePhysics(dt: number) {
 			lookX = dir * 0.5;
 			if (Math.abs(posX - ballX) < 0.15 && Math.abs(posY + bounceY - ballY) < 0.3) {
 					hasBall = true;
+					emitSfx("ball_catch");
 					const catchLines = ["[excited] Got it!", "[laughs] Caught it!", "[excited] Ha! Too fast for me? Never!", "[happy] Mine!"];
 					say(catchLines[Math.floor(Math.random() * catchLines.length)], 4.0, "reaction", 2, true);
 				}
@@ -1990,6 +2006,7 @@ function updatePhysics(dt: number) {
 			lookX = dir * 0.5;
 			if (Math.abs(posX) < 0.08) {
 				hasBall = false; ballX = posX + 0.15; ballY = 0.5; ballVx = 0.8; ballVy = -1.5;
+				emitSfx("ball_bounce");
 				currentState = "excited"; actionTimer = 2.0;
 					const returnLines = ["[happy] Here you go!", "[excited] Catch! Throw it again!", "[happy] I brought it back!", "[laughs] Again again again!"];
 					say(returnLines[Math.floor(Math.random() * returnLines.length)], 4.0, "reaction", 2, true);
@@ -2005,6 +2022,7 @@ function updatePhysics(dt: number) {
 		if (f.y >= 0.5) { f.y = 0.5; f.vy = 0; }
 		if (Math.sqrt((f.x - posX) ** 2 + (f.y - (posY + bounceY)) ** 2) < 0.40 && !isSleeping) {
 			currentState = "excited"; actionTimer = 2.0;
+			emitSfx("eat_crunch");
 			for (let k = 0; k < 5; k++) {
 				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
 			}
@@ -2387,6 +2405,10 @@ export function pompomOnSfx(cb: ((sfx: string) => void) | null) {
 	onSfxCallback = cb;
 }
 
+export function pompomOnEmotionalState(cb: ((state: string) => void) | null) {
+	onEmotionalStateCallback = cb;
+}
+
 export function pompomSetTalkAudioLevel(level: number) {
 	talkAudioLevel = clamp(level, 0, 1);
 }
@@ -2614,6 +2636,7 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "g") {
 		isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game";
+		emitSfx("game_start");
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;

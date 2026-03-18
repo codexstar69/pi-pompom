@@ -239,6 +239,9 @@ const state: SerializedAgentState = {
 
 const lastBucketAt: Partial<Record<CommentaryBucket, number>> = {};
 
+/** Consecutive tool failures without an intervening success — used for stuck detection. */
+let consecutiveRecentFailures = 0;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -421,9 +424,11 @@ export function onToolResult({ toolCallId, toolName, isError }: ToolResultInput)
 	if (isError) {
 		state.counters.toolFailures += 1;
 		state.lastToolFailedAt = now;
+		consecutiveRecentFailures++;
 	} else {
 		state.counters.toolSuccesses += 1;
 		state.lastToolSucceededAt = now;
+		consecutiveRecentFailures = 0;
 	}
 	refreshMood();
 }
@@ -540,6 +545,7 @@ export function resetAgentState(): void {
 	for (const key of Object.keys(lastBucketAt)) {
 		delete lastBucketAt[key as CommentaryBucket];
 	}
+	consecutiveRecentFailures = 0;
 	state.mood = "idle";
 	state.isAgentActive = false;
 	state.activeAgentRuns = 0;
@@ -656,14 +662,11 @@ export function detectStuck(): StuckSignal {
 	let confidence = 0;
 	const now = Date.now();
 
-	// Rule 1: Recent error pattern
-	const lifetimeFails = state.counters.toolFailures;
-	if (lifetimeFails >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
-		const failStreak = Math.min(lifetimeFails, 10);
-		if (failStreak >= 3) {
-			reasons.push(`${failStreak} recent tool failures`);
-			confidence += 0.35;
-		}
+	// Rule 1: Recent consecutive failure streak (not lifetime totals)
+	if (consecutiveRecentFailures >= 3 && state.lastToolFailedAt > state.lastToolSucceededAt) {
+		const failStreak = Math.min(consecutiveRecentFailures, 10);
+		reasons.push(`${failStreak} consecutive recent tool failures`);
+		confidence += 0.35;
 	}
 
 	// Rule 2: Agent running long without progress

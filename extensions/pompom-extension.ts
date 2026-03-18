@@ -15,6 +15,7 @@ import {
 	type Message,
 } from "@mariozechner/pi-ai";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
 	detectStuck,
@@ -49,6 +50,7 @@ import {
 	pompomSetWeatherOverride,
 	pompomGetWeather,
 	pompomOnSfx,
+	pompomOnEmotionalState,
 	pompomStatus,
 	renderPompom,
 	resetPompom,
@@ -63,6 +65,9 @@ import {
 	setAmbientWeather,
 	duckAmbient,
 	unduckAmbient,
+	duckAmbientForSleep,
+	unduckAmbientForSleep,
+	setMoodSfxState,
 	pauseAmbient,
 	resumeAmbient,
 	stopAmbient,
@@ -71,6 +76,7 @@ import {
 	getCachedWeathers,
 	getCustomWeathers,
 	isAmbientPlaying,
+	isAmbientPlaybackBlocked,
 	getCustomAudioDir,
 	playSfx,
 	startWeatherSfx,
@@ -146,7 +152,7 @@ interface OverlayHint {
 	earBoost: number;
 }
 
-const SAVE_DIR = path.join(process.env.HOME || "~", ".pi", "pompom");
+const SAVE_DIR = path.join(os.homedir(), ".pi", "pompom");
 const SAVE_FILE = path.join(SAVE_DIR, "accessories.json");
 const WIDGET_ID = "codexstar-pompom-companion";
 const POMPOM_AGENT_STATE_TYPE = "pompom-agent-state";
@@ -450,6 +456,8 @@ export default function (pi: ExtensionAPI) {
 	let overlayHint: OverlayHint | null = null;
 	let overlayHintUntil = 0;
 	let pulseOverlayTimer: ReturnType<typeof setTimeout> | null = null;
+	let lastAgentTickAt = 0;
+	const AGENT_TICK_COOLDOWN_MS = 30000; // max 1 agent_tick per 30s
 
 	function persistAgentState() {
 		try {
@@ -501,6 +509,10 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	function speakCommentary(request: Parameters<typeof getCommentary>[0]) {
+		if (!enabled) {
+			applyAgentVisualState();
+			return;
+		}
 		const commentary = getCommentary(request);
 		if (!commentary) {
 			applyAgentVisualState();
@@ -552,7 +564,7 @@ export default function (pi: ExtensionAPI) {
 			let model: ModelLike | undefined;
 			if (pompomModelId) {
 				const all = ctx.modelRegistry.getAll();
-				const found = all.find(m => m.id === pompomModelId);
+				const found = all.find(m => m.id === pompomModelId || `${m.provider}/${m.id}` === pompomModelId);
 				if (found) model = found;
 			}
 			if (!model) {
@@ -684,8 +696,9 @@ export default function (pi: ExtensionAPI) {
 	function syncAmbientWeather() {
 		try {
 			const weather = pompomGetWeather();
+			const ambientBlocked = isAmbientPlaybackBlocked(weather);
 			if (isPrimaryInstance()) {
-				if (weather !== lastAmbientWeather || !isAmbientPlaying()) {
+				if (weather !== lastAmbientWeather || (!isAmbientPlaying() && !ambientBlocked)) {
 					lastAmbientWeather = weather;
 					setAmbientWeather(weather).catch(err => { console.error(`[pompom] setAmbientWeather failed: ${err instanceof Error ? err.message : err}`); });
 					startWeatherSfx();
@@ -724,10 +737,20 @@ export default function (pi: ExtensionAPI) {
 		stopAmbient();
 		stopAmbientWeatherSync();
 		stopPlayback();
-		setVoiceEnabled(false);
-		setAmbientEnabled(false);
+		// Session-only mute: stop playback without persisting disabled state to disk.
+		// This way /pompom on can restore the user's saved preferences.
 		resetPompom();
 		if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
+	}
+
+	function canForwardSpeech(event: SpeechEvent): boolean {
+		if (!enabled || !event.allowTts) {
+			return false;
+		}
+		if (!isPrimaryInstance() && event.source !== "user_action") {
+			return false;
+		}
+		return true;
 	}
 
 	function showAmbientHint() {
@@ -758,11 +781,10 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	function showCompanion() {
-		if (companionActive || !ctx?.hasUI) {
+	function mountCompanionWidget() {
+		if (!ctx?.hasUI || !widgetVisible) {
 			return;
 		}
-		companionActive = true;
 		lastRenderTime = Date.now();
 
 		const setWidget = () => {
@@ -784,6 +806,14 @@ export default function (pi: ExtensionAPI) {
 			clearInterval(companionTimer);
 		}
 		companionTimer = setInterval(setWidget, 150);
+	}
+
+	function showCompanion() {
+		if (companionActive || !ctx?.hasUI) {
+			return;
+		}
+		companionActive = true;
+		mountCompanionWidget();
 		startHealthCheck();
 
 		if (voiceCheckTimer) {
@@ -818,6 +848,11 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			pompomSetTalkAudioLevel(0);
+
+			// Sleep ambient ducking — lower ambient while Pompom naps
+			const sleepStatus = pompomStatus();
+			if (sleepStatus.mood === "sleeping") duckAmbientForSleep();
+			else unduckAmbientForSleep();
 		}, 50);
 	}
 
@@ -932,6 +967,21 @@ export default function (pi: ExtensionAPI) {
 		applyAgentVisualState();
 	}
 
+	/** Resolve the Pompom AI model: honors getPompomModel() config, falls back to session model.
+	 *  Returns the full model registry object (not just ModelLike) so it can be passed to API calls. */
+	function resolvePompomModel(commandContext: ExtensionContext): any | null {
+		const pompomModelId = getPompomModel();
+		if (pompomModelId) {
+			try {
+				const all = commandContext.modelRegistry.getAll();
+				const found = all.find((m: any) => m.id === pompomModelId || `${m.provider}/${m.id}` === pompomModelId);
+				if (found && isModelLike(found)) return found;
+			} catch { /* fall through to session model */ }
+		}
+		const model = commandContext.model;
+		return isModelLike(model) ? model : null;
+	}
+
 	async function runPompomAsk(commandArgs: string, commandContext: ExtensionContext) {
 		if (aiCommandInProgress) {
 			commandContext.ui.notify("Pompom is already working on a request. Please wait.", "warning");
@@ -944,8 +994,8 @@ export default function (pi: ExtensionAPI) {
 			commandContext.ui.notify("Usage: /pompom:ask <question>", "warning");
 			return;
 		}
-		const model = commandContext.model;
-		if (!isModelLike(model)) {
+		const model = resolvePompomModel(commandContext);
+		if (!model) {
 			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
 			return;
@@ -1042,8 +1092,8 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		aiCommandInProgress = true; // Set IMMEDIATELY to prevent race
-		const model = commandContext.model;
-		if (!isModelLike(model)) {
+		const model = resolvePompomModel(commandContext);
+		if (!model) {
 			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
 			return;
@@ -1116,44 +1166,46 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("session_start", async (_event, startCtx) => {
-		await runSafely("session_start", async () => {
-			ctx = startCtx;
-			sessionStartMs = Date.now();
-			loadedVoiceHintShown = false;
-			registerInstance(startCtx.cwd);
-			initVoice(Boolean(startCtx.hasUI));
-			initAmbient(Boolean(startCtx.hasUI));
-			pompomOnSpeech((event: SpeechEvent) => {
-				if (event.allowTts) {
-					// Only primary instance speaks TTS for non-user-triggered events
-					if (!isPrimaryInstance() && event.source !== "user_action") return;
+		pi.on("session_start", async (_event, startCtx) => {
+			await runSafely("session_start", async () => {
+				ctx = startCtx;
+				sessionStartMs = Date.now();
+				loadedVoiceHintShown = false;
+				registerInstance(startCtx.cwd);
+				initVoice(Boolean(startCtx.hasUI));
+				initAmbient(Boolean(startCtx.hasUI));
+				if (isPrimaryInstance()) void playSfx("session_chime");
+				pompomOnSpeech((event: SpeechEvent) => {
+					if (!canForwardSpeech(event)) return;
 					enqueueSpeech(event);
+				});
+				pompomOnSfx((sfx) => {
+					// Weather SFX only on primary; user-triggered SFX on all instances
+					const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip", "cricket_chirp"];
+					if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
+					void playSfx(sfx as SfxName);
+				});
+				pompomOnEmotionalState((state) => {
+					if (isPrimaryInstance()) setMoodSfxState(state);
+				});
+				restoreCompanionState(startCtx);
+				if (enabled) {
+					showCompanion();
+					setupKeyHandler();
+					startAmbientWeatherSync();
+					scheduleAiSpeech();
 				}
+				showVoiceHint();
+				showAmbientHint();
 			});
-			pompomOnSfx((sfx) => {
-				// Weather SFX only on primary; user-triggered SFX on all instances
-				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip"];
-				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
-				void playSfx(sfx as SfxName);
-			});
-			restoreCompanionState(startCtx);
-			if (enabled) {
-				showCompanion();
-				setupKeyHandler();
-				startAmbientWeatherSync();
-				scheduleAiSpeech();
-			}
-			showVoiceHint();
-			showAmbientHint();
 		});
-	});
 
 	pi.on("session_shutdown", async () => {
 		await runSafely("session_shutdown", () => {
 			deregisterInstance();
 			persistAgentState();
 			setAgentBusy(false);
+			void playSfx("session_goodbye");
 			stopPlayback();
 			stopAmbient();
 			stopAmbientWeatherSync();
@@ -1166,6 +1218,8 @@ export default function (pi: ExtensionAPI) {
 			chatOverlayHandle = null;
 			pompomOnSpeech(null);
 			pompomOnSfx(null);
+			pompomOnEmotionalState(null);
+			setMoodSfxState(null);
 			hideCompanion();
 			resetPompom();
 			resetAgentState();
@@ -1194,26 +1248,27 @@ export default function (pi: ExtensionAPI) {
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
-			registerInstance(switchCtx.cwd);
-			loadedVoiceHintShown = false;
-			loadedAmbientHintShown = false;
-			lastAmbientWeather = null;
-			wasTTSPlaying = false;
-			lastProactiveAlertAt = 0;
-			widgetVisible = true;
-			initVoice(Boolean(switchCtx.hasUI));
-			initAmbient(Boolean(switchCtx.hasUI));
-			pompomOnSpeech((event: SpeechEvent) => {
-				if (event.allowTts) {
-					if (!isPrimaryInstance() && event.source !== "user_action") return;
+				registerInstance(switchCtx.cwd);
+				loadedVoiceHintShown = false;
+				loadedAmbientHintShown = false;
+				lastAmbientWeather = null;
+				wasTTSPlaying = false;
+				lastProactiveAlertAt = 0;
+				widgetVisible = true;
+				initVoice(Boolean(switchCtx.hasUI));
+				initAmbient(Boolean(switchCtx.hasUI));
+				pompomOnSpeech((event: SpeechEvent) => {
+					if (!canForwardSpeech(event)) return;
 					enqueueSpeech(event);
-				}
-			});
-			pompomOnSfx((sfx) => {
-				const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip"];
-				if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
-				void playSfx(sfx as SfxName);
-			});
+				});
+				pompomOnSfx((sfx) => {
+					const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip", "cricket_chirp"];
+					if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
+					void playSfx(sfx as SfxName);
+				});
+				pompomOnEmotionalState((state) => {
+					if (isPrimaryInstance()) setMoodSfxState(state);
+				});
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
@@ -1252,6 +1307,12 @@ export default function (pi: ExtensionAPI) {
 			onToolCall({ toolCallId: payload.toolCallId, toolName: payload.toolName, args: payload.args });
 			pulseOverlay({ forceOverlay: true, lookX: 0.24, lookY: -0.12, glow: 1, earBoost: 0.85 }, 1800);
 			speakCommentary({ eventName: "tool_call", toolName: payload.toolName });
+			// Subtle agent activity audio — max once per 30s, primary only
+			const now = Date.now();
+			if (isPrimaryInstance() && now - lastAgentTickAt >= AGENT_TICK_COOLDOWN_MS) {
+				lastAgentTickAt = now;
+				void playSfx("agent_tick");
+			}
 			persistAgentState();
 		});
 	});
@@ -1372,35 +1433,35 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	// Toggle widget visibility — hides animation but keeps voice/health/agent tracking alive
-	function toggleWidget() {
-		if (!enabled) return;
-		if (widgetVisible) {
-			widgetVisible = false;
-			companionActive = false;
-			// Stop the render loop and remove widget, but keep voice/health/agent timers running
+		// Toggle widget visibility — hides animation but keeps voice/health/agent tracking alive
+		function toggleWidget() {
+			if (!enabled) return;
+			if (widgetVisible) {
+				widgetVisible = false;
+				// Only stop the render loop and remove the widget — keep companionActive true
+				// so that AI speech, health checks, and voice/mic timers continue running.
 			if (companionTimer) {
 				clearInterval(companionTimer);
 				companionTimer = null;
 			}
-			if (voiceCheckTimer) {
-				clearInterval(voiceCheckTimer);
-				voiceCheckTimer = null;
-			}
 			pauseAmbient();
-			try {
-				if (ctx?.hasUI) {
-					ctx.ui.setWidget(WIDGET_ID, undefined);
+				try {
+					if (ctx?.hasUI) {
+						ctx.ui.setWidget(WIDGET_ID, undefined);
+					}
+				} catch {
+					// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
 				}
-			} catch {
-				// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
+			} else {
+				widgetVisible = true;
+				resumeAmbient();
+				if (companionActive) {
+					mountCompanionWidget();
+				} else {
+					showCompanion();
+				}
 			}
-		} else {
-			widgetVisible = true;
-			resumeAmbient();
-			showCompanion(); // no guard needed — showCompanion sets companionActive = true internally
 		}
-	}
 
 	try {
 		pi.registerShortcut("alt+v" as any, {
@@ -1879,8 +1940,8 @@ export default function (pi: ExtensionAPI) {
 				}
 				aiCommandInProgress = true;
 				ctx = commandContext;
-				const model = commandContext.model;
-				if (!isModelLike(model)) {
+				const model = resolvePompomModel(commandContext);
+				if (!model) {
 					aiCommandInProgress = false;
 					commandContext.ui.notify("No model selected.", "error");
 					return;

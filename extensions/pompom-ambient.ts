@@ -39,6 +39,10 @@ function detectAmbientPlayer(): AmbientPlayer {
 const AMBIENT_DIR = path.join(os.homedir(), ".pi", "pompom", "ambient");
 const CUSTOM_DIR = path.join(AMBIENT_DIR, "custom");
 const CONFIG_FILE = path.join(os.homedir(), ".pi", "pompom", "ambient-config.json");
+const AMBIENT_DURATION_S = 60;
+const AMBIENT_CROSSFADE_MS = 2000; // overlap new loop 2s before old one ends
+const AMBIENT_VERSION = 2; // bump when duration changes — forces re-generation of cached files
+const AMBIENT_VERSION_FILE = path.join(AMBIENT_DIR, ".version");
 
 export interface AmbientConfig {
 	enabled: boolean;
@@ -87,6 +91,7 @@ const WEATHER_PROMPTS: Record<Weather, string> = {
 };
 
 const DUCK_VOLUME_RATIO = 0.2; // 20% of normal volume during TTS
+const SLEEP_DUCK_RATIO = 0.35; // 35% of normal volume when Pompom sleeps
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -94,9 +99,28 @@ let config: AmbientConfig = loadConfig();
 let currentWeather: Weather | null = null;
 let desiredWeather: Weather | null = null;
 let currentProcess: childProcess.ChildProcess | null = null;
+let crossfadeTimer: ReturnType<typeof setTimeout> | null = null;
 let isDucked = false;
+let isSleepDucked = false;
 let generating = false;
 let interactive = false;
+const blockedAmbientWeathers = new Set<Weather>();
+
+function isAmbientBlockedOnAplay(weather: Weather): boolean {
+	if (!blockedAmbientWeathers.has(weather)) {
+		return false;
+	}
+	if (detectedAmbientPlayer !== "aplay") {
+		blockedAmbientWeathers.delete(weather);
+		return false;
+	}
+	const resolved = resolveAudioPath(weather);
+	if (!resolved || !resolved.endsWith(".mp3")) {
+		blockedAmbientWeathers.delete(weather);
+		return false;
+	}
+	return true;
+}
 
 // ─── Config persistence ──────────────────────────────────────────────────────
 
@@ -182,7 +206,7 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 			},
 			body: JSON.stringify({
 				text: prompt,
-				duration_seconds: 22,
+				duration_seconds: AMBIENT_DURATION_S,
 				prompt_influence: 0.3,
 			}),
 			signal: AbortSignal.timeout(45000),
@@ -208,33 +232,36 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 // ─── Playback ────────────────────────────────────────────────────────────────
 
 function effectiveVolume(): number {
-	const base = config.volume / 100;
-	return isDucked ? base * DUCK_VOLUME_RATIO : base;
+	let base = config.volume / 100;
+	if (isSleepDucked) base *= SLEEP_DUCK_RATIO;
+	if (isDucked) base *= DUCK_VOLUME_RATIO;
+	return base;
 }
 
 function stopCurrent(): void {
+	if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
 	if (currentProcess) {
 		try { currentProcess.kill("SIGTERM"); } catch { /* already dead */ }
 		currentProcess = null;
 	}
 }
 
-function startPlayback(weather: Weather): void {
+function startPlayback(weather: Weather): boolean {
 	const resolved = resolveAudioPath(weather);
-	if (!resolved) return;
+	if (!resolved) return false;
 	const file: string = resolved;
 
 	stopCurrent();
 
 	if (!detectedAmbientPlayer) {
 		console.error("[pompom-ambient] No supported audio player found (afplay/paplay/aplay)");
-		return;
+		return false;
 	}
 
 	let spawnRetries = 0; // reset on each new startPlayback call
 
 	// Loop manually by restarting on close (afplay/paplay/aplay don't all support -l)
-	function spawnPlayer(): childProcess.ChildProcess {
+	function spawnPlayer(): childProcess.ChildProcess | null {
 		const volFloat = effectiveVolume();
 		const vol = volFloat.toFixed(2);
 		let child: childProcess.ChildProcess;
@@ -247,14 +274,17 @@ function startPlayback(weather: Weather): void {
 				break;
 			case "aplay":
 				if (file.endsWith(".mp3")) {
-					console.error("[pompom-ambient] aplay does not support .mp3 files, skipping: " + file);
-					return childProcess.spawn("true", [], { stdio: "ignore" });
+					if (!blockedAmbientWeathers.has(weather)) {
+						console.error("[pompom-ambient] aplay does not support .mp3 files — ambient disabled for this weather");
+					}
+					blockedAmbientWeathers.add(weather);
+					return null;
 				}
+				blockedAmbientWeathers.delete(weather);
 				child = childProcess.spawn("aplay", [file], { stdio: "ignore", detached: false });
 				break;
 			default:
-				// Should not reach here since we check detectedAmbientPlayer above
-				return childProcess.spawn("true", [], { stdio: "ignore" });
+				return null;
 		}
 
 		child.on("error", (err) => {
@@ -284,10 +314,14 @@ function startPlayback(weather: Weather): void {
 					setTimeout(() => {
 						if (currentWeather === weather && config.enabled && !currentProcess) {
 							currentProcess = spawnPlayer();
+							scheduleCrossfade();
 						}
 					}, 2000 * spawnRetries);
-				} else {
+				} else if (!currentProcess || currentProcess === child) {
+					// Normal loop end — if crossfade already spawned, the new process is currentProcess.
+					// If crossfade didn't fire (e.g. custom files with unknown duration), spawn now.
 					currentProcess = spawnPlayer();
+					scheduleCrossfade();
 				}
 			} else if (currentProcess === child) {
 				currentProcess = null;
@@ -297,7 +331,31 @@ function startPlayback(weather: Weather): void {
 		return child;
 	}
 
+	/** Schedule the next loop iteration to start slightly before the current one ends,
+	 *  creating a brief overlap (crossfade) for seamless looping. */
+	function scheduleCrossfade(): void {
+		if (crossfadeTimer) clearTimeout(crossfadeTimer);
+		// Only crossfade for tracks with known duration (generated files)
+		const preSpawnMs = AMBIENT_DURATION_S * 1000 - AMBIENT_CROSSFADE_MS;
+		if (preSpawnMs <= 0) return;
+		crossfadeTimer = setTimeout(() => {
+			crossfadeTimer = null;
+			if (currentWeather !== weather || !config.enabled) return;
+			const oldProcess = currentProcess;
+			currentProcess = spawnPlayer();
+			// Let the old process finish naturally — it has ~2s left
+			// Kill it after the crossfade window as a safety net
+			if (oldProcess) {
+				setTimeout(() => {
+					try { oldProcess.kill("SIGTERM"); } catch { /* already dead */ }
+				}, AMBIENT_CROSSFADE_MS + 500);
+			}
+		}, preSpawnMs);
+	}
+
 	currentProcess = spawnPlayer();
+	if (currentProcess) scheduleCrossfade();
+	return currentProcess !== null;
 }
 
 function restartWithVolume(): void {
@@ -311,12 +369,28 @@ export function initAmbient(isInteractive: boolean): void {
 	interactive = isInteractive;
 	config = loadConfig();
 	detectedAmbientPlayer = detectAmbientPlayer();
+	blockedAmbientWeathers.clear();
 	// Ensure custom directory exists so users know where to drop files
 	try { fs.mkdirSync(CUSTOM_DIR, { recursive: true }); } catch { /* non-fatal */ }
 	sfxLastPlayedAt.clear();
 	lastAnySfxAt = 0;
 	sfxGenerating = false;
 	desiredWeather = null;
+	checkAmbientVersion();
+}
+
+/** Auto-clear old cached ambient files when the generation config changes (e.g. duration increase). */
+function checkAmbientVersion(): void {
+	try {
+		const stored = fs.existsSync(AMBIENT_VERSION_FILE)
+			? parseInt(fs.readFileSync(AMBIENT_VERSION_FILE, "utf-8").trim(), 10)
+			: 0;
+		if (stored < AMBIENT_VERSION) {
+			resetGeneratedAudio();
+			fs.mkdirSync(AMBIENT_DIR, { recursive: true });
+			fs.writeFileSync(AMBIENT_VERSION_FILE, String(AMBIENT_VERSION));
+		}
+	} catch { /* best effort */ }
 }
 
 export function getAmbientConfig(): AmbientConfig {
@@ -378,8 +452,10 @@ export async function setAmbientWeather(weather: Weather): Promise<void> {
 			if (desiredWeather !== target) continue; // loop to process new desired
 		}
 
-		startPlayback(target);
-		currentWeather = target;
+		const didStartPlayback = startPlayback(target);
+		if (didStartPlayback || isAmbientBlockedOnAplay(target)) {
+			currentWeather = target;
+		}
 		break;
 	}
 }
@@ -395,6 +471,20 @@ export function duckAmbient(): void {
 export function unduckAmbient(): void {
 	if (!isDucked) return;
 	isDucked = false;
+	if (currentProcess) restartWithVolume();
+}
+
+/** Duck ambient volume when Pompom sleeps */
+export function duckAmbientForSleep(): void {
+	if (isSleepDucked) return;
+	isSleepDucked = true;
+	if (currentProcess) restartWithVolume();
+}
+
+/** Restore ambient volume when Pompom wakes */
+export function unduckAmbientForSleep(): void {
+	if (!isSleepDucked) return;
+	isSleepDucked = false;
 	if (currentProcess) restartWithVolume();
 }
 
@@ -476,6 +566,10 @@ export function isAmbientPlaying(): boolean {
 	return currentProcess !== null;
 }
 
+export function isAmbientPlaybackBlocked(weather: Weather): boolean {
+	return isAmbientBlockedOnAplay(weather);
+}
+
 /** Return the path where users should drop custom audio files */
 export function getCustomAudioDir(): string {
 	return CUSTOM_DIR;
@@ -500,7 +594,11 @@ export type SfxName =
 	| "flip_whoosh" | "rain_drip" | "footstep_soft"
 	| "accessory_equip" | "game_start" | "game_end"
 	| "hide_tiptoe" | "peek_surprise" | "firefly_twinkle"
-	| "color_switch" | "weather_transition";
+	| "color_switch" | "weather_transition"
+	| "session_chime" | "session_goodbye"
+	| "hunger_rumble" | "tired_yawn"
+	| "milestone_chime" | "flip_land" | "ball_catch"
+	| "cricket_chirp" | "agent_tick";
 
 const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
 	pet_purr:      { prompt: "Soft warm purring with a gentle ascending hum at the end, like a tiny cat settling contentedly, short and sweet", duration: 2 },
@@ -526,18 +624,37 @@ const SFX_PROMPTS: Record<SfxName, { prompt: string; duration: number }> = {
 	firefly_twinkle: { prompt: "Soft magical ascending twinkle, like tiny bells following a light, brief and dreamy", duration: 1 },
 	color_switch:  { prompt: "Quick satisfying click-pop followed by a brief ascending shimmer, clean and bright", duration: 1 },
 	weather_transition: { prompt: "Soft atmospheric whoosh that resolves upward, gentle and calming transition", duration: 1 },
+	session_chime:    { prompt: "Gentle ascending three-note music box melody, warm and inviting like opening a cozy door, brief and memorable", duration: 2 },
+	session_goodbye:  { prompt: "Soft descending two-note lullaby bell, warm and bittersweet like a gentle goodbye wave, fading naturally", duration: 2 },
+	hunger_rumble:    { prompt: "Tiny cute stomach growl, soft rumble followed by a small squeak, cartoonish not gross, barely audible", duration: 1 },
+	tired_yawn:       { prompt: "Very small sleepy yawn trailing into a soft breath, adorable and drowsy like a kitten settling", duration: 1 },
+	milestone_chime:  { prompt: "Bright ascending four-note fanfare on small bells, celebratory but quiet, like a tiny achievement unlocked", duration: 2 },
+	flip_land:        { prompt: "Soft satisfying thump on grass followed by a tiny bounce, like a plush toy landing perfectly, brief", duration: 1 },
+	ball_catch:       { prompt: "Quick satisfying soft catch sound like small hands grabbing a plush ball with a gentle pop, cheerful", duration: 1 },
+	cricket_chirp:    { prompt: "Two gentle cricket chirps in the quiet night air, soft and rhythmic, peaceful outdoor evening ambience", duration: 1 },
+	agent_tick:       { prompt: "Very subtle soft mechanical click, like a distant typewriter key or clock tick, barely perceptible, neutral", duration: 1 },
 };
 
 // Weather-contextual SFX that play periodically on top of the ambient loop
 // Weather SFX intervals — intentionally rare for surprise/dopamine.
 // Research: rewards at 10-20% of expected frequency create strongest prediction error.
-const WEATHER_SFX: Record<Weather, { sfx: SfxName; minGapMs: number; maxGapMs: number }[]> = {
+// Optional timeOfDay filter: "day" (6-20h), "night" (20-6h), or omitted (always).
+interface WeatherSfxEntry { sfx: SfxName; minGapMs: number; maxGapMs: number; timeOfDay?: "day" | "night" }
+
+function isNightTime(): boolean {
+	const h = new Date().getHours();
+	return h >= 20 || h < 6;
+}
+
+const WEATHER_SFX: Record<Weather, WeatherSfxEntry[]> = {
 	clear: [
-		{ sfx: "bird_chirp", minGapMs: 120000, maxGapMs: 300000 },  // 2-5 min
-		{ sfx: "bee_buzz", minGapMs: 240000, maxGapMs: 480000 },    // 4-8 min
+		{ sfx: "bird_chirp", minGapMs: 120000, maxGapMs: 300000, timeOfDay: "day" },    // 2-5 min, daytime only
+		{ sfx: "bee_buzz", minGapMs: 240000, maxGapMs: 480000, timeOfDay: "day" },       // 4-8 min, daytime only
+		{ sfx: "cricket_chirp", minGapMs: 120000, maxGapMs: 300000, timeOfDay: "night" }, // 2-5 min, nighttime only
 	],
 	cloudy: [
 		{ sfx: "wind_gust", minGapMs: 180000, maxGapMs: 360000 },   // 3-6 min
+		{ sfx: "cricket_chirp", minGapMs: 180000, maxGapMs: 360000, timeOfDay: "night" },
 	],
 	rain: [
 		{ sfx: "rain_drip", minGapMs: 120000, maxGapMs: 300000 },   // 2-5 min
@@ -560,21 +677,51 @@ const SFX_COOLDOWN_MS = 8000;    // same SFX can't repeat within 8s
 const SFX_GLOBAL_GAP_MS = 3000;  // ANY SFX needs 3s gap from last SFX
 let lastAnySfxAt = 0;
 
-function sfxPath(name: SfxName): string {
-	return path.join(SFX_DIR, `${name}.mp3`);
+// ─── SFX Micro-Variations ────────────────────────────────────────────────────
+// Each SFX has up to 3 variants for natural variation. Variant 0 uses the base
+// filename (backward-compatible), variants 1-2 use `{name}_v1.mp3` etc.
+const SFX_VARIANTS = 3;
+const VARIANT_SUFFIXES = ["slightly different take", "alternative variation", "subtle remix"];
+
+function sfxVariantPath(name: SfxName, variant: number): string {
+	if (variant === 0) return path.join(SFX_DIR, `${name}.mp3`);
+	return path.join(SFX_DIR, `${name}_v${variant}.mp3`);
 }
 
-function hasSfx(name: SfxName): boolean {
+function sfxPath(name: SfxName): string {
+	return sfxVariantPath(name, 0);
+}
+
+function hasSfxVariant(name: SfxName, variant: number): boolean {
 	try {
-		return fs.existsSync(sfxPath(name)) && fs.statSync(sfxPath(name)).size > 500;
+		const p = sfxVariantPath(name, variant);
+		return fs.existsSync(p) && fs.statSync(p).size > 500;
 	} catch { return false; }
 }
 
-async function generateSfx(name: SfxName): Promise<boolean> {
+function hasSfx(name: SfxName): boolean {
+	return hasSfxVariant(name, 0);
+}
+
+/** Pick a random available variant, preferring variety. Falls back to variant 0. */
+function pickSfxVariant(name: SfxName): string {
+	const available: number[] = [];
+	for (let i = 0; i < SFX_VARIANTS; i++) {
+		if (hasSfxVariant(name, i)) available.push(i);
+	}
+	if (available.length === 0) return sfxVariantPath(name, 0);
+	return sfxVariantPath(name, available[Math.floor(Math.random() * available.length)]);
+}
+
+async function generateSfxVariant(name: SfxName, variant: number): Promise<boolean> {
 	const apiKey = process.env.ELEVENLABS_API_KEY;
 	if (!apiKey) return false;
 
 	const spec = SFX_PROMPTS[name];
+	// Append variation hint for variants 1+ to get subtly different outputs
+	const promptText = variant === 0
+		? spec.prompt
+		: `${spec.prompt}, ${VARIANT_SUFFIXES[variant - 1]}`;
 	try {
 		const response = await fetch("https://api.elevenlabs.io/v1/sound-generation", {
 			method: "POST",
@@ -583,7 +730,7 @@ async function generateSfx(name: SfxName): Promise<boolean> {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
-				text: spec.prompt,
+				text: promptText,
 				duration_seconds: spec.duration,
 				prompt_influence: 0.35,
 			}),
@@ -591,27 +738,31 @@ async function generateSfx(name: SfxName): Promise<boolean> {
 		});
 		if (!response.ok) {
 			const errText = await response.text().catch(() => "");
-			console.error(`[pompom-ambient] SFX generation failed for ${name}: HTTP ${response.status} ${errText.slice(0, 200)}`);
+			console.error(`[pompom-ambient] SFX generation failed for ${name}(v${variant}): HTTP ${response.status} ${errText.slice(0, 200)}`);
 			return false;
 		}
 		const buffer = Buffer.from(await response.arrayBuffer());
 		fs.mkdirSync(SFX_DIR, { recursive: true });
-		fs.writeFileSync(sfxPath(name), buffer);
+		fs.writeFileSync(sfxVariantPath(name, variant), buffer);
 		return true;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
-		console.error(`[pompom-ambient] generateSfx(${name}) failed: ${msg}`);
+		console.error(`[pompom-ambient] generateSfx(${name}, v${variant}) failed: ${msg}`);
 		return false;
 	}
 }
 
+async function generateSfx(name: SfxName): Promise<boolean> {
+	return generateSfxVariant(name, 0);
+}
+
 async function ensureSfx(name: SfxName): Promise<string | null> {
-	if (hasSfx(name)) return sfxPath(name);
+	if (hasSfx(name)) return pickSfxVariant(name);
 	if (sfxGenerating) return null;
 	sfxGenerating = true;
 	try {
 		const ok = await generateSfx(name);
-		return ok ? sfxPath(name) : null;
+		return ok ? sfxVariantPath(name, 0) : null;
 	} finally {
 		sfxGenerating = false;
 	}
@@ -622,7 +773,8 @@ function playSfxFile(filePath: string): boolean {
 	// Don't interrupt another SFX that's playing
 	if (sfxProcess) return false;
 
-	const volFloat = Math.max(0.05, config.volume / 100 * 0.15); // SFX at ~15% of ambient volume — barely-there accents, never distracting
+	const jitter = 1.0 + (Math.random() - 0.5) * 0.3; // +/-15% natural volume variation
+	const volFloat = Math.max(0.05, config.volume / 100 * 0.15 * jitter);
 	const vol = volFloat.toFixed(2);
 	let child: childProcess.ChildProcess;
 	switch (detectedAmbientPlayer) {
@@ -682,10 +834,13 @@ function scheduleNextWeatherSfx(): void {
 	clearWeatherSfxTimer();
 	if (!config.enabled || !interactive || !currentWeather) return;
 
-	const sfxList = WEATHER_SFX[currentWeather];
+	const night = isNightTime();
+	const sfxList = WEATHER_SFX[currentWeather].filter(e =>
+		!e.timeOfDay || (e.timeOfDay === "night" ? night : !night)
+	);
 	if (sfxList.length === 0) return;
 
-	// Pick a random SFX from the list for this weather
+	// Pick a random SFX from the time-filtered list for this weather
 	const entry = sfxList[Math.floor(Math.random() * sfxList.length)];
 	const delay = entry.minGapMs + Math.random() * (entry.maxGapMs - entry.minGapMs);
 
@@ -718,19 +873,70 @@ export function stopWeatherSfx(): void {
 	}
 }
 
-/** Pre-generate all SFX files */
+// ─── Mood-Reactive SFX Layer ─────────────────────────────────────────────────
+// Periodic SFX overlays driven by emotional state rather than weather.
+// Uses the same cooldown/dedup system as weather SFX.
+
+type MoodSfxState = "hungry" | "critical_hunger" | "tired" | "critical_tired" | null;
+let moodSfxTimer: ReturnType<typeof setTimeout> | null = null;
+let currentMoodSfxState: MoodSfxState = null;
+
+const MOOD_SFX: Record<string, { sfx: SfxName; minGapMs: number; maxGapMs: number }[]> = {
+	hungry:          [{ sfx: "hunger_rumble", minGapMs: 90000, maxGapMs: 180000 }],   // 1.5-3 min
+	critical_hunger: [{ sfx: "hunger_rumble", minGapMs: 60000, maxGapMs: 120000 }],   // 1-2 min (more urgent)
+	tired:           [{ sfx: "tired_yawn", minGapMs: 120000, maxGapMs: 240000 }],     // 2-4 min
+	critical_tired:  [{ sfx: "tired_yawn", minGapMs: 90000, maxGapMs: 180000 }],      // 1.5-3 min
+};
+
+function scheduleNextMoodSfx(): void {
+	clearMoodSfxTimer();
+	if (!config.enabled || !interactive || !currentMoodSfxState) return;
+
+	const sfxList = MOOD_SFX[currentMoodSfxState];
+	if (!sfxList || sfxList.length === 0) return;
+
+	const entry = sfxList[Math.floor(Math.random() * sfxList.length)];
+	const delay = entry.minGapMs + Math.random() * (entry.maxGapMs - entry.minGapMs);
+
+	moodSfxTimer = setTimeout(async () => {
+		if (!config.enabled || !interactive || !currentMoodSfxState) return;
+		try {
+			await playSfx(entry.sfx);
+		} catch (err) {
+			console.error(`[pompom-ambient] mood SFX error: ${err instanceof Error ? err.message : err}`);
+		}
+		scheduleNextMoodSfx();
+	}, delay);
+}
+
+function clearMoodSfxTimer(): void {
+	if (moodSfxTimer) { clearTimeout(moodSfxTimer); moodSfxTimer = null; }
+}
+
+/** Update the mood-reactive SFX layer. Call when Pompom's emotional state changes. */
+export function setMoodSfxState(mood: string | null): void {
+	const mapped: MoodSfxState = (mood === "hungry" || mood === "critical_hunger" || mood === "tired" || mood === "critical_tired") ? mood as MoodSfxState : null;
+	if (mapped === currentMoodSfxState) return;
+	currentMoodSfxState = mapped;
+	if (mapped) scheduleNextMoodSfx();
+	else clearMoodSfxTimer();
+}
+
+/** Pre-generate all SFX files including micro-variations */
 export async function pregenerateSfx(): Promise<number> {
 	const names = Object.keys(SFX_PROMPTS) as SfxName[];
 	let count = 0;
 	for (const name of names) {
-		if (hasSfx(name)) continue;
-		if (sfxGenerating) continue;
-		sfxGenerating = true;
-		try {
-			const ok = await generateSfx(name);
-			if (ok) count++;
-		} finally {
-			sfxGenerating = false;
+		for (let v = 0; v < SFX_VARIANTS; v++) {
+			if (hasSfxVariant(name, v)) continue;
+			if (sfxGenerating) continue;
+			sfxGenerating = true;
+			try {
+				const ok = await generateSfxVariant(name, v);
+				if (ok) count++;
+			} finally {
+				sfxGenerating = false;
+			}
 		}
 	}
 	return count;

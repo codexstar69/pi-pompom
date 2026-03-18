@@ -2,32 +2,49 @@
 
 ## Current Status
 
-- Reviewed the current voice queue, engine fallback, and `/pompom:voice`
-  command flow.
-- Added frictionless voice onboarding so `/pompom:voice on` now
-  auto-detects the best usable engine, and `/pompom:voice setup` offers
-  an explicit picker when more than one engine is available.
-- Added persisted `configured` state to the voice config so the session
-  hint only appears before voice has been configured once.
-- Changed engine priority to ElevenLabs, then Deepgram, then Kokoro.
+- Fixed the 3 confirmed runtime issues from the re-audit.
+- Updated version and changelog for the patch release.
+
+## Fixes Applied
+
+- `/pompom off` live mute:
+  - `extensions/pompom-extension.ts` now blocks commentary speech when the
+    extension is disabled
+  - the `pompomOnSpeech` bridge now checks the live session `enabled` state
+    before forwarding speech into `enqueueSpeech`
+- widget restore:
+  - `extensions/pompom-extension.ts` now uses `mountCompanionWidget()` so
+    `toggleWidget()` can remount the widget even when `companionActive` stays
+    true
+- ALSA ambient retry suppression:
+  - `extensions/pompom-ambient.ts` now tracks the `aplay + mp3` unsupported
+    case as a blocked weather state
+  - `syncAmbientWeather()` skips the 5-second retry loop while that blocked
+    state is still true
 
 ## Validation
 
 - Ran `pnpm typecheck`
 - Result: passed
-- Ran `timeout 5 pi -e ./extensions/pompom-extension.ts --no-input -m "/pompom:voice on"`
-- Result: timeout exited after 5 seconds, but the captured log showed
-  `Pompom voice ON (Deepgram).` and no onboarding-flow errors
+- No automated tests are present in this package
+
+## Files Touched
+
+- `extensions/pompom-extension.ts`
+- `extensions/pompom-ambient.ts`
+- `package.json`
+- `CHANGELOG.md`
+- `handoff.md`
 
 ## Last Prompts
 
-- "Review and improve this voice onboarding plan for pi-pompom. Read
-  the current code first..."
-- "After review, implement the changes, run typecheck, and smoke test."
+- "please go ahead and fix these"
+- "can you ask claude  to confirm? claude -p bash"
 
 ## Next Checks
 
-- In a real interactive Pi session, run `/pompom:voice setup` when more
-  than one engine is available to confirm the picker wording feels good.
-- If Pi later exposes a cleaner headless mode, replace the timeout-based
-  smoke run with that flow so logs stay smaller.
+- Live Pi smoke test for:
+  - `/pompom off` then trigger agent activity and confirm no TTS commentary
+  - `Alt+V` hide then restore and confirm the widget remounts
+  - ALSA-only Linux path if available, to confirm ambient logs only once and
+    stops retrying until the audio source changes

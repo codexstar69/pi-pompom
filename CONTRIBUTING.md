@@ -42,6 +42,11 @@ pi  # then type /pompom on
 
 ## Architecture
 
-- `extensions/pompom.ts` — all rendering, physics, shading, and game logic
-- `extensions/pompom-extension.ts` — Pi extension lifecycle, commands, keyboard input
-- The renderer is a software raymarcher. Each cell casts 16 rays (4x4 AA) and outputs half-block Unicode characters with ANSI true-color.
+- `extensions/pompom.ts` — 3D raymarching renderer, physics, shading, weather, game logic
+- `extensions/pompom-extension.ts` — Pi extension lifecycle, commands, keyboard input, event routing
+- `extensions/pompom-voice.ts` — TTS speech queue, Kokoro/Deepgram/ElevenLabs engines, audio playback
+- `extensions/pompom-agent.ts` — Agent activity tracking, mood calculation, stuck detection, commentary
+- `extensions/pompom-chat.ts` — Side agent chat overlay with read-only tools and peek_main
+- `extensions/pompom-settings.ts` — Interactive TUI settings panel with tab navigation
+
+The renderer is a software raymarcher. Each cell casts 4 rays (quadrant sampling) and outputs half-block Unicode characters with ANSI true-color.
