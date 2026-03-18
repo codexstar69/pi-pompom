@@ -2089,6 +2089,36 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
+	// ─── Standalone on/off commands ───────────────────────────────────────────
+	// Top-level /pompom-on and /pompom-off in the command palette
+
+	pi.registerCommand("pompom-on", {
+		description: "Turn Pompom on — restore animation, voice, ambient, everything",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom-on", () => {
+				ctx = commandContext;
+				enablePompom(commandContext);
+				commandContext.ui.notify("Pompom on — animation, voice, ambient, everything restored!", "info");
+			});
+		},
+	});
+
+	pi.registerCommand("pompom-off", {
+		description: "Turn Pompom off — disable animation, voice, and sounds (chat stays)",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom-off", () => {
+				ctx = commandContext;
+				disablePompom();
+				commandContext.ui.notify(
+					"Pompom off — animation, voice, and sounds all disabled.\n" +
+					"Side chat is still available: /pompom:chat or Alt+/\n" +
+					"To restore everything: /pompom on",
+					"info"
+				);
+			});
+		},
+	});
+
 	// ─── Multi-terminal awareness ──────────────────────────────────────────────
 
 	pi.registerCommand("pompom:terminals", {
