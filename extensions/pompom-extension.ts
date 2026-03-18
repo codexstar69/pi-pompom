@@ -697,6 +697,14 @@ export default function (pi: ExtensionAPI) {
 		try {
 			const weather = pompomGetWeather();
 			const ambientBlocked = isAmbientPlaybackBlocked(weather);
+			if (!widgetVisible) {
+				lastAmbientWeather = weather;
+				const ttsPlaying = isPlayingTTS();
+				if (ttsPlaying && !wasTTSPlaying) duckAmbient();
+				else if (!ttsPlaying && wasTTSPlaying) unduckAmbient();
+				wasTTSPlaying = ttsPlaying;
+				return;
+			}
 			if (isPrimaryInstance()) {
 				if (weather !== lastAmbientWeather || (!isAmbientPlaying() && !ambientBlocked)) {
 					lastAmbientWeather = weather;
@@ -1433,35 +1441,42 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-		// Toggle widget visibility — hides animation but keeps voice/health/agent tracking alive
-		function toggleWidget() {
-			if (!enabled) return;
-			if (widgetVisible) {
-				widgetVisible = false;
-				// Only stop the render loop and remove the widget — keep companionActive true
-				// so that AI speech, health checks, and voice/mic timers continue running.
+	// Toggle widget visibility — hides animation but keeps voice/health/agent tracking alive
+	function toggleWidget() {
+		if (!enabled) return;
+		if (widgetVisible) {
+			widgetVisible = false;
+			// Only stop the render loop and remove the widget — keep companionActive true
+			// so that AI speech, health checks, and voice/mic timers continue running.
 			if (companionTimer) {
 				clearInterval(companionTimer);
 				companionTimer = null;
 			}
 			pauseAmbient();
-				try {
-					if (ctx?.hasUI) {
-						ctx.ui.setWidget(WIDGET_ID, undefined);
-					}
-				} catch {
-					// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
+			try {
+				if (ctx?.hasUI) {
+					ctx.ui.setWidget(WIDGET_ID, undefined);
 				}
+			} catch {
+				// Non-fatal: defensive catch for widget/UI/lifecycle edge cases
+			}
+		} else {
+			widgetVisible = true;
+			const weather = pompomGetWeather();
+			lastAmbientWeather = weather;
+			if (isPrimaryInstance()) {
+				setAmbientWeather(weather).catch(err => { console.error(`[pompom] setAmbientWeather failed: ${err instanceof Error ? err.message : err}`); });
+				startWeatherSfx();
 			} else {
-				widgetVisible = true;
 				resumeAmbient();
-				if (companionActive) {
-					mountCompanionWidget();
-				} else {
-					showCompanion();
-				}
+			}
+			if (companionActive) {
+				mountCompanionWidget();
+			} else {
+				showCompanion();
 			}
 		}
+	}
 
 	try {
 		pi.registerShortcut("alt+v" as any, {

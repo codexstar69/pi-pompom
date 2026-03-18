@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.2.10] - 2026-03-18
+
+### Patch Changes
+
+- hidden widget ambient guard in `extensions/pompom-extension.ts` so `Alt+V` no longer lets the 5-second weather sync restart ambient while the companion stays hidden
+- greeting claim lock in `extensions/pompom-instance.ts` so multi-terminal greeting dedup no longer relies on a check-then-write race
+- crossfade process cleanup in `extensions/pompom-ambient.ts` so pause/off paths also stop the overlapping old ambient process instead of letting it linger
+
 ## [7.2.9] - 2026-03-18
 
 ### Patch Changes

@@ -100,6 +100,8 @@ let currentWeather: Weather | null = null;
 let desiredWeather: Weather | null = null;
 let currentProcess: childProcess.ChildProcess | null = null;
 let crossfadeTimer: ReturnType<typeof setTimeout> | null = null;
+let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
+let fadingProcess: childProcess.ChildProcess | null = null;
 let isDucked = false;
 let isSleepDucked = false;
 let generating = false;
@@ -240,6 +242,11 @@ function effectiveVolume(): number {
 
 function stopCurrent(): void {
 	if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
+	if (crossfadeCleanupTimer) { clearTimeout(crossfadeCleanupTimer); crossfadeCleanupTimer = null; }
+	if (fadingProcess) {
+		try { fadingProcess.kill("SIGTERM"); } catch { /* already dead */ }
+		fadingProcess = null;
+	}
 	if (currentProcess) {
 		try { currentProcess.kill("SIGTERM"); } catch { /* already dead */ }
 		currentProcess = null;
@@ -285,48 +292,54 @@ function startPlayback(weather: Weather): boolean {
 				break;
 			default:
 				return null;
-		}
-
-		child.on("error", (err) => {
-			const msg = err instanceof Error ? err.message : String(err);
-			console.error(`[pompom-ambient] playback error: ${msg}`);
-			if (currentProcess === child) {
-				currentProcess = null;
-				spawnRetries++;
-				if (spawnRetries <= 3 && currentWeather === weather && config.enabled) {
-					const delay = 2000 * Math.pow(2, spawnRetries - 1); // 2s, 4s, 8s
-					setTimeout(() => {
-						if (currentWeather === weather && config.enabled && !currentProcess) {
-							currentProcess = spawnPlayer();
-						}
-					}, delay);
-				} else if (spawnRetries > 3) {
-					console.error(`[pompom-ambient] giving up after ${spawnRetries} retries`);
-				}
 			}
-		});
 
-		child.on("close", (code) => {
-			if (currentProcess === child && currentWeather === weather && config.enabled) {
-				if (code !== 0) {
+			child.on("error", (err) => {
+				const msg = err instanceof Error ? err.message : String(err);
+				console.error(`[pompom-ambient] playback error: ${msg}`);
+				if (fadingProcess === child) {
+					fadingProcess = null;
+				}
+				if (currentProcess === child) {
+					currentProcess = null;
 					spawnRetries++;
-					if (spawnRetries > 3) { currentProcess = null; return; }
-					setTimeout(() => {
-						if (currentWeather === weather && config.enabled && !currentProcess) {
-							currentProcess = spawnPlayer();
-							scheduleCrossfade();
-						}
-					}, 2000 * spawnRetries);
-				} else if (!currentProcess || currentProcess === child) {
-					// Normal loop end — if crossfade already spawned, the new process is currentProcess.
-					// If crossfade didn't fire (e.g. custom files with unknown duration), spawn now.
-					currentProcess = spawnPlayer();
-					scheduleCrossfade();
+					if (spawnRetries <= 3 && currentWeather === weather && config.enabled) {
+						const delay = 2000 * Math.pow(2, spawnRetries - 1); // 2s, 4s, 8s
+						setTimeout(() => {
+							if (currentWeather === weather && config.enabled && !currentProcess) {
+								currentProcess = spawnPlayer();
+							}
+						}, delay);
+					} else if (spawnRetries > 3) {
+						console.error(`[pompom-ambient] giving up after ${spawnRetries} retries`);
+					}
 				}
-			} else if (currentProcess === child) {
-				currentProcess = null;
-			}
-		});
+			});
+
+			child.on("close", (code) => {
+				if (currentProcess === child && currentWeather === weather && config.enabled) {
+					if (code !== 0) {
+						spawnRetries++;
+						if (spawnRetries > 3) { currentProcess = null; return; }
+						setTimeout(() => {
+							if (currentWeather === weather && config.enabled && !currentProcess) {
+								currentProcess = spawnPlayer();
+								scheduleCrossfade();
+							}
+						}, 2000 * spawnRetries);
+					} else if (!currentProcess || currentProcess === child) {
+						// Normal loop end — if crossfade already spawned, the new process is currentProcess.
+						// If crossfade didn't fire (e.g. custom files with unknown duration), spawn now.
+						currentProcess = spawnPlayer();
+						scheduleCrossfade();
+					}
+				} else if (currentProcess === child) {
+					currentProcess = null;
+				}
+				if (fadingProcess === child) {
+					fadingProcess = null;
+				}
+			});
 
 		return child;
 	}
@@ -346,8 +359,14 @@ function startPlayback(weather: Weather): boolean {
 			// Let the old process finish naturally — it has ~2s left
 			// Kill it after the crossfade window as a safety net
 			if (oldProcess) {
-				setTimeout(() => {
+				fadingProcess = oldProcess;
+				if (crossfadeCleanupTimer) clearTimeout(crossfadeCleanupTimer);
+				crossfadeCleanupTimer = setTimeout(() => {
+					crossfadeCleanupTimer = null;
 					try { oldProcess.kill("SIGTERM"); } catch { /* already dead */ }
+					if (fadingProcess === oldProcess) {
+						fadingProcess = null;
+					}
 				}, AMBIENT_CROSSFADE_MS + 500);
 			}
 		}, preSpawnMs);

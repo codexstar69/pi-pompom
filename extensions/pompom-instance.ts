@@ -20,12 +20,14 @@ import crypto from "node:crypto";
 const POMPOM_DIR = path.join(os.homedir(), ".pi", "pompom");
 const INSTANCES_DIR = path.join(POMPOM_DIR, "instances");
 const GREETING_FILE = path.join(POMPOM_DIR, "last-greeting.json");
+const GREETING_LOCK_FILE = path.join(POMPOM_DIR, "last-greeting.lock");
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STALE_THRESHOLD_MS = 15_000;
 const GREETING_COOLDOWN_MS = 1_800_000; // 30 minutes — one greeting per time-of-day period
+const GREETING_LOCK_STALE_MS = 5_000;
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -80,6 +82,34 @@ function processAlive(checkPid: number): boolean {
 
 function instancePath(id: string): string {
 	return path.join(INSTANCES_DIR, `${id}.json`);
+}
+
+function tryAcquireGreetingLock(): number | null {
+	try {
+		return fs.openSync(GREETING_LOCK_FILE, "wx");
+	} catch (error) {
+		const code = error instanceof Error && "code" in error
+			? (error as NodeJS.ErrnoException).code
+			: "";
+		if (code !== "EEXIST") {
+			return null;
+		}
+		try {
+			const stat = fs.statSync(GREETING_LOCK_FILE);
+			if (Date.now() - stat.mtimeMs <= GREETING_LOCK_STALE_MS) {
+				return null;
+			}
+			fs.unlinkSync(GREETING_LOCK_FILE);
+			return fs.openSync(GREETING_LOCK_FILE, "wx");
+		} catch {
+			return null;
+		}
+	}
+}
+
+function releaseGreetingLock(fd: number): void {
+	try { fs.closeSync(fd); } catch { /* already closed */ }
+	try { fs.unlinkSync(GREETING_LOCK_FILE); } catch { /* already removed */ }
 }
 
 // ─── Core API ─────────────────────────────────────────────────────────────────
@@ -167,15 +197,20 @@ export function hasRecentGreeting(): boolean {
 
 /**
  * Atomically claim the greeting slot — returns true if this instance won the race.
- * Uses read-check-write with PID stamp to minimize (not eliminate) split-brain.
+ * Uses a lock file so only one terminal can perform the cooldown check + write.
  * Callers should only speak if this returns true.
  */
 export function claimGreeting(): boolean {
 	ensureDir(POMPOM_DIR);
-	// Re-check freshness right before writing to shrink the race window
-	if (hasRecentGreeting()) return false;
-	atomicWrite(GREETING_FILE, JSON.stringify({ timestamp: Date.now(), pid }));
-	return true;
+	const lockFd = tryAcquireGreetingLock();
+	if (lockFd === null) return false;
+	try {
+		if (hasRecentGreeting()) return false;
+		atomicWrite(GREETING_FILE, JSON.stringify({ timestamp: Date.now(), pid }));
+		return true;
+	} finally {
+		releaseGreetingLock(lockFd);
+	}
 }
 
 /** Mark that a greeting was just spoken (shared across all instances). */
