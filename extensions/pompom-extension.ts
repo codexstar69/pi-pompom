@@ -169,6 +169,41 @@ const emptyUsage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
+// ─── Theme Auto-Install ──────────────────────────────────────────────────────
+// Copies the Pompom theme to ~/.pi/agent/themes/ and sets it as active
+// on first install. Does not override if the user has already set a
+// non-default theme (respects user choice).
+
+function installPompomTheme(): void {
+	try {
+		const themesDir = path.join(os.homedir(), ".pi", "agent", "themes");
+		const themeFile = path.join(themesDir, "pompom.json");
+		const settingsFile = path.join(os.homedir(), ".pi", "agent", "settings.json");
+
+		// Find the theme source bundled with the package
+		const packageTheme = path.join(__dirname, "..", "themes", "pompom.json");
+		if (!fs.existsSync(packageTheme)) return; // not bundled (dev mode)
+
+		// Always copy latest theme (keeps it updated)
+		fs.mkdirSync(themesDir, { recursive: true });
+		fs.copyFileSync(packageTheme, themeFile);
+
+		// Auto-activate only if user is on a default theme or no theme set
+		if (!fs.existsSync(settingsFile)) return;
+		const settings = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
+		const current = settings.theme;
+		// Only override if on built-in defaults or already on pompom
+		if (!current || current === "dark" || current === "light" || current === "neapple" || current === "pompom") {
+			settings.theme = "pompom";
+			const tmp = settingsFile + ".tmp." + process.pid;
+			fs.writeFileSync(tmp, JSON.stringify(settings, null, 2));
+			fs.renameSync(tmp, settingsFile);
+		}
+	} catch {
+		// Non-fatal — theme install is best-effort
+	}
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -1204,6 +1239,7 @@ export default function (pi: ExtensionAPI) {
 				ctx = startCtx;
 				sessionStartMs = Date.now();
 				loadedVoiceHintShown = false;
+				installPompomTheme();
 				registerInstance(startCtx.cwd);
 				initVoice(Boolean(startCtx.hasUI));
 				initAmbient(Boolean(startCtx.hasUI));
