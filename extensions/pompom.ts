@@ -2433,17 +2433,15 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 	const fun = `${key("x","Dance")} ${key("m","Music")} ${key("c","Color")}`;
 	const life = `${key("s","Sleep")} ${key("a","Wake")}`;
 
-	// Truncate stateMsg to fit
+	// Truncate stateMsg at word boundary (Gemini design: never cut mid-word)
 	const maxStateW = Math.max(8, W - 20);
 	if (getStringWidth(stateMsg) > maxStateW) {
-		let w = 0; let trimmed = "";
-		for (const ch of stateMsg) {
-			const cw = getStringWidth(ch);
-			if (w + cw + 1 > maxStateW) { trimmed += "\u2026"; break; }
-			trimmed += ch; w += cw;
-		}
-		stateMsg = trimmed;
+		const truncated = stateMsg.slice(0, maxStateW - 1);
+		const lastSpace = truncated.lastIndexOf(" ");
+		stateMsg = lastSpace > 0 ? truncated.slice(0, lastSpace) + "\u2026" : truncated + "\u2026";
 	}
+	// On very narrow terminals, hide message entirely
+	if (W < 50) stateMsg = "";
 
 	// Build shortcut section progressively based on width
 	let styledShortcuts = "";

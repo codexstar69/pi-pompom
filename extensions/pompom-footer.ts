@@ -87,6 +87,20 @@ const WEATHER: Record<string, { icon: string; hex: string }> = {
 	storm:  { icon: IC.storm, hex: P.mauve },
 };
 
+// ─── Model Name Shortener (Gemini 3.1 Pro) ───────────────────────────────────
+
+function shortModel(name: string, maxLen: number): string {
+	if (!name) return "Claude";
+	// Strip parenthetical (Kiro) suffix and provider prefix
+	let short = name.split("(")[0].split("\u2022")[0].trim();
+	short = short.replace(/^(Claude|OpenAI|Google|Meta|Mistral)\s+/i, "");
+	const slash = short.lastIndexOf("/");
+	if (slash !== -1) short = short.substring(slash + 1);
+	if (!short) return "Claude";
+	if (short.length > maxLen) return short.slice(0, maxLen);
+	return short;
+}
+
 // ─── Components ──────────────────────────────────────────────────────────────
 
 function miniBar(icon: string, iconHex: string, val: number): string {
@@ -129,51 +143,63 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 	const mood = MOOD[status.mood] || MOOD.content;
 	const wx = WEATHER[weather] || WEATHER.clear;
 
-	// ── Left anchor: Pompom identity (always visible)
-	const left = `${paint(mood.hex, mood.face)}  ${strong(mood.hex, "Pompom")}`;
+	// ── Left: Pompom identity (always visible)
+	const face = paint(mood.hex, mood.face);
+	const name = strong(mood.hex, "Pompom");
+	const left = `${face} ${name}`;
 
-	// ── Right anchor: Model + thinking (always visible)
+	// ── Right: Model (always visible, intelligently shortened)
 	const rawModel = (ctx.model as any)?.name || (ctx.model as any)?.id || "Claude";
+	const modelMaxLen = width < 60 ? 10 : width < 80 ? 16 : 30;
+	const modelStr = shortModel(rawModel, modelMaxLen);
 	const thinkSuffix = thinkingLevel && thinkingLevel !== "off"
-		? `  ${subdued("\u2022")}  ${paint(P.mauve, thinkingLevel)}`
+		? ` ${subdued("\u2022")} ${paint(P.mauve, thinkingLevel)}`
 		: "";
-	const right = `${paint(P.lavender, IC.chip)}  ${bright(rawModel)}${thinkSuffix}`;
+	const right = `${paint(P.lavender, IC.chip)} ${bright(modelStr)}${thinkSuffix}`;
 
-	// ── Middle segments (progressive, ordered by importance)
-	const mid: string[] = [];
+	const lW = visibleWidth(left);
+	const rW = visibleWidth(right);
 
-	// 1. Critical vital (60+)
-	if (width >= 60) {
-		if (status.hunger <= status.energy) {
-			mid.push(miniBar(IC.heart, P.peach, status.hunger));
+	// ── Ultra-narrow (<50): face ... model only
+	if (width < 50) {
+		const gap = Math.max(1, width - lW - rW);
+		return truncateToWidth(`${left}${" ".repeat(gap)}${right}`, width);
+	}
+
+	// ── Build middle sections as grouped blocks (not individual segments)
+	// Group A: Vitals (hunger + energy together, no separator between them)
+	// Group B: Environment (weather + state + time together)
+	// Group C: Context (bar + path + cost together)
+	// Group D: Audio indicators (voice + ambient together)
+	const groups: string[] = [];
+
+	// Group A: Vitals (50+)
+	if (width >= 50) {
+		const lower = status.hunger <= status.energy;
+		const vital1 = miniBar(lower ? IC.heart : IC.bolt, lower ? P.peach : P.green, lower ? status.hunger : status.energy);
+		if (width >= 80) {
+			const vital2 = miniBar(lower ? IC.bolt : IC.heart, lower ? P.green : P.peach, lower ? status.energy : status.hunger);
+			groups.push(`${vital1}  ${vital2}`);
 		} else {
-			mid.push(miniBar(IC.bolt, P.green, status.energy));
+			groups.push(vital1);
 		}
 	}
 
-	// 2. Second vital (80+)
-	if (width >= 80) {
-		if (status.hunger <= status.energy) {
-			mid.push(miniBar(IC.bolt, P.green, status.energy));
-		} else {
-			mid.push(miniBar(IC.heart, P.peach, status.hunger));
+	// Group B: Environment (90+)
+	if (width >= 90) {
+		const parts = [`${paint(wx.hex, wx.icon)} ${subtle(weather)}`];
+		if (width >= 100) {
+			const stIcon = stats.isAgentActive ? IC.code : IC.paw;
+			const stHex = stats.isAgentActive ? P.sapphire : "#7f849c";
+			parts.push(`${paint(stHex, stIcon)} ${subtle(stats.isAgentActive ? "working" : status.mood)}`);
 		}
+		if (width >= 108) {
+			parts.push(`${subdued(IC.clock)} ${subdued(fmtTime(sessionMs))}`);
+		}
+		groups.push(parts.join("  "));
 	}
 
-	// 3. Weather (92+)
-	if (width >= 92) {
-		mid.push(`${paint(wx.hex, wx.icon)}  ${subtle(weather)}`);
-	}
-
-	// 4. State + time (104+)
-	if (width >= 104) {
-		const stateIcon = stats.isAgentActive ? IC.code : IC.paw;
-		const stateHex = stats.isAgentActive ? P.sapphire : "#7f849c";
-		const stateLabel = stats.isAgentActive ? "working" : status.mood;
-		mid.push(`${paint(stateHex, stateIcon)}  ${subtle(stateLabel)}  ${subdued(IC.clock)} ${subdued(fmtTime(sessionMs))}`);
-	}
-
-	// 5. Context usage (120+)
+	// Group C: Context + path (120+)
 	if (width >= 120) {
 		const usage = (ctx as any).getContextUsage?.();
 		const total = Math.max(1, Number(usage?.contextWindow) || 200000);
@@ -184,52 +210,32 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 		const ctxHex = pct > 85 ? P.red : pct > 60 ? P.peach : P.sapphire;
 		const filled = Math.round(pct / 20);
 		const empty = 5 - filled;
-		mid.push(`${paint(ctxHex, IC.database)}  ${paint(ctxHex, "\u25b0".repeat(filled))}${muted("\u25b1".repeat(empty))} ${bright(`${usedK}k`)}${subdued("/")}${subdued(`${totalK}k`)}`);
-	}
-
-	// 6. Path (134+)
-	if (width >= 134) {
-		mid.push(`${paint(P.blue, IC.folder)}  ${subdued(shortPath(ctx.cwd))}`);
-	}
-
-	// 7. Cost (144+)
-	if (width >= 144) {
-		const cost = getCost(ctx);
-		if (cost > 0.005) {
-			const costHex = cost > 5 ? P.red : cost > 2 ? P.yellow : P.green;
-			mid.push(`${paint(costHex, IC.dollar)}${bright(cost.toFixed(2))}`);
+		const parts = [`${paint(ctxHex, IC.database)} ${paint(ctxHex, "\u25b0".repeat(filled))}${muted("\u25b1".repeat(empty))} ${bright(`${usedK}k`)}${subdued("/")}${subdued(`${totalK}k`)}`];
+		if (width >= 140) parts.push(`${paint(P.blue, IC.folder)} ${subdued(shortPath(ctx.cwd))}`);
+		if (width >= 150) {
+			const cost = getCost(ctx);
+			if (cost > 0.005) {
+				const costHex = cost > 5 ? P.red : cost > 2 ? P.yellow : P.green;
+				parts.push(`${paint(costHex, IC.dollar)}${bright(cost.toFixed(2))}`);
+			}
 		}
+		groups.push(parts.join("  "));
 	}
 
-	// 8. Voice (152+)
-	if (width >= 152 && getVoiceConfig().enabled) {
-		mid.push(paint(P.flamingo, IC.volume));
+	// Group D: Audio (160+)
+	if (width >= 160) {
+		const audio: string[] = [];
+		if (getVoiceConfig().enabled) audio.push(paint(P.flamingo, IC.volume));
+		if (getAmbientConfig().enabled && isAmbientPlaying()) audio.push(paint(P.teal, IC.music));
+		if (audio.length > 0) groups.push(audio.join(" "));
 	}
 
-	// 9. Ambient (156+)
-	if (width >= 156 && getAmbientConfig().enabled && isAmbientPlaying()) {
-		mid.push(paint(P.teal, IC.music));
-	}
-
-	// ── Compose with balanced spacing
-	const middle = mid.join(SEP);
-	const lW = visibleWidth(left);
-	const mW = visibleWidth(middle);
-	const rW = visibleWidth(right);
-
-	let line: string;
-	if (mid.length === 0) {
-		// Narrow: left ... right
-		const gap = Math.max(1, width - lW - rW);
-		line = `${left}${" ".repeat(gap)}${right}`;
-	} else {
-		// Wide: left  SEP  middle  ...  right
-		const leftSection = `${left}${SEP}${middle}`;
-		const lsW = visibleWidth(leftSection);
-		const gap = Math.max(2, width - lsW - rW);
-		line = `${leftSection}${" ".repeat(gap)}${right}`;
-	}
-
+	// ── Compose: left SEP groups... gap right
+	const middle = groups.join(SEP);
+	const leftSection = groups.length > 0 ? `${left}${SEP}${middle}` : left;
+	const lsW = visibleWidth(leftSection);
+	const gap = Math.max(2, width - lsW - rW);
+	const line = `${leftSection}${" ".repeat(gap)}${right}`;
 	return truncateToWidth(line, width);
 }
 
