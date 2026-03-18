@@ -48,6 +48,17 @@ If the user wants something the main agent is handling, suggest waiting for it t
 
 const SPINNER = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f"];
 
+const THINKING_LINES = [
+	"(o'o) Hmm, let me think...",
+	"(o'o) Processing those brain gears...",
+	"(o'o) Thinking really hard right now...",
+	"(o'o) Give me a sec...",
+	"(o'o) Working on it!",
+	"(o'o) My antenna is glowing...",
+	"(o'o) Crunching the numbers...",
+	"(o'o) Almost there...",
+];
+
 const CHAT_HISTORY_FILE = path.join(os.homedir(), ".pi", "pompom", "chat-history.json");
 const CHAT_HISTORY_MAX = 100;
 
@@ -62,6 +73,7 @@ interface PompomChatOptions {
 	shortcut: string;
 	onUnfocus: () => void;
 	onClose: () => void;
+	onThinking?: (active: boolean) => void;
 }
 
 export class PompomChatOverlay implements Component, Focusable {
@@ -78,6 +90,7 @@ export class PompomChatOverlay implements Component, Focusable {
 	private peekTool: AgentTool;
 	private spinnerTimer: NodeJS.Timeout | null = null;
 	private spinnerFrame = 0;
+	private thinkingLineIdx = 0;
 	private toolStatus = "";
 	private errorText = "";
 	private scrollOffset = 0;
@@ -316,6 +329,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.errorText = "";
 		if (wasAtBottom) this.scrollOffset = 0;
 		this.startSpinner();
+		this.opts.onThinking?.(true);
 		this.opts.tui.requestRender();
 
 		try {
@@ -329,6 +343,7 @@ export class PompomChatOverlay implements Component, Focusable {
 			this.streamingText = "";
 			this.stopSpinner();
 			this.toolStatus = "";
+			this.opts.onThinking?.(false);
 			if (!this.disposed) {
 				this.syncMessages();
 				if (wasAtBottom) this.scrollOffset = 0;
@@ -391,9 +406,16 @@ export class PompomChatOverlay implements Component, Focusable {
 	private startSpinner() {
 		this.stopSpinner();
 		this.spinnerFrame = 0;
+		this.thinkingLineIdx = Math.floor(Math.random() * THINKING_LINES.length);
+		let tickCount = 0;
 		this.spinnerTimer = setInterval(() => {
 			if (this.disposed) { this.stopSpinner(); return; }
 			this.spinnerFrame = (this.spinnerFrame + 1) % SPINNER.length;
+			tickCount++;
+			// Cycle thinking line every ~2.5s (30 ticks at 80ms)
+			if (tickCount % 30 === 0) {
+				this.thinkingLineIdx = (this.thinkingLineIdx + 1) % THINKING_LINES.length;
+			}
 			this.opts.tui.requestRender();
 		}, 80);
 	}
@@ -473,6 +495,13 @@ export class PompomChatOverlay implements Component, Focusable {
 				: theme.fg("error", "Error: ");
 			const prefixW = msg.role === "user" ? 5 : msg.role === "pompom" ? 6 : msg.role === "tool" ? 0 : 7;
 			this.wrapInto(allMsgLines, prefix, prefixW, msg.text, innerWidth);
+		}
+		if (this.isStreaming && !this.streamingText) {
+			// Animated thinking indicator — shows while model is processing before any output
+			const dots = ".".repeat((this.spinnerFrame % 3) + 1);
+			const thinkText = THINKING_LINES[this.thinkingLineIdx % THINKING_LINES.length] + dots;
+			const thinkPrefix = theme.fg("warning", SPINNER[this.spinnerFrame] + " ");
+			allMsgLines.push(thinkPrefix + theme.fg("dim", thinkText));
 		}
 		if (this.streamingText) {
 			this.wrapInto(allMsgLines, theme.fg("success", "(o'o) "), 6, this.streamingText, innerWidth);

@@ -2283,6 +2283,17 @@ export default function (pi: ExtensionAPI) {
 						modelRegistry: commandContext.modelRegistry,
 						sessionManager: commandContext.sessionManager as any,
 						shortcut: CHAT_SHORTCUT_DISPLAY,
+						onThinking: (active: boolean) => {
+							// Trigger Pompom's visual thinking animation when chat is processing
+							if (active) {
+								pulseOverlay({ forceOverlay: true, lookX: 0.14, lookY: -0.08, glow: 0.9, earBoost: 0.7 }, 30000);
+								pompomSay("[curious] Let me think about that...", 3.0, "commentary", 1, true);
+							} else {
+								overlayHint = null;
+								overlayHintUntil = 0;
+								applyAgentVisualState();
+							}
+						},
 						onUnfocus: () => chatOverlayHandle?.unfocus(),
 						onClose: () => {
 							chatOverlayHandle = null;
