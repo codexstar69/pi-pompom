@@ -560,19 +560,9 @@ export default function (pi: ExtensionAPI) {
 	async function generateDynamicLine(): Promise<string | null> {
 		try {
 			if (!ctx) return null;
-			const pompomModelId = getPompomModel();
-			let model: ModelLike | undefined;
-			if (pompomModelId) {
-				const all = ctx.modelRegistry.getAll();
-				const found = all.find(m => m.id === pompomModelId || `${m.provider}/${m.id}` === pompomModelId);
-				if (found) model = found;
-			}
-			if (!model) {
-				const ctxModel = ctx.model;
-				if (!ctxModel || !isModelLike(ctxModel)) return null;
-				model = ctxModel;
-			}
-			const apiKey = await ctx.modelRegistry.getApiKey(model as any);
+			const model = resolvePompomModel(ctx);
+			if (!model) return null;
+			const apiKey = await ctx.modelRegistry.getApiKey(model);
 			if (!apiKey) return null;
 
 			const stats = getSessionStats();
@@ -2222,7 +2212,9 @@ export default function (pi: ExtensionAPI) {
 	async function openPompomChat(commandContext: ExtensionContext) {
 		if (chatOpenInProgress || chatOverlayHandle) return;
 		if (!commandContext.hasUI) return;
-		if (!isModelLike(commandContext.model)) {
+		// Use the Pompom AI model if configured, otherwise fall back to session model
+		const chatModel = resolvePompomModel(commandContext) || commandContext.model;
+		if (!isModelLike(chatModel)) {
 			commandContext.ui.notify("Cannot open chat: no model configured.", "error");
 			return;
 		}
@@ -2237,7 +2229,7 @@ export default function (pi: ExtensionAPI) {
 					const overlay = new PompomChatOverlay({
 						tui,
 						theme,
-						model: commandContext.model as any,
+						model: chatModel as any,
 						cwd: commandContext.cwd,
 						thinkingLevel: (thinkingLevel === "off" ? "off" : thinkingLevel) as any,
 						modelRegistry: commandContext.modelRegistry,
