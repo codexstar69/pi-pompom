@@ -2260,10 +2260,11 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		lines.push(line);
 	}
 
-	// ── Compact single-line status ──
-	const dim = "\x1b[38;5;239m";
-	const keyC = "\x1b[38;5;252m";
-	const lblC = "\x1b[38;5;244m";
+	// ── Compact single-line status (Gemini 3.1 Pro design) ──
+	// Catppuccin Mocha: sapphire keys, overlay0 labels, subtext0 state
+	const dim = "\x1b[38;2;108;112;134m";     // Overlay0
+	const keyC = "\x1b[38;2;116;199;236m";    // Sapphire
+	const lblC = "\x1b[38;2;108;112;134m";    // Overlay0
 	const accC = "\x1b[38;5;153m";
 	const mod = process.platform === "darwin" ? "⌥" : "Alt+";
 
@@ -2421,38 +2422,57 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		]);
 	}
 
-	// Build status: "─ ⌥ w·Wake p·Pet ... │ State ───" capped at exactly W visible chars
-	const shortcuts: [string, string][] = [
-		["p","Pet"],["e","Feed"],["r","Ball"],["x","Dance"],
-		["m","Music"],["c","Color"],["s","Sleep"],["a","Wake"],
-	];
+	// Build status bar — Gemini 3.1 Pro design: grouped shortcuts + state right-aligned
+	// Groups: Interact (pet/feed/ball) · Fun (dance/music/color) · Life (sleep/wake)
+	const softC = "\x1b[38;2;166;173;200m";  // Subtext0
+	const groupSep = `${dim}  \ue0b1  `;     // Thin Powerline between groups
+	const key = (k: string, l: string) => `${keyC}${k}${lblC}\u00b7${l}`;
 
-	// Truncate stateMsg to fit W
+	const interact = `${key("p","Pet")} ${key("e","Feed")} ${key("r","Ball")}`;
+	const fun = `${key("x","Dance")} ${key("m","Music")} ${key("c","Color")}`;
+	const life = `${key("s","Sleep")} ${key("a","Wake")}`;
+
+	// Truncate stateMsg to fit
 	const maxStateW = Math.max(8, W - 20);
 	if (getStringWidth(stateMsg) > maxStateW) {
 		let w = 0; let trimmed = "";
 		for (const ch of stateMsg) {
 			const cw = getStringWidth(ch);
-			if (w + cw + 1 > maxStateW) { trimmed += "~"; break; }
+			if (w + cw + 1 > maxStateW) { trimmed += "\u2026"; break; }
 			trimmed += ch; w += cw;
 		}
 		stateMsg = trimmed;
 	}
 
-	let plainHints = "";
-	let styledHints = "";
+	// Build shortcut section progressively based on width
+	let styledShortcuts = "";
+	let plainLen = 0;
 	const stateW = getStringWidth(stateMsg);
-	const fixedW = 2 + getStringWidth(mod) + 1 + 2 + stateW + 1;
-	for (const [k, l] of shortcuts) {
-		const part = `${k}·${l} `;
-		if (getStringWidth(plainHints + part) + fixedW + 1 > W) break;
-		plainHints += part;
-		styledHints += `${keyC}${k}${lblC}·${l} `;
+	const overhead = 4 + stateW; // " │ state "
+
+	// Always try interact group first
+	const interactPlain = "p·Pet e·Feed r·Ball";
+	if (plainLen + getStringWidth(interactPlain) + overhead + 4 < W) {
+		styledShortcuts = ` ${dim}\u{f0544}${lblC} ${interact}`;
+		plainLen = 2 + getStringWidth(interactPlain);
+	}
+	// Add fun group
+	const funPlain = "x·Dance m·Music c·Color";
+	if (plainLen + getStringWidth(funPlain) + overhead + 8 < W) {
+		styledShortcuts += `${groupSep}${fun}`;
+		plainLen += 5 + getStringWidth(funPlain);
+	}
+	// Add life group
+	const lifePlain = "s·Sleep a·Wake";
+	if (plainLen + getStringWidth(lifePlain) + overhead + 8 < W) {
+		styledShortcuts += `${groupSep}${life}`;
+		plainLen += 5 + getStringWidth(lifePlain);
 	}
 
-	const usedW = 2 + getStringWidth(mod) + 1 + getStringWidth(plainHints) + 2 + stateW + 1;
+	const rightPart = ` ${softC}${stateMsg}${dim} `;
+	const usedW = plainLen + 1 + stateW + 2;
 	const padR = Math.max(0, W - usedW);
-	lines.push(`${dim}─ ${lblC}${mod} ${styledHints}${dim}│ ${accC}${stateMsg} ${dim}${"─".repeat(padR)}\x1b[0m`);
+	lines.push(`${styledShortcuts}${dim}${"─".repeat(padR)}${rightPart}\x1b[0m`);
 
 	return lines;
 }
