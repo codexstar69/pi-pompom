@@ -1,10 +1,9 @@
 /**
- * Pompom Footer — Billion-dollar single-line status bar for Pi CLI.
+ * Pompom Footer — Single-line status bar for Pi CLI.
  *
- * Designed by Gemini 3.1 Pro Preview. Catppuccin Mocha palette.
- * Nerd Font icons. Parallelogram bars (▰▱). Progressive disclosure.
- *
- * Layout:  (◕ᴗ◕) Pompom   ▰▰▱ 72%  󱐋▰▰▰▱ 85%  󰖨 clear  󰋜 working 5m  ▰▰▰▱▱34% $0.42   opus·med
+ * Catppuccin Mocha. Nerd Font icons only — zero emoji.
+ * Parallelogram bars (▰▱). Thin Powerline separators ().
+ * Deliberate spacing. Progressive disclosure by terminal width.
  */
 
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
@@ -14,64 +13,89 @@ import { getSessionStats } from "./pompom-agent";
 import { getVoiceConfig } from "./pompom-voice";
 import { getAmbientConfig, isAmbientPlaying } from "./pompom-ambient";
 
-// ─── Catppuccin Mocha (hex → ANSI) ──────────────────────────────────────────
+// ─── Color System (Catppuccin Mocha hex → ANSI true-color) ──────────────────
 
-function rgb(hex: string): string {
+function fg(hex: string): string {
 	const r = parseInt(hex.slice(1, 3), 16);
 	const g = parseInt(hex.slice(3, 5), 16);
 	const b = parseInt(hex.slice(5, 7), 16);
 	return `\x1b[38;2;${r};${g};${b}m`;
 }
+const RST = "\x1b[0m";
+const BOLD = "\x1b[1m";
 
-function c(hex: string, text: string): string { return `${rgb(hex)}${text}\x1b[0m`; }
-function bold(hex: string, text: string): string { return `\x1b[1m${rgb(hex)}${text}\x1b[0m`; }
-function dim(text: string): string { return c("#6c7086", text); }  // Overlay0
-function txt(text: string): string { return c("#cdd6f4", text); }  // Text
-function soft(text: string): string { return c("#a6adc8", text); } // Subtext0
+function paint(hex: string, text: string): string { return `${fg(hex)}${text}${RST}`; }
+function strong(hex: string, text: string): string { return `${BOLD}${fg(hex)}${text}${RST}`; }
+function muted(text: string): string { return paint("#585b70", text); }   // Surface2
+function subdued(text: string): string { return paint("#6c7086", text); } // Overlay0
+function subtle(text: string): string { return paint("#a6adc8", text); }  // Subtext0
+function bright(text: string): string { return paint("#cdd6f4", text); }  // Text
 
-// ─── Palette Hex ─────────────────────────────────────────────────────────────
+// ─── Palette ─────────────────────────────────────────────────────────────────
 
-const PAL = {
-	rosewater: "#f5e0dc", flamingo: "#f2cdcd", pink: "#f5c2e7",
-	mauve: "#cba6f7", red: "#f38ba8", maroon: "#eba0ac",
-	peach: "#fab387", yellow: "#f9e2af", green: "#a6e3a1",
-	teal: "#94e2d5", sky: "#89dceb", sapphire: "#74c7ec",
-	blue: "#89b4fa", lavender: "#b4befe",
+const P = {
+	pink:     "#f5c2e7",  mauve:    "#cba6f7",  red:      "#f38ba8",
+	maroon:   "#eba0ac",  peach:    "#fab387",  yellow:   "#f9e2af",
+	green:    "#a6e3a1",  teal:     "#94e2d5",  sky:      "#89dceb",
+	sapphire: "#74c7ec",  blue:     "#89b4fa",  lavender: "#b4befe",
+	flamingo: "#f2cdcd",
 };
 
-const SEP = dim(" \ue0b1 ");  // Thin Powerline
+// ─── Nerd Font Icons (no emoji anywhere) ─────────────────────────────────────
 
-// ─── Mood → Face + Color ─────────────────────────────────────────────────────
+const IC = {
+	heart:    "\uf004",   // nf-fa-heart
+	bolt:     "\uf0e7",   // nf-fa-bolt
+	sun:      "\ue30d",   // nf-weather-day_sunny
+	cloud:    "\ue312",   // nf-weather-cloudy
+	rain:     "\ue318",   // nf-weather-rain
+	snow:     "\ue31a",   // nf-weather-snow
+	storm:    "\ue31d",   // nf-weather-thunderstorm
+	music:    "\uf001",   // nf-fa-music
+	volume:   "\uf028",   // nf-fa-volume_up
+	folder:   "\uf07c",   // nf-fa-folder_open
+	clock:    "\uf017",   // nf-fa-clock_o
+	chip:     "\uf2db",   // nf-fa-microchip
+	database: "\uf1c0",   // nf-fa-database
+	dollar:   "\uf155",   // nf-fa-dollar
+	paw:      "\uf1b0",   // nf-fa-paw
+	code:     "\uf121",   // nf-fa-code
+	sep:      "\ue0b1",   // Powerline thin right
+};
+
+// ─── Separator ───────────────────────────────────────────────────────────────
+
+const SEP = `  ${subdued(IC.sep)}  `; // 2-space breathing room each side
+
+// ─── Mood ────────────────────────────────────────────────────────────────────
 
 const MOOD: Record<string, { face: string; hex: string }> = {
-	happy:    { face: "(\u25d5\u1d17\u25d5)",  hex: PAL.green },
-	content:  { face: "(\u25d5\u203f\u25d5)",  hex: PAL.teal },
-	hungry:   { face: "(\u25d5\ufe35\u25d5)",  hex: PAL.peach },
-	sleeping: { face: "(\u2013\u203f\u2013)",  hex: PAL.lavender },
-	playful:  { face: "(\u25d5\u03c9\u25d5)",  hex: PAL.pink },
-	musical:  { face: "(\u25d5\u2200\u25d5)",  hex: PAL.mauve },
-	tired:    { face: "(\u25d5\u2313\u25d5)",  hex: PAL.maroon },
+	happy:    { face: "(\u25d5\u1d17\u25d5)",  hex: P.green },
+	content:  { face: "(\u25d5\u203f\u25d5)",  hex: P.teal },
+	hungry:   { face: "(\u25d5\ufe35\u25d5)",  hex: P.peach },
+	sleeping: { face: "(\u2013\u203f\u2013)",  hex: P.lavender },
+	playful:  { face: "(\u25d5\u03c9\u25d5)",  hex: P.pink },
+	musical:  { face: "(\u25d5\u2200\u25d5)",  hex: P.mauve },
+	tired:    { face: "(\u25d5\u2313\u25d5)",  hex: P.maroon },
 };
 
-const WEATHER_ICON: Record<string, string> = {
-	clear: "\u{f0599}", cloudy: "\u{e312}", rain: "\u{e318}", snow: "\u{e31a}", storm: "\u{e31d}",
+const WEATHER: Record<string, { icon: string; hex: string }> = {
+	clear:  { icon: IC.sun,   hex: P.yellow },
+	cloudy: { icon: IC.cloud, hex: "#7f849c" },  // Overlay1
+	rain:   { icon: IC.rain,  hex: P.blue },
+	snow:   { icon: IC.snow,  hex: P.sky },
+	storm:  { icon: IC.storm, hex: P.mauve },
 };
 
-// ─── Bar Renderer ────────────────────────────────────────────────────────────
+// ─── Components ──────────────────────────────────────────────────────────────
 
-function barColor(val: number): string {
-	return val > 50 ? PAL.green : val > 20 ? PAL.yellow : PAL.red;
-}
-
-function bar(icon: string, val: number): string {
-	const hex = barColor(val);
-	const filled = Math.round(Math.max(0, Math.min(100, val)) / 20); // 5 blocks
+function miniBar(icon: string, iconHex: string, val: number): string {
+	const v = Math.max(0, Math.min(100, val));
+	const hex = v > 50 ? P.green : v > 25 ? P.yellow : P.red;
+	const filled = Math.round(v / 20);
 	const empty = 5 - filled;
-	const valStr = txt(`${val}%`.padStart(4, " "));
-	return `${c(hex, icon)} ${c(hex, "\u25b0".repeat(filled))}${dim("\u25b1".repeat(empty))}${valStr}`;
+	return `${paint(iconHex, icon)} ${paint(hex, "\u25b0".repeat(filled))}${muted("\u25b1".repeat(empty))} ${bright(String(v).padStart(3) + "%")}`;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtTime(ms: number): string {
 	if (ms <= 0) return "0m";
@@ -86,17 +110,15 @@ function getCost(ctx: ExtensionContext): number {
 	} catch { return 0; }
 }
 
-function ctxPct(ctx: ExtensionContext): number {
-	const u = (ctx as any).getContextUsage?.();
-	if (!u) return 0;
-	const total = Math.max(1, Number(u.contextWindow) || 200000);
-	const used = Math.max(0, Number(u.tokens) || 0);
-	return Math.min(100, Math.round((used / total) * 100));
+function shortPath(cwd: string): string {
+	const home = process.env.HOME || "";
+	let p = cwd;
+	if (home && p.startsWith(home)) p = "~" + p.slice(home.length);
+	const parts = p.split("/").filter(Boolean);
+	return parts.length > 2 ? parts[parts.length - 1] : parts.join("/");
 }
 
-function stripAnsi(s: string): number { return visibleWidth(s); }
-
-// ─── Render ──────────────────────────────────────────────────────────────────
+// ─── Footer Render ───────────────────────────────────────────────────────────
 
 function renderFooter(width: number, sessionMs: number, thinkingLevel: string, ctx: ExtensionContext): string {
 	if (width <= 0) return "";
@@ -105,96 +127,107 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 	const weather = pompomGetWeather();
 	const stats = getSessionStats();
 	const mood = MOOD[status.mood] || MOOD.content;
+	const wx = WEATHER[weather] || WEATHER.clear;
 
-	// ─ Left: Identity
-	const left = `${c(mood.hex, mood.face)} ${bold(mood.hex, "Pompom")}`;
+	// ── Left anchor: Pompom identity (always visible)
+	const left = `${paint(mood.hex, mood.face)}  ${strong(mood.hex, "Pompom")}`;
 
-	// ─ Right: Model + thinking (keep full name for clarity)
+	// ── Right anchor: Model + thinking (always visible)
 	const rawModel = (ctx.model as any)?.name || (ctx.model as any)?.id || "Claude";
-	const thinkStr = thinkingLevel && thinkingLevel !== "off" ? ` ${dim("\u2022")} ${c(PAL.mauve, thinkingLevel)}` : "";
-	const right = `${c(PAL.lavender, rawModel)}${thinkStr}`;
+	const thinkSuffix = thinkingLevel && thinkingLevel !== "off"
+		? `  ${subdued("\u2022")}  ${paint(P.mauve, thinkingLevel)}`
+		: "";
+	const right = `${paint(P.lavender, IC.chip)}  ${bright(rawModel)}${thinkSuffix}`;
 
-	// ─ Middle: Progressive segments
-	const midParts: string[] = [];
+	// ── Middle segments (progressive, ordered by importance)
+	const mid: string[] = [];
 
-	// Priority 1: Vitals (60+ cols)
+	// 1. Critical vital (60+)
 	if (width >= 60) {
-		const showHunger = status.hunger <= status.energy;
-		if (showHunger) midParts.push(bar("\uf004", status.hunger));
-		else midParts.push(bar("\u{f0e7b}", status.energy));
+		if (status.hunger <= status.energy) {
+			mid.push(miniBar(IC.heart, P.peach, status.hunger));
+		} else {
+			mid.push(miniBar(IC.bolt, P.green, status.energy));
+		}
 	}
-	// Both vitals (80+ cols)
+
+	// 2. Second vital (80+)
 	if (width >= 80) {
-		const showHunger = status.hunger <= status.energy;
-		if (showHunger) midParts.push(bar("\u{f0e7b}", status.energy));
-		else midParts.push(bar("\uf004", status.hunger));
+		if (status.hunger <= status.energy) {
+			mid.push(miniBar(IC.bolt, P.green, status.energy));
+		} else {
+			mid.push(miniBar(IC.heart, P.peach, status.hunger));
+		}
 	}
-	// Weather (90+ cols)
-	if (width >= 90) {
-		const wIcon = WEATHER_ICON[weather] || "\ue30d";
-		midParts.push(`${c(PAL.yellow, wIcon)} ${txt(weather)}`);
+
+	// 3. Weather (92+)
+	if (width >= 92) {
+		mid.push(`${paint(wx.hex, wx.icon)}  ${subtle(weather)}`);
 	}
-	// Activity + time (100+ cols)
-	if (width >= 100) {
-		const activity = stats.isAgentActive ? "working" : status.mood;
-		midParts.push(`${c(PAL.sapphire, "\u{f015b}")} ${txt(activity)} ${dim(fmtTime(sessionMs))}`);
+
+	// 4. State + time (104+)
+	if (width >= 104) {
+		const stateIcon = stats.isAgentActive ? IC.code : IC.paw;
+		const stateHex = stats.isAgentActive ? P.sapphire : "#7f849c";
+		const stateLabel = stats.isAgentActive ? "working" : status.mood;
+		mid.push(`${paint(stateHex, stateIcon)}  ${subtle(stateLabel)}  ${subdued(IC.clock)} ${subdued(fmtTime(sessionMs))}`);
 	}
-	// Context bar + token counts (110+ cols)
-	if (width >= 110) {
+
+	// 5. Context usage (120+)
+	if (width >= 120) {
 		const usage = (ctx as any).getContextUsage?.();
 		const total = Math.max(1, Number(usage?.contextWindow) || 200000);
 		const used = Math.max(0, Number(usage?.tokens) || 0);
 		const pct = Math.min(100, Math.round((used / total) * 100));
 		const usedK = Math.round(used / 1000);
 		const totalK = Math.round(total / 1000);
-		const ctxHex = pct > 85 ? PAL.red : pct > 65 ? PAL.peach : PAL.sapphire;
+		const ctxHex = pct > 85 ? P.red : pct > 60 ? P.peach : P.sapphire;
 		const filled = Math.round(pct / 20);
 		const empty = 5 - filled;
-		midParts.push(`${c(ctxHex, "\u25b0".repeat(filled))}${dim("\u25b1".repeat(empty))} ${txt(`${usedK}k`)}${dim("/")}${dim(`${totalK}k`)}`);
+		mid.push(`${paint(ctxHex, IC.database)}  ${paint(ctxHex, "\u25b0".repeat(filled))}${muted("\u25b1".repeat(empty))} ${bright(`${usedK}k`)}${subdued("/")}${subdued(`${totalK}k`)}`);
 	}
-	// Path (118+ cols)
-	if (width >= 118) {
-		const home = process.env.HOME || "";
-		let cwd = ctx.cwd || "";
-		if (home && cwd.startsWith(home)) cwd = "~" + cwd.slice(home.length);
-		const parts = cwd.split("/").filter(Boolean);
-		const short = parts.length > 2 ? parts[parts.length - 1] : parts.join("/");
-		midParts.push(`${c(PAL.blue, "\uf115")} ${dim(short)}`);
+
+	// 6. Path (134+)
+	if (width >= 134) {
+		mid.push(`${paint(P.blue, IC.folder)}  ${subdued(shortPath(ctx.cwd))}`);
 	}
-	// Cost (125+ cols)
-	if (width >= 125) {
+
+	// 7. Cost (144+)
+	if (width >= 144) {
 		const cost = getCost(ctx);
 		if (cost > 0.005) {
-			const costHex = cost > 5 ? PAL.red : cost > 2 ? PAL.yellow : PAL.green;
-			midParts.push(c(costHex, `$${cost.toFixed(2)}`));
+			const costHex = cost > 5 ? P.red : cost > 2 ? P.yellow : P.green;
+			mid.push(`${paint(costHex, IC.dollar)}${bright(cost.toFixed(2))}`);
 		}
 	}
-	// Voice (125+ cols)
-	if (width >= 125 && getVoiceConfig().enabled) {
-		midParts.push(c(PAL.flamingo, "\uf028"));
-	}
-	// Ambient (130+ cols)
-	if (width >= 130 && getAmbientConfig().enabled && isAmbientPlaying()) {
-		midParts.push(c(PAL.teal, "\uf001"));
+
+	// 8. Voice (152+)
+	if (width >= 152 && getVoiceConfig().enabled) {
+		mid.push(paint(P.flamingo, IC.volume));
 	}
 
-	const middle = midParts.join(SEP);
+	// 9. Ambient (156+)
+	if (width >= 156 && getAmbientConfig().enabled && isAmbientPlaying()) {
+		mid.push(paint(P.teal, IC.music));
+	}
 
-	// ─ Compose: left ... middle ... right (centered middle, right-aligned right)
-	const lW = stripAnsi(left);
-	const mW = stripAnsi(middle);
-	const rW = stripAnsi(right);
+	// ── Compose with balanced spacing
+	const middle = mid.join(SEP);
+	const lW = visibleWidth(left);
+	const mW = visibleWidth(middle);
+	const rW = visibleWidth(right);
 
 	let line: string;
-	if (midParts.length === 0) {
+	if (mid.length === 0) {
+		// Narrow: left ... right
 		const gap = Math.max(1, width - lW - rW);
 		line = `${left}${" ".repeat(gap)}${right}`;
 	} else {
-		const totalContent = lW + mW + rW;
-		const totalPad = Math.max(0, width - totalContent);
-		const padL = Math.max(1, Math.floor(totalPad / 2));
-		const padR = Math.max(1, totalPad - padL);
-		line = `${left}${" ".repeat(padL)}${middle}${" ".repeat(padR)}${right}`;
+		// Wide: left  SEP  middle  ...  right
+		const leftSection = `${left}${SEP}${middle}`;
+		const lsW = visibleWidth(leftSection);
+		const gap = Math.max(2, width - lsW - rW);
+		line = `${leftSection}${" ".repeat(gap)}${right}`;
 	}
 
 	return truncateToWidth(line, width);
