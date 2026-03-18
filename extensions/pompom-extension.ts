@@ -108,6 +108,7 @@ import {
 	type SpeechEvent,
 	type Personality,
 } from "./pompom-voice";
+import { truncateToWidth } from "@mariozechner/pi-tui";
 import { installPompomFooter } from "./pompom-footer";
 import {
 	registerInstance,
@@ -802,11 +803,10 @@ export default function (pi: ExtensionAPI) {
 			lastRenderTime = now;
 			const piListen = getPiListenState();
 			const lines = renderPompom(w, piListen.audioLevel || 0, dt);
-			// Safety: ensure no line exceeds terminal width (Pi TUI crashes otherwise)
+			// Strict truncation: every line must be exactly <= width visible chars.
+			// Pi TUI crashes if any rendered line exceeds terminal width.
 			for (let i = 0; i < lines.length; i++) {
-				if (lines[i].length > w * 4) { // rough ANSI-inclusive check (true-color codes inflate length)
-					lines[i] = lines[i].slice(0, w * 4);
-				}
+				lines[i] = truncateToWidth(lines[i], w);
 			}
 			return lines;
 		} catch {
