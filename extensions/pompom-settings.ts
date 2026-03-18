@@ -19,7 +19,7 @@ import { getSessionStats } from "./pompom-agent";
 import {
 	getAmbientConfig, setAmbientEnabled, setAmbientVolume,
 	getCachedWeathers, getCustomWeathers, isAmbientPlaying, pregenerateAll,
-	getCustomAudioDir,
+	getCustomAudioDir, pregenerateSfx, getSfxCacheStatus,
 } from "./pompom-ambient";
 import { getInstanceCount, isPrimaryInstance } from "./pompom-instance";
 
@@ -36,7 +36,7 @@ const TAB_MODEL = 6;
 const TAB_SHORTCUTS = 7;
 const TAB_ABOUT = 8;
 
-const TABS = ["Pompom", "Voice", "Ambient", "Personality", "Theme", "Accessories", "Model", "Keys", "About"];
+const TABS = ["Pompom", "Voice", "Sound", "Personality", "Theme", "Accessories", "Model", "Keys", "About"];
 
 const PERSONALITY_OPTIONS: { id: Personality; label: string; short: string }[] = [
 	{ id: "quiet", label: "Quiet — user actions + errors only", short: "Quiet" },
@@ -97,6 +97,24 @@ const SHORTCUT_GROUPS: { section: string; items: [string, string][] }[] = [
 		items: [
 			["Alt+V", "Toggle view (hide/show)"],
 			["Alt+/", "Toggle side chat"],
+		],
+	},
+	{
+		section: "Commands",
+		items: [
+			["/pompom", "Toggle on/off or /pompom help"],
+			["/pompom-on", "Turn everything on"],
+			["/pompom-off", "Turn everything off"],
+			["/pompom:ask", "Ask Pompom about the session"],
+			["/pompom:recap", "Session summary"],
+			["/pompom:analyze", "AI session analysis"],
+			["/pompom:agents", "Agent status dashboard"],
+			["/pompom:stuck", "Check if agent is stuck"],
+			["/pompom:voice", "Voice settings (on/off/setup)"],
+			["/pompom:ambient", "Ambient sound settings"],
+			["/pompom:chat", "Open side chat overlay"],
+			["/pompom:terminals", "Show all Pompom instances"],
+			["/pompom-settings", "This settings panel"],
 		],
 	},
 ];
@@ -239,7 +257,7 @@ class PompomSettingsPanel {
 	private rowCount(): number {
 		if (this.tab === TAB_POMPOM) return POMPOM_ACTIONS.length + 1; // +1 for on/off toggle
 		if (this.tab === TAB_VOICE) return 5; // engine, voice, volume, status, test
-		if (this.tab === TAB_AMBIENT) return 4; // status, volume, pregenerate, cache info
+		if (this.tab === TAB_AMBIENT) return 6; // ambient on/off, volume, pregenerate ambient, cache, pregenerate SFX, SFX cache
 		if (this.tab === TAB_PERSONALITY) return PERSONALITY_OPTIONS.length;
 		if (this.tab === TAB_THEME) return THEMES.length;
 		if (this.tab === TAB_ACCESSORIES) return ACCESSORY_KEYS.length;
@@ -284,15 +302,21 @@ class PompomSettingsPanel {
 			}
 			// row 1 = volume (handled by +/-)
 			if (this.row === 2) {
-				// Pregenerate all sounds
-				this.showStatus("Generating sounds...", 30000);
+				this.showStatus("Generating ambient sounds...", 30000);
 				if (this.onPregenerate) {
 					void this.onPregenerate().then((count) => {
-						this.showStatus(`Generated ${count} new tracks`);
+						this.showStatus(`Generated ${count} new ambient tracks`);
 					}).catch(err => console.error("[pompom] pregenerateAll failed:", err instanceof Error ? err.message : err));
 				}
 			}
-			// row 3 = cache info (read-only)
+			// row 3 = ambient cache info (read-only)
+			if (this.row === 4) {
+				this.showStatus("Generating SFX variants...", 60000);
+				void pregenerateSfx().then((count) => {
+					this.showStatus(`Generated ${count} new SFX variants`);
+				}).catch(err => console.error("[pompom] pregenerateSfx failed:", err instanceof Error ? err.message : err));
+			}
+			// row 5 = SFX cache info (read-only)
 		} else if (this.tab === TAB_PERSONALITY) {
 			const p = PERSONALITY_OPTIONS[this.row];
 			if (p) {
@@ -460,23 +484,44 @@ class PompomSettingsPanel {
 	private renderAmbientTab(lines: string[], line: (s: string) => string) {
 		const cfg = getAmbientConfig();
 		const cached = getCachedWeathers();
+		const sfxStatus = getSfxCacheStatus();
 		const vol = cfg.volume;
 		const volBar = bar10(vol);
 		const hasKey = Boolean(process.env.ELEVENLABS_API_KEY);
-		const rows = [
+
+		// Section: Ambient
+		lines.push(line(`${ACC}Ambient Loops${RST}  ${isAmbientPlaying() ? GRN + "playing" + RST : ""}`));
+		const ambientRows = [
 			`Status:       ${cfg.enabled ? GRN + "ON" : DIM + "OFF"}${RST}`,
 			`Volume:       ${volBar} ${vol}%  [+/-]`,
-			`Pregenerate   ${DIM}Generate all 5 weather sounds now${RST}`,
+			`Pregenerate   ${DIM}Generate all 5 weather sounds (60s each)${RST}`,
 			`Cached:       ${cached.length > 0 ? cached.join(", ") : "none"} ${DIM}(${cached.length}/5)${RST}`,
 		];
-		for (let i = 0; i < rows.length; i++) {
+		for (let i = 0; i < ambientRows.length; i++) {
 			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
-			lines.push(line(`${pre}${BRT}${rows[i]}${RST}`));
+			lines.push(line(`${pre}${BRT}${ambientRows[i]}${RST}`));
 		}
+
 		lines.push(line(""));
-		if (isAmbientPlaying()) {
-			lines.push(line(`${GRN}Now playing${RST}`));
+
+		// Section: SFX
+		lines.push(line(`${ACC}Sound Effects${RST}  ${DIM}(${sfxStatus.cached}/${sfxStatus.total} sounds, ${sfxStatus.variants} variants)${RST}`));
+		const sfxRows = [
+			`Pregenerate   ${DIM}Generate all SFX + 3 variants each${RST}`,
+			`Cached:       ${sfxStatus.cached}/${sfxStatus.total} sounds, ${sfxStatus.variants} variants`,
+		];
+		for (let i = 0; i < sfxRows.length; i++) {
+			const rowIdx = i + 4; // offset after ambient rows
+			const pre = rowIdx === this.row ? `${SEL}\u25b8 ` : `  `;
+			lines.push(line(`${pre}${BRT}${sfxRows[i]}${RST}`));
 		}
+
+		lines.push(line(""));
+
+		// Info section
+		lines.push(line(`${DIM}Features: sleep ducking, crossfade, volume jitter,${RST}`));
+		lines.push(line(`${DIM}time-of-day SFX, mood-reactive layers, micro-variations${RST}`));
+		lines.push(line(""));
 		const custom = getCustomWeathers();
 		if (custom.length > 0) {
 			lines.push(line(`${ACC}Custom:${RST} ${custom.join(", ")}`));
@@ -484,8 +529,8 @@ class PompomSettingsPanel {
 		lines.push(line(`${DIM}Drop your own loops in:${RST}`));
 		lines.push(line(`${DIM}  ${getCustomAudioDir()}${RST}`));
 		lines.push(line(`${DIM}  Files: clear.mp3 cloudy.mp3 rain.mp3 snow.mp3 storm.mp3${RST}`));
-		if (!hasKey && custom.length < 5) {
-			lines.push(line(`${YEL}Set ELEVENLABS_API_KEY for AI generation fallback.${RST}`));
+		if (!hasKey && (custom.length < 5 || sfxStatus.cached < sfxStatus.total)) {
+			lines.push(line(`${YEL}Set ELEVENLABS_API_KEY for AI generation.${RST}`));
 		}
 	}
 
@@ -580,10 +625,12 @@ class PompomSettingsPanel {
 		lines.push(line(`  ${BRT}Theme:${RST}       ${s.theme}`));
 		lines.push(line(`  ${BRT}Weather:${RST}     ${weather}`));
 		lines.push(line(""));
+		const sfxInfo = getSfxCacheStatus();
 		lines.push(line(`${ACC}Audio${RST}`));
 		lines.push(line(`  ${BRT}Voice:${RST}       ${cfg.enabled ? cfg.engine : "off"} (${cfg.personality})`));
 		lines.push(line(`  ${BRT}Voice vol:${RST}   ${cfg.volume}%`));
 		lines.push(line(`  ${BRT}Ambient:${RST}     ${ambientCfg.enabled ? "on" : "off"} (${ambientCfg.volume}%)`));
+		lines.push(line(`  ${BRT}SFX:${RST}         ${sfxInfo.cached}/${sfxInfo.total} sounds, ${sfxInfo.variants} variants`));
 		lines.push(line(""));
 		lines.push(line(`${ACC}Agent Session${RST}`));
 		lines.push(line(`  ${BRT}Agent:${RST}       ${stats.isAgentActive ? "active" : "idle"} (${stats.mood})`));

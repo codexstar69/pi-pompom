@@ -960,3 +960,18 @@ export async function pregenerateSfx(): Promise<number> {
 	}
 	return count;
 }
+
+/** Return total SFX names and how many have at least one cached variant. */
+export function getSfxCacheStatus(): { total: number; cached: number; variants: number } {
+	const names = Object.keys(SFX_PROMPTS) as SfxName[];
+	let cached = 0;
+	let variants = 0;
+	for (const name of names) {
+		let hasCached = false;
+		for (let v = 0; v < SFX_VARIANTS; v++) {
+			if (hasSfxVariant(name, v)) { variants++; hasCached = true; }
+		}
+		if (hasCached) cached++;
+	}
+	return { total: names.length, cached, variants };
+}
