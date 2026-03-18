@@ -1589,7 +1589,7 @@ export default function (pi: ExtensionAPI) {
 					disablePompom();
 					commandContext.ui.notify(
 						"Pompom off — animation, voice, and sounds all disabled.\n" +
-						"Side chat is still available: /pompom:chat or Alt+/\n" +
+						`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325/" : "Alt+/"}\n` +
 						"To restore everything: /pompom on",
 						"info"
 					);
@@ -2174,7 +2174,7 @@ export default function (pi: ExtensionAPI) {
 				disablePompom();
 				commandContext.ui.notify(
 					"Pompom off — animation, voice, and sounds all disabled.\n" +
-					"Side chat is still available: /pompom:chat or Alt+/\n" +
+					`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325/" : "Alt+/"}\n` +
 					"To restore everything: /pompom on",
 					"info"
 				);
@@ -2220,6 +2220,7 @@ export default function (pi: ExtensionAPI) {
 	// ─── Pompom Side Chat ───────────────────────────────────────────
 
 	const CHAT_SHORTCUT = "alt+/";
+	const CHAT_SHORTCUT_DISPLAY = process.platform === "darwin" ? "\u2325/" : "Alt+/";
 	let chatOverlayHandle: { focus: () => void; unfocus: () => void; isFocused: () => boolean } | null = null;
 	let chatOpenInProgress = false;
 	let aiCommandInProgress = false;
@@ -2281,7 +2282,7 @@ export default function (pi: ExtensionAPI) {
 						thinkingLevel: (thinkingLevel === "off" ? "off" : thinkingLevel) as any,
 						modelRegistry: commandContext.modelRegistry,
 						sessionManager: commandContext.sessionManager as any,
-						shortcut: CHAT_SHORTCUT,
+						shortcut: CHAT_SHORTCUT_DISPLAY,
 						onUnfocus: () => chatOverlayHandle?.unfocus(),
 						onClose: () => {
 							chatOverlayHandle = null;

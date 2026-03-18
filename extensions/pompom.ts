@@ -676,13 +676,218 @@ function getTimeOfDay(): TimeOfDay {
 	return "night";
 }
 
-let weatherState: Weather = "clear";
 let weatherOverride: Weather | null = null;
-let weatherTimer = 0;
-let lastAnnouncedWeatherState: Weather = "clear";
 let lastRenderedWeatherState: Weather = "clear";
 let weatherBlend = 0;
 let prevWeatherColors = { rTop: 0, gTop: 0, bTop: 0, rBot: 0, gBot: 0, bBot: 0 };
+
+// ─── Weather Arc System (Gemini 3.1 Pro — realistic gradual weather) ─────────
+
+interface WeatherArcNode { weather: Weather; durationMs: number; targetIntensity: number }
+interface WeatherArc { name: string; nodes: WeatherArcNode[] }
+
+const WEATHER_REACTIONS: Record<Weather, string[]> = {
+	clear: [
+		"[happy] The sun is so warm and nice!",
+		"[happy] It's a beautiful day for coding.",
+		"[excited] Not a cloud in the terminal!",
+		"[happy] I feel so energetic today!",
+		"[curious] Can we go for a walk outside the terminal?",
+	],
+	cloudy: [
+		"[curious] It looks a bit gloomy out there.",
+		"[happy] The clouds look like big fluffy marshmallows.",
+		"[curious] Do you think it's going to rain?",
+		"[happy] It's nice and cool right now.",
+		"[happy] A perfect day to stay inside and cuddle.",
+	],
+	rain: [
+		"[happy] I love the sound of rain.",
+		"[curious] The drops are making puddles!",
+		"[sad] My fur is getting wet...",
+		"[happy] Rain always makes me feel peaceful.",
+		"[whispers] Pitter-patter, pitter-patter...",
+	],
+	snow: [
+		"[excited] Snowflakes on my antenna!",
+		"[excited] I want to build a snow-pompom!",
+		"[happy] It's so sparkly and white!",
+		"[excited] Catching snowflakes is my favorite!",
+		"[concerned] Brrr, it's chilly but so pretty.",
+	],
+	storm: [
+		"[concerned] Thunder! Hold me!",
+		"[concerned] The wind is so strong!",
+		"[whispers] I hope the power doesn't go out...",
+		"[scared] It's scary out there!",
+		"[happy] Let's stay cozy inside where it's safe.",
+	],
+};
+
+const CLEAR_AFTER_RAIN_REACTIONS = [
+	"[excited] A rainbow! Can you see it?",
+	"[happy] Everything smells fresh!",
+	"[curious] The puddles are reflecting the sky.",
+	"[happy] The storm has finally passed.",
+	"[excited] The sun is peeking through the clouds again!",
+];
+
+const WEATHER_ARCS: WeatherArc[] = [
+	{
+		name: "rain_storm",
+		nodes: [
+			{ weather: "clear", durationMs: 5 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.4 },
+			{ weather: "rain", durationMs: 4 * 60000, targetIntensity: 0.3 },
+			{ weather: "rain", durationMs: 5 * 60000, targetIntensity: 0.7 },
+			{ weather: "storm", durationMs: 8 * 60000, targetIntensity: 1.0 },
+			{ weather: "rain", durationMs: 4 * 60000, targetIntensity: 0.6 },
+			{ weather: "rain", durationMs: 3 * 60000, targetIntensity: 0.2 },
+			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 8 * 60000, targetIntensity: 0 },
+		],
+	},
+	{
+		name: "snow_cycle",
+		nodes: [
+			{ weather: "clear", durationMs: 5 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.4 },
+			{ weather: "snow", durationMs: 5 * 60000, targetIntensity: 0.3 },
+			{ weather: "snow", durationMs: 8 * 60000, targetIntensity: 0.8 },
+			{ weather: "snow", durationMs: 4 * 60000, targetIntensity: 1.0 },
+			{ weather: "snow", durationMs: 4 * 60000, targetIntensity: 0.4 },
+			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 8 * 60000, targetIntensity: 0 },
+		],
+	},
+	{
+		name: "light_rain",
+		nodes: [
+			{ weather: "clear", durationMs: 6 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 5 * 60000, targetIntensity: 0.5 },
+			{ weather: "rain", durationMs: 10 * 60000, targetIntensity: 0.4 },
+			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 10 * 60000, targetIntensity: 0 },
+		],
+	},
+	{
+		name: "sunny_day",
+		nodes: [
+			{ weather: "clear", durationMs: 20 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 5 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 15 * 60000, targetIntensity: 0 },
+		],
+	},
+];
+
+// Weather system state
+let weatherState: Weather = "clear";
+let weatherIntensity = 0;
+let weatherTargetIntensity = 0;
+let weatherIntensityRate = 0;
+let weatherArc: WeatherArc | null = null;
+let weatherArcNode = 0;
+let weatherArcTimer = 0;
+let weatherReactionTimer = 0;
+let weatherReactionInterval = 180000; // 3 min first, then 2-5 min
+let weatherAskedAccessory = false;
+let weatherWasRaining = false;
+let weatherTimer = 0;
+let lastAnnouncedWeatherState: Weather = "clear";
+
+function startWeatherArc(): void {
+	const arc = WEATHER_ARCS[Math.floor(Math.random() * WEATHER_ARCS.length)];
+	weatherArc = arc;
+	weatherArcNode = 0;
+	weatherArcTimer = 0;
+	weatherAskedAccessory = false;
+	applyWeatherArcNode(arc.nodes[0]);
+}
+
+function applyWeatherArcNode(node: WeatherArcNode): void {
+	// Track rain→clear for rainbow reactions
+	if (weatherState === "rain" || weatherState === "storm") weatherWasRaining = true;
+	else if (node.weather === "clear" && weatherWasRaining) {
+		const line = CLEAR_AFTER_RAIN_REACTIONS[Math.floor(Math.random() * CLEAR_AFTER_RAIN_REACTIONS.length)];
+		say(line, 4.0, "system", 2, true);
+		weatherWasRaining = false;
+	}
+	weatherState = node.weather;
+	weatherTargetIntensity = node.targetIntensity;
+	const rampMs = 90000; // 90s ramp
+	weatherIntensityRate = (weatherTargetIntensity - weatherIntensity) / rampMs;
+}
+
+function updateWeatherSystem(dtMs: number): void {
+	// Intensity ramping
+	if (weatherIntensity !== weatherTargetIntensity) {
+		weatherIntensity += weatherIntensityRate * dtMs;
+		if ((weatherIntensityRate > 0 && weatherIntensity >= weatherTargetIntensity) ||
+			(weatherIntensityRate < 0 && weatherIntensity <= weatherTargetIntensity)) {
+			weatherIntensity = weatherTargetIntensity;
+			weatherIntensityRate = 0;
+		}
+		weatherIntensity = clamp(weatherIntensity, 0, 1);
+	}
+
+	// Arc progression
+	if (weatherArc) {
+		weatherArcTimer += dtMs;
+		const node = weatherArc.nodes[weatherArcNode];
+		if (weatherArcTimer >= node.durationMs) {
+			weatherArcNode++;
+			if (weatherArcNode < weatherArc.nodes.length) {
+				weatherArcTimer = 0;
+				applyWeatherArcNode(weatherArc.nodes[weatherArcNode]);
+			} else {
+				weatherArc = null;
+				// Start next arc after a clear pause
+				weatherTimer = 120000 + Math.random() * 300000; // 2-5 min pause
+			}
+		}
+	} else {
+		// No active arc — count down to next one
+		weatherTimer -= dtMs;
+		if (weatherTimer <= 0) startWeatherArc();
+	}
+
+	// Periodic weather reactions (every 2-5 min during active weather)
+	if (weatherState !== "clear" || weatherIntensity > 0.1) {
+		weatherReactionTimer += dtMs;
+		if (weatherReactionTimer >= weatherReactionInterval && speechTimer <= 0) {
+			weatherReactionTimer = 0;
+			weatherReactionInterval = (120 + Math.random() * 180) * 1000; // 2-5 min
+
+			const pool = WEATHER_REACTIONS[weatherState];
+			if (pool.length > 0) {
+				const line = pool[Math.floor(Math.random() * pool.length)];
+				if (line !== lastSpokenText) {
+					say(line, 4.0, "commentary", 1, true);
+				}
+			}
+
+			// Ask for accessories each weather cycle
+			if (!weatherAskedAccessory) {
+				if ((weatherState === "rain" || weatherState === "storm") && !accessories.umbrella) {
+					weatherAskedAccessory = true;
+					say("[sad] I wish I had an umbrella... /pompom give umbrella", 5.0, "system", 2, true);
+				} else if (weatherState === "snow" && !accessories.scarf) {
+					weatherAskedAccessory = true;
+					say("[concerned] Brrr! A scarf would be nice... /pompom give scarf", 5.0, "system", 2, true);
+				} else if (weatherState === "clear" && !accessories.sunglasses) {
+					weatherAskedAccessory = true;
+					say("[curious] It's so bright! Sunglasses would help... /pompom give sunglasses", 5.0, "system", 2, true);
+				}
+			}
+		}
+	}
+}
+
+/** Current particle spawn rate driven by weather intensity */
+function weatherParticleRate(): number {
+	const baseRates: Record<Weather, number> = { clear: 0, cloudy: 0, rain: 0.4, snow: 0.2, storm: 0.6 };
+	return (baseRates[weatherState] || 0) * weatherIntensity;
+}
 
 let agentOverlayActive = false;
 let agentOverlayWeight = 0;
@@ -1712,69 +1917,26 @@ function updatePhysics(dt: number) {
 		}
 	}
 
-	weatherTimer -= dt;
+	// Weather arc system — gradual realistic transitions
+	const dtMs = dt * 1000;
 	if (time < 60) {
+		// First 60s: stay clear, initialize arc timer
 		weatherState = "clear";
-		if (weatherTimer <= 0) weatherTimer = 1800 + Math.random() * 5400;
-	} else if (weatherTimer <= 0) {
-		weatherTimer = 1800 + Math.random() * 5400;
-		if (weatherState === "clear") weatherState = "cloudy";
-		else if (weatherState === "cloudy") {
-			const r = Math.random();
-			if (r < 0.33) weatherState = "rain";
-			else if (r < 0.66) weatherState = "snow";
-			else weatherState = "storm";
-		}
-		else if (weatherState === "rain") weatherState = "clear";
-		else if (weatherState === "snow") weatherState = "clear";
-		else if (weatherState === "storm") weatherState = "cloudy";
+		weatherIntensity = 0;
+		if (!weatherArc && weatherTimer <= 0) weatherTimer = 60000;
 	}
+	updateWeatherSystem(dtMs);
 
+	// Announce weather state changes
 	if (weatherState !== lastAnnouncedWeatherState) {
 		lastAnnouncedWeatherState = weatherState;
 		let weatherAnnouncement = "";
-		if (lastAnnouncedWeatherState === "cloudy") weatherAnnouncement = "[curious] Clouds rolling in...";
-		else if (lastAnnouncedWeatherState === "rain") weatherAnnouncement = "[curious] It's starting to rain!";
-		else if (lastAnnouncedWeatherState === "storm") weatherAnnouncement = "[concerned] A storm is brewing...";
-		else if (lastAnnouncedWeatherState === "snow") weatherAnnouncement = "[excited] Snowflakes!";
-		else if (lastAnnouncedWeatherState === "clear") weatherAnnouncement = "[happy] The sky is clearing up!";
+		if (weatherState === "cloudy") weatherAnnouncement = "[curious] Clouds rolling in...";
+		else if (weatherState === "rain") weatherAnnouncement = "[curious] It's starting to rain!";
+		else if (weatherState === "storm") weatherAnnouncement = "[concerned] A storm is brewing...";
+		else if (weatherState === "snow") weatherAnnouncement = "[excited] Snowflakes!";
+		else if (weatherState === "clear") weatherAnnouncement = "[happy] The sky is clearing up!";
 		if (weatherAnnouncement) { say(weatherAnnouncement, 3.0, "system", 2, true); emitSfx("weather_transition"); }
-
-		// Ask for accessories if user hasn't given them yet
-		const weather = weatherState;
-		if (weather === "rain" && !accessories.umbrella && !accessoryAsked.umbrella) {
-			accessoryAsked.umbrella = true;
-			const handle = setTimeout(() => {
-				if (weatherState === "rain" || weatherState === "storm") {
-					say("I wish I had an umbrella... /pompom give umbrella", 5.0, "system", 2, true);
-				}
-				const idx = weatherAccessoryTimers.indexOf(handle);
-				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
-			}, 3000);
-			weatherAccessoryTimers.push(handle);
-		}
-		if (weather === "snow" && !accessories.scarf && !accessoryAsked.scarf) {
-			accessoryAsked.scarf = true;
-			const handle = setTimeout(() => {
-				if (weatherState === "snow") {
-					say("Brrr! A scarf would be nice... /pompom give scarf", 5.0, "system", 2, true);
-				}
-				const idx = weatherAccessoryTimers.indexOf(handle);
-				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
-			}, 3000);
-			weatherAccessoryTimers.push(handle);
-		}
-		if (weather === "storm" && !accessories.umbrella && !accessoryAsked.umbrella) {
-			accessoryAsked.umbrella = true;
-			const handle = setTimeout(() => {
-				if (weatherState === "storm") {
-					say("This storm is scary! /pompom give umbrella", 5.0, "system", 2, true);
-				}
-				const idx = weatherAccessoryTimers.indexOf(handle);
-				if (idx >= 0) weatherAccessoryTimers.splice(idx, 1);
-			}, 2000);
-			weatherAccessoryTimers.push(handle);
-		}
 	}
 
 	// Firefly
@@ -1786,18 +1948,21 @@ function updatePhysics(dt: number) {
 	const weather = getWeather();
 	const effectDim = Math.max(40, Math.min(W, H * 4.5));
 	const wScale = 2.0 / effectDim;
-	if (weather === "rain" && Math.random() < 0.4 && particles.length < MAX_PARTICLES) {
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.15, vy: 2.5 + Math.random(), char: "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
+	// Intensity-driven particle spawning (gradual weather)
+	const pRate = weatherParticleRate();
+	if (weather === "rain" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
+		const speed = 2.0 + weatherIntensity * 1.5;
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.1 + weatherIntensity * 0.1, vy: speed + Math.random(), char: weatherIntensity > 0.6 ? "/" : "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
 	}
-	if (weather === "storm" && Math.random() < 0.6 && particles.length < MAX_PARTICLES) {
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.4 + Math.random() * 0.3, vy: 3.0 + Math.random() * 2, char: "/", r: 180, g: 200, b: 255, life: 0.8, type: "rain" });
-		// Occasional lightning flash (brief bright particle)
-		if (Math.random() < 0.005) {
+	if (weather === "storm" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.3 + weatherIntensity * 0.4, vy: 3.0 + Math.random() * 2 * weatherIntensity, char: "/", r: 180, g: 200, b: 255, life: 0.8, type: "rain" });
+		if (Math.random() < 0.005 * weatherIntensity) {
 			particles.push({ x: (Math.random() - 0.5) * W * wScale * 0.5, y: -H * wScale * 0.5, vx: 0, vy: 0, char: "#", r: 255, g: 255, b: 255, life: 0.1, type: "lightning" });
 		}
 	}
-	if (weather === "snow" && Math.random() < 0.2 && particles.length < MAX_PARTICLES) {
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: (Math.random() - 0.5) * 0.3, vy: 0.4 + Math.random() * 0.3, char: ".", r: 240, g: 245, b: 255, life: 3.0, type: "snow" });
+	if (weather === "snow" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
+		const drift = (Math.random() - 0.5) * (0.2 + weatherIntensity * 0.3);
+		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: drift, vy: 0.3 + weatherIntensity * 0.4 + Math.random() * 0.3, char: weatherIntensity > 0.7 ? "*" : ".", r: 240, g: 245, b: 255, life: 3.0, type: "snow" });
 	}
 
 	// Ball physics
@@ -2774,8 +2939,17 @@ export function resetPompom() {
 	activeTheme = 0;
 	weatherOverride = null;
 	weatherState = "clear";
+	weatherIntensity = 0;
+	weatherTargetIntensity = 0;
+	weatherIntensityRate = 0;
+	weatherArc = null;
+	weatherArcNode = 0;
+	weatherArcTimer = 0;
+	weatherReactionTimer = 0;
+	weatherAskedAccessory = false;
+	weatherWasRaining = false;
 	lastAnnouncedWeatherState = "clear";
-	weatherTimer = 1800 + Math.random() * 5400;
+	weatherTimer = 60000 + Math.random() * 120000; // first arc in 1-3 min
 	lastRenderedWeatherState = getWeather();
 	weatherBlend = 0;
 	agentOverlayActive = false;
