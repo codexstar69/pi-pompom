@@ -63,6 +63,7 @@ export interface SerializedAgentState {
 	activeToolCalls: Record<string, ActiveToolCall>;
 	sessionStartedAt: number;
 	counters: SessionCounters;
+	consecutiveRecentFailures?: number;
 }
 
 interface CommentaryRequest {
@@ -597,6 +598,7 @@ export function serializeState(): SerializedAgentState {
 		activeToolCalls: JSON.parse(JSON.stringify(state.activeToolCalls)),
 		sessionStartedAt: state.sessionStartedAt,
 		counters: { ...state.counters },
+		consecutiveRecentFailures,
 	};
 }
 
@@ -621,6 +623,9 @@ export function restoreState(serializedState: SerializedAgentState | null | unde
 	state.lastMessageRole = serializedState.lastMessageRole;
 	state.sessionStartedAt = serializedState.sessionStartedAt;
 	state.counters = { ...serializedState.counters };
+	consecutiveRecentFailures = typeof serializedState.consecutiveRecentFailures === "number"
+		? Math.max(0, Math.floor(serializedState.consecutiveRecentFailures))
+		: 0;
 
 	const restoredCalls: Record<string, ActiveToolCall> = {};
 	for (const [key, value] of Object.entries(serializedState.activeToolCalls || {})) {
@@ -724,7 +729,7 @@ export function getAgentDashboard(): string {
 	const now = Date.now();
 	const mins = Math.round((now - state.sessionStartedAt) / 60000);
 	const total = stats.toolSuccesses + stats.toolFailures;
-	const rate = total > 0 ? Math.round((stats.toolSuccesses / total) * 100) : 100;
+	const successRate = total > 0 ? `${Math.round((stats.toolSuccesses / total) * 100)}%` : "n/a";
 
 	const lines: string[] = [
 		`Agent: ${stats.isAgentActive ? "ACTIVE" : "idle"}  Mood: ${stats.mood}  Session: ${mins}min`,
@@ -739,7 +744,7 @@ export function getAgentDashboard(): string {
 		lines.push("");
 	}
 
-	lines.push(`Tools: ${stats.toolCalls} calls (${stats.toolSuccesses} ok, ${stats.toolFailures} fail, ${rate}% success)`);
+	lines.push(`Tools: ${stats.toolCalls} calls (${stats.toolSuccesses} ok, ${stats.toolFailures} fail, ${successRate} success)`);
 	if (stats.averageToolDurationMs > 0) {
 		lines.push(`Speed: avg ${Math.round(stats.averageToolDurationMs)}ms, max ${stats.longestToolDurationMs}ms`);
 	}

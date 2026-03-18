@@ -1,9 +1,9 @@
 ---
 title: Pi-Pompom Re-Audit Report
-description: Fresh full-package re-audit after fixes, focused on remaining
-  runtime bugs and regressions after additional feature work.
+description: Current-state full re-audit of the shipped runtime code on
+  March 18, 2026 after the latest fixes.
 prompt: |
-  can you reaudit entire code? we added a few more features
+  do a complete audit again of entire code
 references:
   - @package.json
   - @tsconfig.json
@@ -25,129 +25,113 @@ Date: 2026-03-18
 
 ## Scope
 
-- Re-ran a full static audit across all `extensions/*.ts` files.
-- Re-checked the previously reported high-severity areas after the recent
-  fixes.
-- Re-audited the new feature work, including the recent sound design and
-  ambient updates in `extensions/pompom.ts`.
-- Ran `pnpm typecheck`.
+- Re-audited every shipped runtime file under `extensions/`.
+- Re-checked the older audit findings against the current working tree.
+- Verified compile health with `pnpm exec tsc -p tsconfig.json`.
 
 ## Verification
 
-- `pnpm typecheck`: passed
+- `pnpm exec tsc -p tsconfig.json`: passed
 - Automated tests: none present
 - Live Pi CLI smoke test: not run in this isolated package environment
 
-## Previously Reported Issues Rechecked
+## Rechecked Fixed Issues
 
-- Fixed: Linux ambient no longer uses `spawn("true")` in the `aplay`
-  branch.
-- Fixed: accessory persistence no longer uses `process.env.HOME || "~"`.
-- Fixed: stuck detection now uses a consecutive recent failure counter.
-- Fixed: Pompom model resolution now attempts both `id` and
-  `provider/id`, and the main AI commands now use the shared resolver.
+These previously reported bugs are fixed in the current code:
 
-## Additional Whole-Repo Pass
+- `/pompom off` commentary leak
+- widget restore regression after `/pompom toggle`
+- AI command deadlock after API key lookup failure
+- side-chat raw tool-result forwarding in `peek_main`
+- session-switch seniority reset in `registerInstance()`
+- import-time session-count mutation
+- mic activation not aborting in-flight TTS synthesis
+- generated ambient and generated SFX `.mp3` breakage on `aplay`
 
-- Re-scanned all shipped source files after the first re-audit write-up.
-- Re-checked the newer runtime-heavy files that changed around the added
-  features, especially:
-  - `extensions/pompom.ts`
-  - `extensions/pompom-extension.ts`
-  - `extensions/pompom-ambient.ts`
-  - `extensions/pompom-chat.ts`
-  - `extensions/pompom-settings.ts`
-  - `extensions/pompom-voice.ts`
-  - `extensions/pompom-instance.ts`
-- No extra verified findings were discovered from the newly added
-  features beyond the three still-open findings listed below.
+## Confirmed Remaining Findings
 
-## Remaining Findings
-
-### 1. High: `/pompom off` still allows speech commentary to reach the live TTS queue
+### 1. High: custom ambient files still break on ALSA-only Linux unless they are WAV
 
 Files:
-- `extensions/pompom-extension.ts:504-515`
-- `extensions/pompom-extension.ts:721-731`
-- `extensions/pompom-extension.ts:1143-1148`
-- `extensions/pompom-extension.ts:1245-1315`
-- `extensions/pompom-voice.ts:707-710`
 
-`disablePompom()` now avoids persisting `enabled=false`, which fixes the
-saved-preference bug, but it also means `config.enabled` in
-`pompom-voice.ts` stays true. The session keeps the `pompomOnSpeech`
-callback registered, and agent lifecycle handlers still call
-`speakCommentary()` even while Pompom is off. `enqueueSpeech()` only
-checks the voice config, not the extension's `enabled` flag.
+- `extensions/pompom-ambient.ts`
+
+Relevant lines:
+
+- `AUDIO_EXTENSIONS` still accepts `.mp3`, `.m4a`, `.wav`, `.aac`,
+  `.aiff`, `.flac`, and `.ogg`.
+- `isAmbientBlockedOnAplay()` only treats `.mp3` as unsupported.
+- `startPlayback()` only blocks `.mp3` in the `aplay` branch.
+
+Why this is still a bug:
+
+- `resolveAudioPath()` prefers user custom audio over generated audio.
+- On Linux systems that only have `aplay`, a user can still provide
+  `clear.ogg`, `rain.m4a`, `snow.flac`, and other accepted formats.
+- Those formats are not handled by `aplay`, but the guard only blocks
+  `.mp3`.
+- That leaves the extension retrying playback instead of cleanly
+  falling back to the generated WAV file or marking the weather as
+  blocked.
 
 Impact:
-- `/pompom off` can still speak agent commentary if voice was enabled in
-  config.
-- "Everything off" is still false in practice.
+
+- Custom ambient audio can fail on ALSA-only Linux even though the file
+  extension is advertised as supported.
+- The weather loop can keep retrying every ambient sync cycle and keep
+  logging playback failures.
 
 Suggested fix:
-- Add an extension-level gate before `enqueueSpeech()` or inside
-  `speakCommentary()`.
-- Keep the non-persistent preference fix, but also add a live session mute
-  state.
 
-### 2. High: the new toggle-widget fix introduces a restore regression
+- Treat `aplay` as WAV-only for custom ambient files, not just
+  `.mp3`-unsupported.
+- If a custom file is not WAV, either skip it and fall back to the
+  generated WAV file or mark that weather as blocked with one clear
+  warning.
+
+### 2. Medium: failed TTS playback still suppresses retries for 30 seconds
 
 Files:
-- `extensions/pompom-extension.ts:762-787`
-- `extensions/pompom-extension.ts:1391-1414`
 
-The hide path now keeps `companionActive = true`, but the restore path
-still calls `showCompanion()`, and `showCompanion()` immediately returns
-when `companionActive` is already true.
+- `extensions/pompom-voice.ts`
 
-That means:
-- first `toggle` hides the widget and stops the render loop
-- second `toggle` sets `widgetVisible = true`
-- `showCompanion()` bails out
-- the widget is not recreated
+Relevant lines:
 
-Impact:
-- `Alt+V` or `/pompom toggle` can hide the widget permanently until a
-  larger session reset path runs.
+- `processQueue()` sets `lastSpokenText` and `lastSpeakTime` before
+  `playAudio()` completes.
+- `enqueueSpeech()` drops any new event whose text matches
+  `lastSpokenText` inside the next 30 seconds.
 
-Suggested fix:
-- Split "behavior active" from "widget mounted", or
-- make the restore branch recreate the widget even when
-  `companionActive` is already true.
+Why this is still a bug:
 
-### 3. Medium: ALSA-only ambient fallback will still retry and log forever every 5 seconds
-
-Files:
-- `extensions/pompom-ambient.ts:248-251`
-- `extensions/pompom-ambient.ts:353-382`
-- `extensions/pompom-extension.ts:685-693`
-
-The tight child-process loop is fixed, but on Linux systems with only
-`aplay`, generated ambient audio is still `.mp3`, `startPlayback()`
-returns `null`, `currentProcess` stays empty, and `syncAmbientWeather()`
-keeps calling `setAmbientWeather(weather)` because `!isAmbientPlaying()`
-remains true.
+- If playback fails after synthesis succeeds, the code still records the
+  line as the last spoken line.
+- The next attempt with the same text is then rejected as a duplicate,
+  even though no audible playback happened.
 
 Impact:
-- No ambient audio on ALSA-only systems.
-- Repeated unsupported-format logs every poll cycle.
+
+- A transient player failure can mute the same reaction/commentary for
+  30 seconds.
+- Users can miss important spoken feedback after one bad playback
+  attempt.
 
 Suggested fix:
-- Cache an unsupported-state flag per weather/player combination, or
-- transcode generated ambient to WAV before trying `aplay`.
 
-## Overall Assessment
+- Move the `lastSpokenText` and `lastSpeakTime` update to after
+  successful playback, or only set them once `playAudio()` starts
+  cleanly and no playback error occurs.
 
-The last round fixed real issues, but the package is not fully clean yet.
+## Final State
 
-Current status:
-- previous core findings mostly resolved
-- two high-severity behavioral bugs remain
-- one medium Linux fallback issue still causes noisy retries
+- Full shipped runtime surface re-audited.
+- Only the two issues above remain clearly verified from static review.
+- No other earlier high-severity findings stayed reproducible in the
+  current tree.
 
-If I were prioritizing fixes, I would do them in this order:
+## Residual Risk
 
-1. `/pompom off` live mute gate
-2. widget restore regression in `toggleWidget()`
-3. ALSA ambient unsupported-format retry suppression
+- This pass was static plus type-check only.
+- There is still no automated test suite in the package.
+- A live Pi CLI smoke test would be the best next check for audio,
+  widget, and multi-terminal behavior.

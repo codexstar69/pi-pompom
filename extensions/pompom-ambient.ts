@@ -15,10 +15,91 @@ import os from "node:os";
 import path from "node:path";
 import type { Weather } from "./pompom";
 
+// ─── WAV helper for aplay compatibility ──────────────────────────────────────
+
+function wrapPcmWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
+	const byteRate = sampleRate * channels * (bitsPerSample / 8);
+	const blockAlign = channels * (bitsPerSample / 8);
+	const header = Buffer.alloc(44);
+	header.write("RIFF", 0);
+	header.writeUInt32LE(36 + pcm.length, 4);
+	header.write("WAVE", 8);
+	header.write("fmt ", 12);
+	header.writeUInt32LE(16, 16);
+	header.writeUInt16LE(1, 20); // PCM
+	header.writeUInt16LE(channels, 22);
+	header.writeUInt32LE(sampleRate, 24);
+	header.writeUInt32LE(byteRate, 28);
+	header.writeUInt16LE(blockAlign, 32);
+	header.writeUInt16LE(bitsPerSample, 34);
+	header.write("data", 36);
+	header.writeUInt32LE(pcm.length, 40);
+	return Buffer.concat([header, pcm]);
+}
+
+function findWavDataChunk(buffer: Buffer): { dataOffset: number; dataLength: number; bitsPerSample: number } | null {
+	if (buffer.length < 44) {
+		return null;
+	}
+	if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+		return null;
+	}
+	let bitsPerSample = 16;
+	let offset = 12;
+	while (offset + 8 <= buffer.length) {
+		const chunkId = buffer.toString("ascii", offset, offset + 4);
+		const chunkLength = buffer.readUInt32LE(offset + 4);
+		const chunkDataOffset = offset + 8;
+		if (chunkId === "fmt " && chunkDataOffset + 16 <= buffer.length) {
+			bitsPerSample = buffer.readUInt16LE(chunkDataOffset + 14);
+		}
+		if (chunkId === "data") {
+			return {
+				dataOffset: chunkDataOffset,
+				dataLength: Math.max(0, Math.min(chunkLength, buffer.length - chunkDataOffset)),
+				bitsPerSample,
+			};
+		}
+		offset = chunkDataOffset + chunkLength + (chunkLength % 2);
+	}
+	return null;
+}
+
+function applyGainToWav(buffer: Buffer, gain: number): Buffer {
+	if (gain >= 0.999) {
+		return buffer;
+	}
+	const wavData = findWavDataChunk(buffer);
+	if (!wavData || wavData.bitsPerSample !== 16) {
+		return buffer;
+	}
+	const scaled = Buffer.from(buffer);
+	const endOffset = wavData.dataOffset + wavData.dataLength;
+	for (let offset = wavData.dataOffset; offset + 1 < endOffset; offset += 2) {
+		const sample = scaled.readInt16LE(offset);
+		const nextSample = Math.round(sample * gain);
+		const clampedSample = Math.max(-32768, Math.min(32767, nextSample));
+		scaled.writeInt16LE(clampedSample, offset);
+	}
+	return scaled;
+}
+
 // ─── Cross-platform audio player detection ──────────────────────────────────
 
-type AmbientPlayer = "afplay" | "paplay" | "aplay" | null;
+type AmbientPlayer = "afplay" | "paplay" | "aplay" | "powershell" | null;
 let detectedAmbientPlayer: AmbientPlayer = null;
+
+function requiresWavPlayback(player: AmbientPlayer): boolean {
+	return player === "aplay" || player === "powershell";
+}
+
+function isWavPath(filePath: string): boolean {
+	return filePath.toLowerCase().endsWith(".wav");
+}
+
+function escapePowerShellSingleQuoted(value: string): string {
+	return value.replaceAll("'", "''");
+}
 
 function detectAmbientPlayer(): AmbientPlayer {
 	try {
@@ -29,6 +110,10 @@ function detectAmbientPlayer(): AmbientPlayer {
 		if (process.platform === "linux") {
 			try { childProcess.execSync("which paplay", { stdio: "ignore" }); return "paplay"; } catch { /* not found */ }
 			try { childProcess.execSync("which aplay", { stdio: "ignore" }); return "aplay"; } catch { /* not found */ }
+		}
+		if (process.platform === "win32") {
+			childProcess.execSync("where powershell", { stdio: "ignore" });
+			return "powershell";
 		}
 	} catch { /* detection failed */ }
 	return null;
@@ -43,6 +128,7 @@ const AMBIENT_DURATION_S = 60;
 const AMBIENT_CROSSFADE_MS = 2000; // overlap new loop 2s before old one ends
 const AMBIENT_VERSION = 2; // bump when duration changes — forces re-generation of cached files
 const AMBIENT_VERSION_FILE = path.join(AMBIENT_DIR, ".version");
+const PLAYBACK_TMP_DIR = path.join(os.tmpdir(), "pompom-ambient");
 
 export interface AmbientConfig {
 	enabled: boolean;
@@ -102,22 +188,24 @@ let currentProcess: childProcess.ChildProcess | null = null;
 let crossfadeTimer: ReturnType<typeof setTimeout> | null = null;
 let crossfadeCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let fadingProcess: childProcess.ChildProcess | null = null;
+let ambientRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let isDucked = false;
 let isSleepDucked = false;
 let generating = false;
 let interactive = false;
+let moodSfxEnabled = true;
 const blockedAmbientWeathers = new Set<Weather>();
 
 function isAmbientBlockedOnAplay(weather: Weather): boolean {
 	if (!blockedAmbientWeathers.has(weather)) {
 		return false;
 	}
-	if (detectedAmbientPlayer !== "aplay") {
+	if (!requiresWavPlayback(detectedAmbientPlayer)) {
 		blockedAmbientWeathers.delete(weather);
 		return false;
 	}
 	const resolved = resolveAudioPath(weather);
-	if (!resolved || !resolved.endsWith(".mp3")) {
+	if (!resolved || isWavPath(resolved)) {
 		blockedAmbientWeathers.delete(weather);
 		return false;
 	}
@@ -171,13 +259,17 @@ function findCustomAudio(weather: Weather): string | null {
 }
 
 function generatedAudioPath(weather: Weather): string {
-	return path.join(AMBIENT_DIR, `${weather}.mp3`);
+	// Use WAV for WAV-only players, MP3 otherwise.
+	const ext = requiresWavPlayback(detectedAmbientPlayer) ? "wav" : "mp3";
+	return path.join(AMBIENT_DIR, `${weather}.${ext}`);
 }
 
 /** Resolve the best audio file: custom > generated */
 function resolveAudioPath(weather: Weather): string | null {
 	const custom = findCustomAudio(weather);
-	if (custom) return custom;
+	if (custom && (!requiresWavPlayback(detectedAmbientPlayer) || isWavPath(custom))) {
+		return custom;
+	}
 	const generated = generatedAudioPath(weather);
 	if (fs.existsSync(generated) && fs.statSync(generated).size > 1000) return generated;
 	return null;
@@ -199,6 +291,7 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 	}
 
 	const prompt = WEATHER_PROMPTS[weather];
+	const useWav = requiresWavPlayback(detectedAmbientPlayer);
 	try {
 		const response = await fetch("https://api.elevenlabs.io/v1/sound-generation", {
 			method: "POST",
@@ -210,6 +303,7 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 				text: prompt,
 				duration_seconds: AMBIENT_DURATION_S,
 				prompt_influence: 0.3,
+				...(useWav ? { output_format: "pcm_44100" } : {}),
 			}),
 			signal: AbortSignal.timeout(45000),
 		});
@@ -220,9 +314,15 @@ async function generateAudio(weather: Weather): Promise<boolean> {
 			return false;
 		}
 
-		const buffer = Buffer.from(await response.arrayBuffer());
+		let buffer: Buffer = Buffer.from(await response.arrayBuffer());
+		// Wrap raw PCM in WAV header for aplay compatibility
+		if (useWav) buffer = wrapPcmWav(buffer, 44100, 1, 16) as Buffer;
 		fs.mkdirSync(AMBIENT_DIR, { recursive: true });
-		fs.writeFileSync(generatedAudioPath(weather), buffer);
+		// Atomic write: tmp + rename prevents partial files on crash
+		const dest = generatedAudioPath(weather);
+		const tmp = dest + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, buffer);
+		fs.renameSync(tmp, dest);
 		return true;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -240,9 +340,40 @@ function effectiveVolume(): number {
 	return base;
 }
 
+function usesSoftwareGain(player: AmbientPlayer): boolean {
+	return player === "powershell";
+}
+
+function createPlaybackFileForGain({
+	filePath,
+	gain,
+	prefix,
+}: {
+	filePath: string;
+	gain: number;
+	prefix: string;
+}): { playbackPath: string; cleanupPath: string | null } {
+	if (!usesSoftwareGain(detectedAmbientPlayer)) {
+		return { playbackPath: filePath, cleanupPath: null };
+	}
+	const buffer = fs.readFileSync(filePath);
+	const playbackBuffer = applyGainToWav(buffer, gain);
+	if (playbackBuffer === buffer) {
+		return { playbackPath: filePath, cleanupPath: null };
+	}
+	fs.mkdirSync(PLAYBACK_TMP_DIR, { recursive: true });
+	const playbackPath = path.join(
+		PLAYBACK_TMP_DIR,
+		`${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`,
+	);
+	fs.writeFileSync(playbackPath, playbackBuffer);
+	return { playbackPath, cleanupPath: playbackPath };
+}
+
 function stopCurrent(): void {
 	if (crossfadeTimer) { clearTimeout(crossfadeTimer); crossfadeTimer = null; }
 	if (crossfadeCleanupTimer) { clearTimeout(crossfadeCleanupTimer); crossfadeCleanupTimer = null; }
+	if (ambientRetryTimer) { clearTimeout(ambientRetryTimer); ambientRetryTimer = null; }
 	if (fadingProcess) {
 		try { fadingProcess.kill("SIGTERM"); } catch { /* already dead */ }
 		fadingProcess = null;
@@ -261,7 +392,7 @@ function startPlayback(weather: Weather): boolean {
 	stopCurrent();
 
 	if (!detectedAmbientPlayer) {
-		console.error("[pompom-ambient] No supported audio player found (afplay/paplay/aplay)");
+		console.error("[pompom-ambient] No supported audio player found (afplay/paplay/aplay/powershell)");
 		return false;
 	}
 
@@ -272,6 +403,7 @@ function startPlayback(weather: Weather): boolean {
 		const volFloat = effectiveVolume();
 		const vol = volFloat.toFixed(2);
 		let child: childProcess.ChildProcess;
+		let cleanupPlaybackFile: (() => void) | null = null;
 		switch (detectedAmbientPlayer) {
 			case "afplay":
 				child = childProcess.spawn("afplay", ["-v", vol, file], { stdio: "ignore", detached: false });
@@ -280,9 +412,11 @@ function startPlayback(weather: Weather): boolean {
 				child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), file], { stdio: "ignore", detached: false });
 				break;
 			case "aplay":
-				if (file.endsWith(".mp3")) {
+				// aplay only supports WAV — block all other formats
+				if (!isWavPath(file)) {
 					if (!blockedAmbientWeathers.has(weather)) {
-						console.error("[pompom-ambient] aplay does not support .mp3 files — ambient disabled for this weather");
+						const ext = path.extname(file);
+						console.error(`[pompom-ambient] aplay only supports .wav files (got ${ext}) — ambient disabled for this weather`);
 					}
 					blockedAmbientWeathers.add(weather);
 					return null;
@@ -290,11 +424,50 @@ function startPlayback(weather: Weather): boolean {
 				blockedAmbientWeathers.delete(weather);
 				child = childProcess.spawn("aplay", [file], { stdio: "ignore", detached: false });
 				break;
+			case "powershell":
+				// SoundPlayer only supports WAV — block all other formats
+				if (!isWavPath(file)) {
+					if (!blockedAmbientWeathers.has(weather)) {
+						const ext = path.extname(file);
+						console.error(`[pompom-ambient] powershell SoundPlayer only supports .wav files (got ${ext}) — ambient disabled for this weather`);
+					}
+					blockedAmbientWeathers.add(weather);
+					return null;
+				}
+				blockedAmbientWeathers.delete(weather);
+				const playbackFile = createPlaybackFileForGain({
+					filePath: file,
+					gain: volFloat,
+					prefix: "ambient",
+				});
+				cleanupPlaybackFile = () => {
+					if (!playbackFile.cleanupPath) {
+						return;
+					}
+					try {
+						fs.unlinkSync(playbackFile.cleanupPath);
+					} catch {
+						// Temp playback cleanup is best-effort
+					}
+				};
+				child = childProcess.spawn(
+					"powershell",
+					[
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`(New-Object Media.SoundPlayer '${escapePowerShellSingleQuoted(playbackFile.playbackPath)}').PlaySync()`,
+					],
+					{ stdio: "ignore", detached: false },
+				);
+				break;
 			default:
 				return null;
 			}
 
 			child.on("error", (err) => {
+				cleanupPlaybackFile?.();
+				cleanupPlaybackFile = null;
 				const msg = err instanceof Error ? err.message : String(err);
 				console.error(`[pompom-ambient] playback error: ${msg}`);
 				if (fadingProcess === child) {
@@ -305,7 +478,8 @@ function startPlayback(weather: Weather): boolean {
 					spawnRetries++;
 					if (spawnRetries <= 3 && currentWeather === weather && config.enabled) {
 						const delay = 2000 * Math.pow(2, spawnRetries - 1); // 2s, 4s, 8s
-						setTimeout(() => {
+						ambientRetryTimer = setTimeout(() => {
+							ambientRetryTimer = null;
 							if (currentWeather === weather && config.enabled && !currentProcess) {
 								currentProcess = spawnPlayer();
 							}
@@ -317,11 +491,14 @@ function startPlayback(weather: Weather): boolean {
 			});
 
 			child.on("close", (code) => {
+				cleanupPlaybackFile?.();
+				cleanupPlaybackFile = null;
 				if (currentProcess === child && currentWeather === weather && config.enabled) {
 					if (code !== 0) {
 						spawnRetries++;
 						if (spawnRetries > 3) { currentProcess = null; return; }
-						setTimeout(() => {
+						ambientRetryTimer = setTimeout(() => {
+							ambientRetryTimer = null;
 							if (currentWeather === weather && config.enabled && !currentProcess) {
 								currentProcess = spawnPlayer();
 								scheduleCrossfade();
@@ -349,6 +526,7 @@ function startPlayback(weather: Weather): boolean {
 	function scheduleCrossfade(): void {
 		if (crossfadeTimer) clearTimeout(crossfadeTimer);
 		// Only crossfade for tracks with known duration (generated files)
+		if (file !== generatedAudioPath(weather)) return;
 		const preSpawnMs = AMBIENT_DURATION_S * 1000 - AMBIENT_CROSSFADE_MS;
 		if (preSpawnMs <= 0) return;
 		crossfadeTimer = setTimeout(() => {
@@ -388,12 +566,14 @@ export function initAmbient(isInteractive: boolean): void {
 	interactive = isInteractive;
 	config = loadConfig();
 	detectedAmbientPlayer = detectAmbientPlayer();
+	moodSfxEnabled = true;
 	blockedAmbientWeathers.clear();
 	// Ensure custom directory exists so users know where to drop files
 	try { fs.mkdirSync(CUSTOM_DIR, { recursive: true }); } catch { /* non-fatal */ }
 	sfxLastPlayedAt.clear();
 	lastAnySfxAt = 0;
-	sfxGenerating = false;
+	sfxGenerationJobs.clear();
+	sfxProcessOwner = null;
 	desiredWeather = null;
 	checkAmbientVersion();
 }
@@ -425,11 +605,19 @@ export function setAmbientEnabled(enabled: boolean): void {
 	config.configured = true;
 	saveConfig();
 	if (!enabled) {
+		moodSfxEnabled = false;
 		stopCurrent();
 		clearWeatherSfxTimer();
 		if (sfxProcess) { try { sfxProcess.kill("SIGTERM"); } catch { /* dead */ } sfxProcess = null; }
+		sfxProcessOwner = null;
+		clearMoodSfxTimer();
 		currentWeather = null;
 		desiredWeather = null;
+		return;
+	}
+	moodSfxEnabled = true;
+	if (currentMoodSfxState) {
+		scheduleNextMoodSfx();
 	}
 }
 
@@ -509,12 +697,18 @@ export function unduckAmbientForSleep(): void {
 
 /** Pause ambient (for alt+v hide) — stops audio and SFX but remembers weather */
 export function pauseAmbient(): void {
+	moodSfxEnabled = false;
+	clearMoodSfxTimer();
 	stopCurrent();
-	clearWeatherSfxTimer();
+	stopWeatherSfx();
 }
 
 /** Resume ambient (for alt+v show) — restarts if was playing */
 export function resumeAmbient(): void {
+	moodSfxEnabled = true;
+	if (currentMoodSfxState) {
+		scheduleNextMoodSfx();
+	}
 	if (!config.enabled || !interactive || !currentWeather) return;
 	if (hasAudio(currentWeather)) {
 		startPlayback(currentWeather);
@@ -523,6 +717,8 @@ export function resumeAmbient(): void {
 
 /** Full stop — clears weather state too (for /pompom off) */
 export function stopAmbient(): void {
+	moodSfxEnabled = false;
+	clearMoodSfxTimer();
 	stopCurrent();
 	currentWeather = null;
 }
@@ -687,8 +883,10 @@ const WEATHER_SFX: Record<Weather, WeatherSfxEntry[]> = {
 };
 
 let sfxProcess: childProcess.ChildProcess | null = null;
+type SfxOwner = "oneshot" | "weather" | "mood";
+let sfxProcessOwner: SfxOwner | null = null;
 let weatherSfxTimer: ReturnType<typeof setTimeout> | null = null;
-let sfxGenerating = false;
+const sfxGenerationJobs: Map<string, Promise<boolean>> = new Map();
 
 // Per-SFX cooldown map — prevents same sound repeating too fast (kills dopamine)
 const sfxLastPlayedAt: Map<string, number> = new Map();
@@ -703,8 +901,9 @@ const SFX_VARIANTS = 3;
 const VARIANT_SUFFIXES = ["slightly different take", "alternative variation", "subtle remix"];
 
 function sfxVariantPath(name: SfxName, variant: number): string {
-	if (variant === 0) return path.join(SFX_DIR, `${name}.mp3`);
-	return path.join(SFX_DIR, `${name}_v${variant}.mp3`);
+	const ext = requiresWavPlayback(detectedAmbientPlayer) ? "wav" : "mp3";
+	if (variant === 0) return path.join(SFX_DIR, `${name}.${ext}`);
+	return path.join(SFX_DIR, `${name}_v${variant}.${ext}`);
 }
 
 function sfxPath(name: SfxName): string {
@@ -737,6 +936,7 @@ async function generateSfxVariant(name: SfxName, variant: number): Promise<boole
 	if (!apiKey) return false;
 
 	const spec = SFX_PROMPTS[name];
+	const sfxUseWav = requiresWavPlayback(detectedAmbientPlayer);
 	// Append variation hint for variants 1+ to get subtly different outputs
 	const promptText = variant === 0
 		? spec.prompt
@@ -752,6 +952,7 @@ async function generateSfxVariant(name: SfxName, variant: number): Promise<boole
 				text: promptText,
 				duration_seconds: spec.duration,
 				prompt_influence: 0.35,
+				...(sfxUseWav ? { output_format: "pcm_44100" } : {}),
 			}),
 			signal: AbortSignal.timeout(20000),
 		});
@@ -760,9 +961,14 @@ async function generateSfxVariant(name: SfxName, variant: number): Promise<boole
 			console.error(`[pompom-ambient] SFX generation failed for ${name}(v${variant}): HTTP ${response.status} ${errText.slice(0, 200)}`);
 			return false;
 		}
-		const buffer = Buffer.from(await response.arrayBuffer());
+		let buffer: Buffer = Buffer.from(await response.arrayBuffer());
+		if (sfxUseWav) buffer = wrapPcmWav(buffer, 44100, 1, 16) as Buffer;
 		fs.mkdirSync(SFX_DIR, { recursive: true });
-		fs.writeFileSync(sfxVariantPath(name, variant), buffer);
+		// Atomic write: tmp + rename prevents partial files on crash
+		const dest = sfxVariantPath(name, variant);
+		const tmp = dest + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, buffer);
+		fs.renameSync(tmp, dest);
 		return true;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -771,23 +977,35 @@ async function generateSfxVariant(name: SfxName, variant: number): Promise<boole
 	}
 }
 
-async function generateSfx(name: SfxName): Promise<boolean> {
-	return generateSfxVariant(name, 0);
+function sfxVariantJobKey({ name, variant }: { name: SfxName; variant: number }): string {
+	return `${name}:${variant}`;
+}
+
+async function ensureSfxVariant({ name, variant }: { name: SfxName; variant: number }): Promise<string | null> {
+	if (hasSfxVariant(name, variant)) {
+		return sfxVariantPath(name, variant);
+	}
+	const key = sfxVariantJobKey({ name, variant });
+	const existingJob = sfxGenerationJobs.get(key);
+	if (existingJob) {
+		const ok = await existingJob;
+		return ok && hasSfxVariant(name, variant) ? sfxVariantPath(name, variant) : null;
+	}
+	const job: Promise<boolean> = generateSfxVariant(name, variant)
+		.finally(() => {
+			sfxGenerationJobs.delete(key);
+		});
+	sfxGenerationJobs.set(key, job);
+	const ok = await job;
+	return ok && hasSfxVariant(name, variant) ? sfxVariantPath(name, variant) : null;
 }
 
 async function ensureSfx(name: SfxName): Promise<string | null> {
 	if (hasSfx(name)) return pickSfxVariant(name);
-	if (sfxGenerating) return null;
-	sfxGenerating = true;
-	try {
-		const ok = await generateSfx(name);
-		return ok ? sfxVariantPath(name, 0) : null;
-	} finally {
-		sfxGenerating = false;
-	}
+	return ensureSfxVariant({ name, variant: 0 });
 }
 
-function playSfxFile(filePath: string): boolean {
+function playSfxFile({ filePath, owner }: { filePath: string; owner: SfxOwner }): boolean {
 	if (!detectedAmbientPlayer) return false;
 	// Don't interrupt another SFX that's playing
 	if (sfxProcess) return false;
@@ -796,6 +1014,7 @@ function playSfxFile(filePath: string): boolean {
 	const volFloat = Math.max(0.05, config.volume / 100 * 0.15 * jitter);
 	const vol = volFloat.toFixed(2);
 	let child: childProcess.ChildProcess;
+	let cleanupPlaybackFile: (() => void) | null = null;
 	switch (detectedAmbientPlayer) {
 		case "afplay":
 			child = childProcess.spawn("afplay", ["-v", vol, filePath], { stdio: "ignore", detached: false });
@@ -804,20 +1023,64 @@ function playSfxFile(filePath: string): boolean {
 			child = childProcess.spawn("paplay", ["--volume", String(Math.round(volFloat * 65536)), filePath], { stdio: "ignore", detached: false });
 			break;
 		case "aplay":
-			if (filePath.endsWith(".mp3")) {
-				console.error("[pompom-ambient] aplay does not support .mp3 files, skipping SFX: " + filePath);
+			if (!isWavPath(filePath)) {
+				console.error("[pompom-ambient] aplay only supports .wav, skipping SFX: " + filePath);
 				return false;
 			}
 			child = childProcess.spawn("aplay", [filePath], { stdio: "ignore", detached: false });
+			break;
+		case "powershell":
+			if (!isWavPath(filePath)) {
+				console.error("[pompom-ambient] powershell SoundPlayer only supports .wav, skipping SFX: " + filePath);
+				return false;
+			}
+			const playbackFile = createPlaybackFileForGain({
+				filePath,
+				gain: volFloat,
+				prefix: "sfx",
+			});
+			cleanupPlaybackFile = () => {
+				if (!playbackFile.cleanupPath) {
+					return;
+				}
+				try {
+					fs.unlinkSync(playbackFile.cleanupPath);
+				} catch {
+					// Temp playback cleanup is best-effort
+				}
+			};
+			child = childProcess.spawn(
+				"powershell",
+				[
+					"-NoProfile",
+					"-NonInteractive",
+					"-Command",
+					`(New-Object Media.SoundPlayer '${escapePowerShellSingleQuoted(playbackFile.playbackPath)}').PlaySync()`,
+				],
+				{ stdio: "ignore", detached: false },
+			);
 			break;
 		default:
 			return false;
 	}
 	sfxProcess = child;
-	child.on("close", () => { if (sfxProcess === child) sfxProcess = null; });
+	sfxProcessOwner = owner;
+	child.on("close", () => {
+		cleanupPlaybackFile?.();
+		cleanupPlaybackFile = null;
+		if (sfxProcess === child) {
+			sfxProcess = null;
+			sfxProcessOwner = null;
+		}
+	});
 	child.on("error", (err) => {
+		cleanupPlaybackFile?.();
+		cleanupPlaybackFile = null;
 		console.error(`[pompom-ambient] SFX playback error: ${err instanceof Error ? err.message : String(err)}`);
-		if (sfxProcess === child) sfxProcess = null;
+		if (sfxProcess === child) {
+			sfxProcess = null;
+			sfxProcessOwner = null;
+		}
 	});
 	return true;
 }
@@ -828,7 +1091,8 @@ export function setMicSilence(active: boolean): void { micSilenced = active; }
 
 /** Play a one-shot sound effect by name. Generates on first use.
  *  Respects per-SFX cooldown (8s) and global gap (3s) to prevent fatigue. */
-export async function playSfx(name: SfxName): Promise<void> {
+export async function playSfx(name: SfxName, owner: SfxOwner = "oneshot"): Promise<void> {
+	if (owner === "mood" && !moodSfxEnabled) return;
 	if (!config.enabled || !interactive || micSilenced) return;
 	const now = Date.now();
 
@@ -840,9 +1104,10 @@ export async function playSfx(name: SfxName): Promise<void> {
 	if (now - lastPlayed < SFX_COOLDOWN_MS) return;
 
 	const file = await ensureSfx(name);
+	if (owner === "mood" && !moodSfxEnabled) return;
 	if (file) {
 		const playedAt = Date.now(); // capture after ensureSfx to avoid stale cooldown
-		if (playSfxFile(file)) {
+		if (playSfxFile({ filePath: file, owner })) {
 			sfxLastPlayedAt.set(name, playedAt);
 			lastAnySfxAt = playedAt;
 		}
@@ -866,7 +1131,7 @@ function scheduleNextWeatherSfx(): void {
 	weatherSfxTimer = setTimeout(async () => {
 		if (!config.enabled || !interactive) return;
 		try {
-			await playSfx(entry.sfx);
+			await playSfx(entry.sfx, "weather");
 		} catch (err) {
 			console.error(`[pompom-ambient] weather SFX error: ${err instanceof Error ? err.message : err}`);
 		}
@@ -886,9 +1151,10 @@ export function startWeatherSfx(): void {
 /** Stop periodic weather SFX. */
 export function stopWeatherSfx(): void {
 	clearWeatherSfxTimer();
-	if (sfxProcess) {
+	if (sfxProcess && sfxProcessOwner === "weather") {
 		try { sfxProcess.kill("SIGTERM"); } catch { /* dead */ }
 		sfxProcess = null;
+		sfxProcessOwner = null;
 	}
 }
 
@@ -909,7 +1175,7 @@ const MOOD_SFX: Record<string, { sfx: SfxName; minGapMs: number; maxGapMs: numbe
 
 function scheduleNextMoodSfx(): void {
 	clearMoodSfxTimer();
-	if (!config.enabled || !interactive || !currentMoodSfxState) return;
+	if (!config.enabled || !interactive || !currentMoodSfxState || !moodSfxEnabled) return;
 
 	const sfxList = MOOD_SFX[currentMoodSfxState];
 	if (!sfxList || sfxList.length === 0) return;
@@ -918,9 +1184,9 @@ function scheduleNextMoodSfx(): void {
 	const delay = entry.minGapMs + Math.random() * (entry.maxGapMs - entry.minGapMs);
 
 	moodSfxTimer = setTimeout(async () => {
-		if (!config.enabled || !interactive || !currentMoodSfxState) return;
+		if (!config.enabled || !interactive || !currentMoodSfxState || !moodSfxEnabled) return;
 		try {
-			await playSfx(entry.sfx);
+			await playSfx(entry.sfx, "mood");
 		} catch (err) {
 			console.error(`[pompom-ambient] mood SFX error: ${err instanceof Error ? err.message : err}`);
 		}
@@ -941,6 +1207,17 @@ export function setMoodSfxState(mood: string | null): void {
 	else clearMoodSfxTimer();
 }
 
+export function setMoodSfxEnabled(enabled: boolean): void {
+	moodSfxEnabled = enabled;
+	if (!enabled) {
+		clearMoodSfxTimer();
+		return;
+	}
+	if (currentMoodSfxState) {
+		scheduleNextMoodSfx();
+	}
+}
+
 /** Pre-generate all SFX files including micro-variations */
 export async function pregenerateSfx(): Promise<number> {
 	const names = Object.keys(SFX_PROMPTS) as SfxName[];
@@ -948,14 +1225,8 @@ export async function pregenerateSfx(): Promise<number> {
 	for (const name of names) {
 		for (let v = 0; v < SFX_VARIANTS; v++) {
 			if (hasSfxVariant(name, v)) continue;
-			if (sfxGenerating) continue;
-			sfxGenerating = true;
-			try {
-				const ok = await generateSfxVariant(name, v);
-				if (ok) count++;
-			} finally {
-				sfxGenerating = false;
-			}
+			const generatedPath = await ensureSfxVariant({ name, variant: v });
+			if (generatedPath && hasSfxVariant(name, v)) count++;
 		}
 	}
 	return count;

@@ -3,11 +3,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="pi-pompom" width="720">
+  <b>Pi-Pompom</b> — a terminal pet for Pi CLI with voice, ambient weather,
+  side chat, and agent-aware commentary.
 </p>
 
 <h1 align="center">pi-pompom</h1>
-<p align="center"><strong>A 3D raymarched virtual pet with voice, ambient sounds, AI side chat, and agent intelligence — for Pi CLI.</strong></p>
+<p align="center"><strong>A 3D raymarched virtual pet with voice, ambient sounds, AI side chat, weather physics, and agent intelligence — for Pi CLI.</strong></p>
 <p align="center">
   <!-- BADGES:START -->
   <a href="https://www.npmjs.com/package/@codexstar/pi-pompom"><img src="https://img.shields.io/npm/v/@codexstar/pi-pompom.svg" alt="npm version"></a>
@@ -20,17 +21,19 @@
 <p align="center">
   <a href="#install">Install</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#demo-mode">Demo</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#keyboard-shortcuts">Shortcuts</a> ·
   <a href="#features">Features</a> ·
   <a href="#side-chat">Side Chat</a> ·
   <a href="#agent-intelligence">Agent Intelligence</a> ·
-  <a href="#settings-panel">Settings</a>
+  <a href="#settings-panel">Settings</a> ·
+  <a href="#theme">Theme</a>
 </p>
 
 ---
 
-Pompom is an interactive coding companion for [Pi CLI](https://github.com/mariozechner/pi-coding-agent). It renders a real-time 3D raymarched creature above your editor, speaks with natural TTS voices, plays ambient weather soundscapes, tracks your coding agent's mood, offers an AI side chat, and reacts emotionally to hunger, tiredness, and your interactions.
+Pompom is an interactive coding companion for [Pi CLI](https://github.com/mariozechner/pi-coding-agent). It renders a real-time 3D raymarched creature above your editor, speaks with natural TTS voices, plays ambient weather soundscapes, tracks your coding agent's mood, offers an AI side chat with voice input support, and reacts emotionally to hunger, tiredness, weather, and your interactions.
 
 ## Install
 
@@ -49,6 +52,16 @@ Pompom appears automatically when you start Pi. Toggle it with:
 
 Open the interactive settings panel with `/pompom-settings` — 9 tabs covering every feature, no commands to memorize.
 
+## Demo Mode
+
+Run an autonomous narrated showcase of every feature (~135 seconds):
+
+```
+/pompom demo
+```
+
+Pompom narrates each feature as it happens — interactions, weather transitions, accessories, games, sleep/wake, color themes. Run `/pompom demo` again to stop early. Great for recording videos.
+
 ## Commands
 
 ### Pet Actions
@@ -58,6 +71,7 @@ Open the interactive settings panel with `/pompom-settings` — 9 tabs covering 
 | `/pompom` | Toggle companion on/off |
 | `/pompom help` | Show all commands and shortcuts |
 | `/pompom status` | Check mood, hunger, energy, theme |
+| `/pompom demo` | Autonomous ~135s narrated showcase |
 | `/pompom pet` | Pet Pompom |
 | `/pompom feed` | Drop food |
 | `/pompom treat` | Special treat (extra hunger boost) |
@@ -92,7 +106,7 @@ Open the interactive settings panel with `/pompom-settings` — 9 tabs covering 
 | `/pompom:ambient on\|off` | Enable/disable weather ambient sounds |
 | `/pompom:ambient volume <0-100>` | Adjust ambient volume |
 | `/pompom:ambient pregenerate` | Generate all 5 weather sounds now |
-| `/pompom:ambient reset` | Delete generated sounds, regenerate fresh |
+| `/pompom:ambient reset` | Delete generated sounds (custom kept); regenerate on next weather change |
 | `/pompom:ambient folder` | Show custom audio folder path |
 
 ### AI & Agent Intelligence
@@ -105,6 +119,7 @@ Open the interactive settings panel with `/pompom-settings` — 9 tabs covering 
 | `/pompom:agents` | Agent activity dashboard |
 | `/pompom:stuck` | Check if agent is stuck in error loop |
 | `/pompom:analyze` | Deep AI-powered session analysis |
+| `/pompom:terminals` | Show all running Pompom instances |
 | `/pompom-settings` | Interactive settings panel (9 tabs) |
 
 ## Keyboard Shortcuts
@@ -139,16 +154,24 @@ Four input methods supported: Ghostty keybinds, ESC prefix, macOS Unicode, Kitty
 - Hybrid renderer: Unicode quadrant blocks at edges (2x detail), half-blocks in smooth areas
 - Kawaii face: white sclera eyes, brown iris, layered pupil/highlights, bright face plate
 - 4 color themes: Cloud, Cotton Candy, Mint Drop, Sunset Gold
-- Natural animations: blinking, breathing, ear wiggling, tail wagging
+- Natural animations: blinking, breathing (dual-frequency), ear wiggling, tail wagging
+- Visible body pulse synced to breathing cycle
 - Widget re-renders at ~7 FPS via 150ms interval
 
-### Scene & Weather
+### Weather & Physics
 - Smooth sky color transitions (dawn to dusk via keyframe interpolation)
 - Sun disk with halo, crescent moon with glow, twinkling stars
-- Rolling hills, swaying grass, drifting cloud wisps
+- Rolling hills, swaying grass with flowers, drifting cloud wisps
 - 5 weather types: clear, cloudy, rain, storm, snow
-- Weather transitions naturally every 30 min to 2 hours
-- Rain streaks, storm lightning, gentle snowfall with wind drift
+- Arc-based weather transitions with intensity ramping (0.0 to 1.0 over 90s)
+- **Rain splash particles**: multi-droplet splashes on ground impact with ripple effects
+- **Snow accumulation**: settled snowflakes persist as sparkle particles at ground level
+- **Wind system**: storms/rain/snow create wind force that pushes ears, antenna, body, and tail
+- **Wind gusts**: storms have random burst gusts that push Pompom asymmetrically
+- **Cloud shadows**: drifting dark patches across the ground during cloudy/rain/storm
+- **Ball physics**: air resistance, spin transfer on bounce, realistic energy loss
+- **Firefly**: brighter and larger at night, dimmer during day, pulsing glow
+- Weather-aware periodic reactions every 2-5 minutes
 
 ### Text-to-Speech (3 Engines)
 
@@ -171,7 +194,7 @@ Audio tags are engine-aware — ElevenLabs keeps `[laughs]`, Kokoro and Deepgram
 | **Mentor** | Guides on errors and completions |
 | **Zen** | Near-silent, speaks only when addressed |
 
-### Emotional Reactions
+### Emotional Reactions & Activity Requests
 Pompom expresses natural emotions based on her needs using ElevenLabs v3 audio tags:
 
 - **Hungry** (<30%): `[sad] My tummy is rumbling...`, `[crying] Feed me!`
@@ -179,8 +202,8 @@ Pompom expresses natural emotions based on her needs using ElevenLabs v3 audio t
 - **Tired** (<15%): `[whispers] Just five more minutes...`, `[sighs] I'm so sleepy...`
 - **Happy** (>80%): `[laughs] Life is good!`, `[sings] La la la, happy me!`
 - **Playful** (>60%): `[excited] Let's play a game!`, `[mischievously] Wanna throw the ball?`
-- **Fed while starving**: `[excited] FINALLY! Food! Oh that's SO good!`
-- **Treat while desperate**: `[crying] Oh my gosh... a TREAT! Thank you so much!`
+
+**19 spontaneous activity requests** — Pompom asks you to play, sing, dance, hug, feed, and more, with shortcut hints shown in the speech bubble. Fires every 2+ minutes during positive emotional states.
 
 Rate-limited to one emotional line every 45 seconds.
 
@@ -190,20 +213,24 @@ Background audio that matches the current weather, with layered one-shot sound e
 **Ambient loops** (continuous, looping):
 - Custom audio from Envato Elements or any source — drop files in `~/.pi/pompom/ambient/custom/`
 - Falls back to ElevenLabs Sound Effects API generation (cached locally)
-- Auto-ducks to 20% during voice playback
+- Auto-ducks to 20% during voice playback, 35% during sleep
+- **Linux ALSA support**: generates WAV format (with PCM+WAV header) when `aplay` is the detected player
 
 **23 layered sound effects** (one-shot, contextual):
 
 | Category | Effects |
 |----------|---------|
-| **Weather** | thunder, bird_chirp, bee_buzz, wind_gust, rain_drip |
+| **Weather** | thunder, bird_chirp, bee_buzz, wind_gust, rain_drip, cricket_chirp |
 | **Actions** | pet_purr, eat_crunch, ball_bounce, hug_squeeze, sleep_snore, wake_yawn, dance_sparkle, flip_whoosh |
 | **Events** | star_chime, game_start, game_end, hide_tiptoe, peek_surprise, firefly_twinkle, color_switch, weather_transition, accessory_equip, footstep_soft |
+| **Agent** | agent_tick (subtle tick during tool execution, 30s cooldown) |
+| **Needs** | hunger_rumble (<30% hunger), tired_yawn (<30% energy) |
+| **Session** | session_chime (startup), session_goodbye (shutdown), milestone_chime |
 
-SFX play at 15% of ambient volume — subtle accents, never distracting.
+SFX features: micro-variations (3 variants per sound), time-of-day filtering (crickets at night, birds during day), mood-reactive layers, volume jitter (±15%), sleep ducking, crossfade on ambient loop restart.
 
 ### Weather Accessories
-- Pompom asks for accessories when weather changes
+- Pompom asks for accessories when weather changes (sunglasses during clear daytime)
 - `/pompom give umbrella` — appears during rain/storm
 - `/pompom give scarf` — appears during snow
 - `/pompom give sunglasses` — appears in clear weather
@@ -216,14 +243,25 @@ SFX play at 15% of ambient volume — subtle accents, never distracting.
 - Star chime plays on each catch
 - Score announced with game-end jingle
 
+### Contextual Shortcut Bar
+The status bar below Pompom shows only the 3-4 most relevant shortcuts for her current state:
+- Sleeping: only `⌥a Wake`
+- Hungry: `⌥e Feed` highlighted in peach
+- Tired: `⌥s Sleep` highlighted in lavender
+- State-specific: idle/walk/singing/game each get their own relevant shortcuts
+- Bold keys with paw icon prefix, dim labels, right-aligned state message
+
 ## Side Chat
 
 Press `Alt+/` or run `/pompom:chat` to open a floating AI chat panel alongside the main agent.
 
 - Pompom has her own AI instance running in parallel — doesn't interrupt your main agent
-- Read-only `peek_main` tool lets Pompom see what the agent is working on
+- Read-only tools — safe inspection mode, no accidental file edits
+- `peek_main` tool lets Pompom see what the agent is working on (with redacted tool output)
 - Type `help` for built-in shortcuts: `analyze`, `stuck`, `recap`, `status`
-- Anchored at the bottom of the viewport, 50% max height
+- **Pi Voice integration**: hold-to-talk with `pi listen` types directly into the Pompom chat when it's focused
+- Per-session conversations — each new session starts fresh
+- Anchored at the center of the viewport, 60% max height
 - Press Esc to close, `Alt+/` to toggle focus
 
 ## Agent Intelligence
@@ -239,13 +277,20 @@ Mood is determined by tool call patterns, error rates, and activity timing. Weat
 10 event buckets with probability-based speech: agent start/end, tool calls, tool errors, messages. Commentary gap: 30s minimum between lines, 60s for same bucket.
 
 ### Stuck Detection
-Monitors 4 signals: error streaks, stalled progress (>5 min), high error rate (>50%), and repetitive tool calls. Pompom alerts with a speech bubble when confidence is high.
+Monitors consecutive error streaks, stalled progress (>5 min), high error rate (>50%), and repetitive tool calls. Pompom alerts with a speech bubble when confidence is high.
 
 ### AI Analysis Commands
 - `/pompom:ask <question>` — ask anything about the current session
 - `/pompom:recap` — concise session summary
 - `/pompom:analyze` — deep AI-powered analysis with recommendations
 - `/pompom:agents` — real-time dashboard: active tools, success rate, mood, timing
+
+### Multi-Terminal Awareness
+- Primary instance election via heartbeat files (oldest terminal wins)
+- Only the primary terminal plays ambient audio, weather SFX, and greetings
+- Secondary terminals run visual-only (animation renders, no audio)
+- User-triggered SFX (pet, feed, etc.) play on the active terminal
+- `/pompom:terminals` shows all running instances
 
 ## Settings Panel
 
@@ -255,26 +300,51 @@ Run `/pompom-settings` to open the interactive 9-tab settings panel.
 |-----|----------------|
 | **Pompom** | Pet, feed, play — 12 action buttons with mood/hunger/energy bars |
 | **Voice** | Pick engine, select voice, adjust volume, toggle on/off, test |
-| **Ambient** | Toggle weather sounds, adjust volume, pregenerate all 5 weather tracks |
+| **Sound** | Toggle weather sounds, adjust volume, pregenerate ambient + SFX |
 | **Personality** | Choose from 6 speech modes with descriptions |
 | **Theme** | Pick from 4 color palettes |
 | **Accessories** | Give items with descriptions of when they appear |
 | **Model** | Select AI model for chat/ask/analyze |
-| **Shortcuts** | Full keyboard reference card with platform-correct symbols |
-| **About** | Dashboard: mood, hunger, energy, weather, voice, ambient, agent stats |
+| **Keys** | Full keyboard reference card with platform-correct symbols |
+| **About** | Dashboard: mood, hunger, energy, weather, voice, ambient, agent stats, terminal info |
 
-Navigate with arrow keys, Enter to select, Esc to close. Non-technical users can do everything from the Pompom tab without knowing a single shortcut.
+Fully responsive — adapts to any terminal width. 2-column action grid for wide terminals, scrolling tab bar with indicators for narrow ones. Navigate with arrow keys, Enter to select, Esc to close.
+
+## Theme
+
+Pompom ships with a **Catppuccin Mocha warm** theme (`themes/pompom.json`) that auto-activates on install:
+
+- Warm pink accent (`#f5c2e7`) with rosewater text for conversations
+- Cozy message bubbles (`#362933`), gentle green/red tool result glows
+- Thinking level borders that progress from cold/dark to warm/pink
+- Warm syntax highlighting: rosewater variables, flamingo inline code
+- 51 color tokens fully compliant with Pi's theme schema
+- Custom `warm_surface`, `warm_bubble`, `warm_green_glow`, `warm_red_glow`, `warm_border` vars
+
+## Single-Line Footer
+
+A compact status bar at the bottom of Pi with progressive disclosure:
+
+- Pompom's mood face + name (always visible)
+- Hunger/energy bars with color-coded thresholds
+- Weather icon + agent activity indicator
+- Session timer, context usage bar, working directory, cost tracker
+- Voice and ambient audio indicators
+- Model name (intelligently shortened)
+- All Nerd Font icons, Catppuccin Mocha colors, Powerline separators
+
+Adapts content based on terminal width: ultra-narrow (face + model only) to ultra-wide (all indicators).
 
 ## How It Works
 
 The renderer is a software raymarcher running in your terminal. Each frame:
 
 1. Physics simulation updates position, particles, and state machines (60fps sub-stepping)
-2. Scene objects (body, ears, paws, tail, antenna, ball, food, accessories) are built with rotation and oscillation
+2. Scene objects (body, ears, paws, tail, antenna, ball, food, accessories) are built with rotation, oscillation, wind lean, and breathing scale
 3. For each cell, 4 quadrant samples are taken. Edge cells use quadrant characters for 2x horizontal detail. Smooth cells use half-blocks.
-4. Object hits are shaded with diffuse + wrap lighting, ambient occlusion, specular highlights, and firefly point light
+4. Object hits are shaded with diffuse + wrap lighting, ambient occlusion, specular highlights, subsurface scattering, and firefly point light
 5. The shaded pixels are encoded as ANSI true-color escape sequences
-6. Speech bubbles and particle overlays are composited on top
+6. Speech bubbles, weather particles (rain/snow/splash/accumulation), and overlays are composited on top
 
 ## Contributing
 

@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hero.png" alt="pi-pompom" width="720">
+  <b>Pi-Pompom</b> — 一个运行在 Pi CLI 中的终端宠物，带有语音、环境天气、
+  侧边聊天和感知代理状态的评论能力。
 </p>
 
 <h1 align="center">pi-pompom</h1>

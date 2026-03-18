@@ -1,3 +1,8 @@
+---
+name: elevenlabs-tts
+description: Generate high-quality speech for Pompom companion using ElevenLabs TTS API v3
+---
+
 # ElevenLabs TTS Skill
 
 Generate high-quality speech for Pompom companion using ElevenLabs Text-to-Speech API v3.

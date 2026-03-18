@@ -6,6 +6,8 @@
  * Deliberate spacing. Progressive disclosure by terminal width.
  */
 
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { pompomStatus, pompomGetWeather } from "./pompom";
@@ -117,18 +119,34 @@ function fmtTime(ms: number): string {
 	return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m" : ""}`;
 }
 
+const footerCostCache = new WeakMap<object, { branchLength: number; lastCostTotal: number; value: number }>();
+
 function getCost(ctx: ExtensionContext): number {
 	try {
-		return (ctx.sessionManager.getBranch() as any[]).reduce((t: number, e: any) =>
-			t + (Number(e.message?.usage?.cost?.total) || 0), 0);
+		const branch = ctx.sessionManager.getBranch() as Array<{ message?: { usage?: { cost?: { total?: number } } } }>;
+		const cacheKey = ctx.sessionManager as object;
+		const lastCostTotal = Number(branch[branch.length - 1]?.message?.usage?.cost?.total) || 0;
+		const cached = footerCostCache.get(cacheKey);
+		if (cached && cached.branchLength === branch.length && cached.lastCostTotal === lastCostTotal) {
+			return cached.value;
+		}
+		const value = branch.reduce((total, entry) => {
+			return total + (Number(entry.message?.usage?.cost?.total) || 0);
+		}, 0);
+		footerCostCache.set(cacheKey, {
+			branchLength: branch.length,
+			lastCostTotal,
+			value,
+		});
+		return value;
 	} catch { return 0; }
 }
 
 function shortPath(cwd: string): string {
-	const home = process.env.HOME || "";
+	const home = os.homedir();
 	let p = cwd;
 	if (home && p.startsWith(home)) p = "~" + p.slice(home.length);
-	const parts = p.split("/").filter(Boolean);
+	const parts = p.replaceAll(path.sep, "/").split("/").filter(Boolean);
 	return parts.length > 2 ? parts[parts.length - 1] : parts.join("/");
 }
 

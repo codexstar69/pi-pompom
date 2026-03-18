@@ -9,11 +9,10 @@
  */
 
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model, TextContent, ToolCall, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
 import {
 	buildSessionContext,
 	convertToLlm,
-	createCodingTools,
 	createReadOnlyTools,
 	getSelectListTheme,
 	type ModelRegistry,
@@ -22,9 +21,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Editor, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from "@mariozechner/pi-tui";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 const POMPOM_SYSTEM = `
 ---
@@ -59,8 +55,123 @@ const THINKING_LINES = [
 	"(o'o) Almost there...",
 ];
 
-const CHAT_HISTORY_FILE = path.join(os.homedir(), ".pi", "pompom", "chat-history.json");
-const CHAT_HISTORY_MAX = 100;
+// Chat history is per-session only — each session starts fresh.
+
+const INITIAL_POMPOM_MESSAGE = "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!";
+
+type DisplayMessage = { role: "user" | "pompom" | "tool" | "error"; text: string };
+
+function isTextContent(block: unknown): block is TextContent {
+	return block !== null && typeof block === "object" && "type" in block && "text" in block
+		&& (block as { type?: unknown }).type === "text"
+		&& typeof (block as { text?: unknown }).text === "string";
+}
+
+function isToolCallContent(block: unknown): block is ToolCall {
+	return block !== null && typeof block === "object" && "type" in block && "name" in block
+		&& (block as { type?: unknown }).type === "toolCall"
+		&& typeof (block as { name?: unknown }).name === "string";
+}
+
+function extractUserText(message: UserMessage): string {
+	if (typeof message.content === "string") {
+		return message.content;
+	}
+	return message.content.filter(isTextContent).map((block) => {
+		return block.text;
+	}).join("");
+}
+
+function redactToolText(text: string, maxLen: number): string {
+	const patterns: Array<{ pattern: RegExp; replacement: string }> = [
+		{ pattern: /Bearer\s+[A-Za-z0-9._\-+/=]{16,}/gi, replacement: "Bearer [redacted]" },
+		{ pattern: /data:[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, replacement: "data:[redacted]" },
+		{ pattern: /\b(?:sk|pk|rk|ghp|gho|ghu|ghs|xox[baprs]|api[_-]?key|token|sess)[-_A-Za-z0-9]{12,}\b/gi, replacement: "[redacted-secret]" },
+		{ pattern: /\b[A-Fa-f0-9]{32,}\b/g, replacement: "[redacted-token]" },
+		{ pattern: /\b[A-Za-z0-9+/_=-]{40,}\b/g, replacement: "[redacted-token]" },
+	];
+	let safeText = text.replace(/\s+/g, " ").trim();
+	for (const { pattern, replacement } of patterns) {
+		safeText = safeText.replace(pattern, replacement);
+	}
+	return safeText.slice(0, maxLen);
+}
+
+function formatAssistantMessage(message: Extract<AgentMessage, { role: "assistant" }>): string {
+	const texts = message.content.filter(isTextContent).map((block) => {
+		return block.text;
+	}).join(" ");
+	return texts.trim();
+}
+
+function extractContentType(block: unknown): string | null {
+	if (block === null || typeof block !== "object") {
+		return null;
+	}
+	if (!("type" in block)) {
+		return null;
+	}
+	const type = (block as { type?: unknown }).type;
+	return typeof type === "string" ? type : null;
+}
+
+function summarizeNonTextContent(message: ToolResultMessage): string {
+	const typeCounts = message.content
+		.map((block) => {
+			return extractContentType(block);
+		})
+		.filter((type): type is string => {
+			return Boolean(type) && type !== "text";
+		})
+		.reduce<Record<string, number>>((acc, type) => {
+			const current = acc[type] || 0;
+			return { ...acc, [type]: current + 1 };
+		}, {});
+	const parts = Object.entries(typeCounts).map(([type, count]) => {
+		return count > 1 ? `${type}x${count}` : type;
+	});
+	return parts.join(", ");
+}
+
+function summarizeToolDetails(message: ToolResultMessage, maxLen: number): string {
+	const maybeDetails = message as ToolResultMessage & { details?: unknown };
+	const details = maybeDetails.details;
+	if (typeof details === "string") {
+		return redactToolText(details, Math.max(20, Math.floor(maxLen / 2)));
+	}
+	if (details === null || typeof details !== "object") {
+		return "";
+	}
+	const keys = Object.keys(details as Record<string, unknown>).slice(0, 4);
+	if (keys.length === 0) {
+		return "";
+	}
+	return `details:${keys.join("|")}`;
+}
+
+function formatToolSummary(message: ToolResultMessage, maxLen: number): string {
+	const rawText = message.content.filter(isTextContent).map((block) => {
+		return block.text;
+	}).join(" ");
+	const safeText = redactToolText(rawText, maxLen);
+	const nonTextSummary = summarizeNonTextContent(message);
+	const detailsSummary = summarizeToolDetails(message, maxLen);
+	const metadataSummary = [nonTextSummary, detailsSummary].filter(Boolean).join(", ");
+	const state = message.isError ? "failed" : "ok";
+	const prefix = `[${message.toolName || "tool"} ${state}]`;
+	if (safeText && metadataSummary) {
+		return `${prefix}: ${safeText} (${metadataSummary})`;
+	}
+	if (safeText) {
+		return `${prefix}: ${safeText}`;
+	}
+	if (metadataSummary) {
+		return `${prefix}: (${metadataSummary})`;
+	}
+	return message.isError
+		? `${prefix}: (failed without text output)`
+		: `${prefix}: (completed without text output)`;
+}
 
 interface PompomChatOptions {
 	tui: TUI;
@@ -78,9 +189,9 @@ interface PompomChatOptions {
 
 export class PompomChatOverlay implements Component, Focusable {
 	private agent: Agent;
-	private editor: Editor;
-	private displayMessages: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
-	private localMessages: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
+	public editor: Editor;
+	private displayMessages: DisplayMessage[] = [];
+	private localMessages: DisplayMessage[] = [];
 	private isStreaming = false;
 	private streamingText = "";
 	private _focused = true;
@@ -94,10 +205,10 @@ export class PompomChatOverlay implements Component, Focusable {
 	private toolStatus = "";
 	private errorText = "";
 	private scrollOffset = 0;
-	private writeMode = false;
 	private lastTotalMsgLines = 0;
 	private lastMaxLines = 20;
-	private loadedHistory: { role: "user" | "pompom" | "tool" | "error"; text: string }[] = [];
+	private displayVersion = 0;
+	private wrappedMessagesCache: { version: number; width: number; lines: string[] } | null = null;
 
 	get focused() { return this._focused; }
 	set focused(v: boolean) { this._focused = v; this.editor.focused = v; }
@@ -127,33 +238,8 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.editor.focused = true;
 		this.editor.onSubmit = (text) => { this.onSubmit(text).catch(err => console.error("[pompom-chat] onSubmit error:", err instanceof Error ? err.message : err)); };
 
-		this.displayMessages.push({ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" });
-
-		// Load persisted chat history
-		try {
-			if (fs.existsSync(CHAT_HISTORY_FILE)) {
-				const raw = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
-				let msgs: unknown[];
-				if (Array.isArray(raw)) {
-					// Legacy: plain array — wrap
-					msgs = raw;
-				} else if (raw && typeof raw === "object" && raw.v === 1 && Array.isArray(raw.messages)) {
-					msgs = raw.messages;
-				} else {
-					console.warn("[pompom-chat] Unrecognized chat history format, resetting.");
-					msgs = [];
-				}
-				for (const m of msgs) {
-					if (m && typeof m === "object" && typeof (m as any).role === "string" && typeof (m as any).text === "string") {
-						const entry = m as { role: "user" | "pompom" | "tool" | "error"; text: string };
-						this.loadedHistory.push(entry);
-						this.displayMessages.push(entry);
-					}
-				}
-			}
-		} catch (e) {
-			console.warn("[pompom-chat] Failed to load chat history:", e instanceof Error ? e.message : e);
-		}
+		this.displayMessages.push({ role: "pompom", text: INITIAL_POMPOM_MESSAGE });
+		this.markDisplayDirty();
 	}
 
 	private createPeekMain(sm: SessionManager): AgentTool {
@@ -180,18 +266,18 @@ export class PompomChatOverlay implements Component, Focusable {
 
 					const formatted = msgs.map(m => {
 						if (m.role === "user") {
-							const c = typeof m.content === "string" ? m.content : m.content.map(b => b.type === "text" ? b.text : "").join("");
-							return "[User]: " + c.slice(0, 200);
+							return "[User]: " + extractUserText(m as UserMessage).slice(0, 200);
 						}
 						if (m.role === "assistant") {
-							const texts = m.content.filter(b => b.type === "text").map(b => (b as any).text).join(" ");
-							const tools = m.content.filter(b => b.type === "toolCall").map(b => (b as any).toolName);
+							const texts = formatAssistantMessage(m).slice(0, 300);
+							const tools = m.content.filter(isToolCallContent).map((block) => {
+								return block.name;
+							});
 							const parts = [texts.slice(0, 300), tools.length ? "[Tools: " + tools.join(", ") + "]" : ""].filter(Boolean);
 							return "[Agent]: " + parts.join(" ");
 						}
 						if (m.role === "toolResult") {
-							const t = m.content[0]?.type === "text" ? (m.content[0] as any).text : "";
-							return "[" + (m as any).toolName + "]: " + t.slice(0, 100);
+							return formatToolSummary(m, 80);
 						}
 						return "";
 					}).filter(Boolean).join("\n\n");
@@ -235,74 +321,26 @@ export class PompomChatOverlay implements Component, Focusable {
 			this.localMessages.push({ role: "tool", text: "stuck — check if main agent is stuck" });
 			this.localMessages.push({ role: "tool", text: "recap — session summary" });
 			this.localMessages.push({ role: "tool", text: "status — quick status check" });
-			this.localMessages.push({ role: "tool", text: "/write [on|off] — toggle write mode" });
+			this.localMessages.push({ role: "tool", text: "This is a read-only side chat \u2014 file edits happen in the main agent." });
 			this.localMessages.push({ role: "tool", text: "help — show this list" });
 			this.localMessages.push({ role: "pompom", text: "Or just ask me anything in plain English!" });
 			this.syncMessages();
 			this.opts.tui.requestRender();
 			return true;
 		}
-		if (lower === "/write" || lower === "/write on") {
-			this.setWriteMode(true);
-			return true;
-		}
-		if (lower === "/write off") {
-			this.setWriteMode(false);
+		if (lower === "/write" || lower.startsWith("/write ")) {
+			this.localMessages = [];
+			this.localMessages.push({ role: "pompom", text: "Write mode is disabled \u2014 Pompom's side chat is read-only for safety. Use the main agent for file edits." });
+			this.syncMessages();
+			this.opts.tui.requestRender();
 			return true;
 		}
 		return false;
 	}
 
-	private setWriteMode(enabled: boolean) {
-		if (this.writeMode === enabled) {
-			this.localMessages = [];
-			this.localMessages.push({ role: "pompom", text: enabled
-				? "Write mode is already enabled."
-				: "Already in read-only mode." });
-			this.syncMessages();
-			this.opts.tui.requestRender();
-			return;
-		}
-		this.writeMode = enabled;
-
-		// Dispose current agent
-		if (this.agentUnsub) { this.agentUnsub(); this.agentUnsub = null; }
-		this.agent.abort();
-		this.isStreaming = false;
-		this.streamingText = "";
-		this.toolStatus = "";
-		this.errorText = "";
-		this.stopSpinner();
-
-		// Create new agent with appropriate tools
-		const tools = enabled
-			? createCodingTools(this.opts.cwd)
-			: createReadOnlyTools(this.opts.cwd);
-
-		this.agent = new Agent({
-			initialState: {
-				systemPrompt: POMPOM_SYSTEM,
-				model: this.opts.model,
-				thinkingLevel: this.opts.thinkingLevel === "off" ? undefined : this.opts.thinkingLevel as any,
-				tools: [...tools, this.peekTool],
-				messages: [],
-			},
-			convertToLlm,
-			getApiKey: async (provider) => {
-				const key = await this.opts.modelRegistry.getApiKeyForProvider(provider);
-				if (!key) throw new Error("No API key");
-				return key;
-			},
-		});
-		this.agentUnsub = this.agent.subscribe((e) => this.onAgentEvent(e));
-		this.userInputTexts.clear();
-
-		this.localMessages = [];
-		this.localMessages.push({ role: "pompom", text: enabled
-			? "Write mode enabled \u2014 Pompom can now edit files. Use /write off to return to read-only."
-			: "Read-only mode restored." });
-		this.syncMessages();
-		this.opts.tui.requestRender();
+	private markDisplayDirty(): void {
+		this.displayVersion++;
+		this.wrappedMessagesCache = null;
 	}
 
 	private async onSubmit(text: string) {
@@ -324,6 +362,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		this.userInputTexts.set(promptIndex, trimmed);
 		const wasAtBottom = this.scrollOffset === 0;
 		this.displayMessages.push({ role: "user", text: trimmed });
+		this.markDisplayDirty();
 		this.isStreaming = true;
 		this.streamingText = "";
 		this.errorText = "";
@@ -348,30 +387,25 @@ export class PompomChatOverlay implements Component, Focusable {
 				this.syncMessages();
 				if (wasAtBottom) this.scrollOffset = 0;
 				this.opts.tui.requestRender();
-				this.persistHistory();
 			}
 		}
 	}
 
 	private syncMessages() {
-		this.displayMessages = [
-			{ role: "pompom", text: "Hi! Try: analyze, stuck, recap, status, help — or just ask me anything!" },
+		const nextMessages: DisplayMessage[] = [
+			{ role: "pompom", text: INITIAL_POMPOM_MESSAGE },
 		];
-		// Re-add loaded history (from file) before current session's agent messages
-		for (const h of this.loadedHistory) this.displayMessages.push(h);
 		let msgIndex = 0;
 		for (const m of this.agent.state.messages) {
 			if (m.role === "user") {
-				const c = typeof m.content === "string" ? m.content : m.content.map(b => b.type === "text" ? b.text : "").join("");
-				const displayText = this.userInputTexts.get(msgIndex) || c;
-				if (displayText) this.displayMessages.push({ role: "user", text: displayText });
+				const displayText = this.userInputTexts.get(msgIndex) || extractUserText(m as UserMessage);
+				if (displayText) nextMessages.push({ role: "user", text: displayText });
 			} else if (m.role === "assistant") {
-				const t = m.content.filter(b => b.type === "text").map(b => (b as any).text).join(" ");
-				if (t) this.displayMessages.push({ role: "pompom", text: t });
+				const text = formatAssistantMessage(m);
+				if (text) nextMessages.push({ role: "pompom", text });
 			} else if (m.role === "toolResult") {
-				const t = m.content[0]?.type === "text" ? (m.content[0] as any).text : "";
-				const toolName = (m as any).toolName || "tool";
-				if (t) this.displayMessages.push({ role: "tool", text: `[${toolName}]: ${t.slice(0, 200)}` });
+				const summary = formatToolSummary(m, 200);
+				nextMessages.push({ role: m.isError ? "error" : "tool", text: summary });
 			}
 			msgIndex++;
 		}
@@ -381,11 +415,13 @@ export class PompomChatOverlay implements Component, Focusable {
 		}
 		// Append locally-injected messages (help output, etc.) — they survive agent syncs
 		for (const lm of this.localMessages) {
-			this.displayMessages.push(lm);
+			nextMessages.push(lm);
 		}
 		if (this.errorText) {
-			this.displayMessages.push({ role: "error", text: this.errorText });
+			nextMessages.push({ role: "error", text: this.errorText });
 		}
+		this.displayMessages = nextMessages;
+		this.markDisplayDirty();
 	}
 
 	private onAgentEvent(event: AgentEvent) {
@@ -422,6 +458,31 @@ export class PompomChatOverlay implements Component, Focusable {
 
 	private stopSpinner() {
 		if (this.spinnerTimer) { clearInterval(this.spinnerTimer); this.spinnerTimer = null; }
+	}
+
+	private getWrappedDisplayLines(innerWidth: number): string[] {
+		if (
+			this.wrappedMessagesCache
+			&& this.wrappedMessagesCache.version === this.displayVersion
+			&& this.wrappedMessagesCache.width === innerWidth
+		) {
+			return this.wrappedMessagesCache.lines;
+		}
+		const wrappedLines: string[] = [];
+		for (const msg of this.displayMessages) {
+			const prefix = msg.role === "user" ? this.opts.theme.fg("accent", "You: ")
+				: msg.role === "pompom" ? this.opts.theme.fg("success", "(o'o) ")
+				: msg.role === "tool" ? this.opts.theme.fg("dim", "")
+				: this.opts.theme.fg("error", "Error: ");
+			const prefixW = msg.role === "user" ? 5 : msg.role === "pompom" ? 6 : msg.role === "tool" ? 0 : 7;
+			this.wrapInto(wrappedLines, prefix, prefixW, msg.text, innerWidth);
+		}
+		this.wrappedMessagesCache = {
+			version: this.displayVersion,
+			width: innerWidth,
+			lines: wrappedLines,
+		};
+		return wrappedLines;
 	}
 
 	// Match Pi's reference implementation exactly: │ + content padded to width + │
@@ -473,7 +534,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		// Themed header — rounded corners, kawaii face, sparkle when streaming
 		const pompomFace = theme.fg("success", "(o") + theme.fg("warning", "'") + theme.fg("success", "o)");
 		const sparkle = this.isStreaming ? theme.fg("warning", " " + SPINNER[this.spinnerFrame]) : theme.fg("dim", " \u2727");
-		const modeTag = this.writeMode ? theme.fg("warning", " [Write]") : theme.fg("dim", " [Read-only]");
+		const modeTag = theme.fg("dim", " [Read-only]");
 		const title = this._focused
 			? pompomFace + " " + theme.fg("accent", "Pompom Chat") + modeTag + sparkle
 			: theme.fg("dim", "(o'o) Pompom Chat") + modeTag;
@@ -487,15 +548,7 @@ export class PompomChatOverlay implements Component, Focusable {
 		const maxLines = Math.max(6, Math.floor(this.opts.tui.terminal.rows * 0.55) - 8);
 
 		// Build wrapped message lines
-		const allMsgLines: string[] = [];
-		for (const msg of this.displayMessages) {
-			const prefix = msg.role === "user" ? theme.fg("accent", "You: ")
-				: msg.role === "pompom" ? theme.fg("success", "(o'o) ")
-				: msg.role === "tool" ? theme.fg("dim", "")
-				: theme.fg("error", "Error: ");
-			const prefixW = msg.role === "user" ? 5 : msg.role === "pompom" ? 6 : msg.role === "tool" ? 0 : 7;
-			this.wrapInto(allMsgLines, prefix, prefixW, msg.text, innerWidth);
-		}
+		const allMsgLines: string[] = [...this.getWrappedDisplayLines(innerWidth)];
 		if (this.isStreaming && !this.streamingText) {
 			// Animated thinking indicator — shows while model is processing before any output
 			const dots = ".".repeat((this.spinnerFrame % 3) + 1);
@@ -541,23 +594,6 @@ export class PompomChatOverlay implements Component, Focusable {
 		for (const line of wrapped) out.push(line);
 	}
 
-	private persistHistory() {
-		try {
-			const dir = path.dirname(CHAT_HISTORY_FILE);
-			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-			// Skip welcome greeting (index 0) and only persist user/pompom exchange messages
-			const toSave = this.displayMessages.slice(1).filter(m => m.role === "user" || m.role === "pompom");
-			const rawCapped = toSave.slice(-CHAT_HISTORY_MAX);
-			// Trim to even number to keep user+pompom pairs together
-			const capped = rawCapped.length % 2 === 0 ? rawCapped : rawCapped.slice(0, -1);
-			const data = JSON.stringify({ v: 1, messages: capped }, null, 2);
-			const tmp = CHAT_HISTORY_FILE + ".tmp." + process.pid;
-			fs.writeFileSync(tmp, data, "utf-8");
-			fs.renameSync(tmp, CHAT_HISTORY_FILE);
-		} catch (e) {
-			console.warn("[pompom-chat] Failed to persist chat history:", e instanceof Error ? e.message : e);
-		}
-	}
 
 	dispose() {
 		if (this.disposed) return;

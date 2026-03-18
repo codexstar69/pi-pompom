@@ -25,7 +25,8 @@ const GREETING_LOCK_FILE = path.join(POMPOM_DIR, "last-greeting.lock");
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const HEARTBEAT_INTERVAL_MS = 5_000;
-const STALE_THRESHOLD_MS = 15_000;
+const LIVE_INSTANCES_CACHE_TTL_MS = 250;
+const INSTANCE_STALE_MS = HEARTBEAT_INTERVAL_MS * 3;
 const GREETING_COOLDOWN_MS = 1_800_000; // 30 minutes — one greeting per time-of-day period
 const GREETING_LOCK_STALE_MS = 5_000;
 
@@ -39,6 +40,7 @@ const tty = (() => {
 })();
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let startedAt = 0;
+let liveInstancesCache: { expiresAt: number; data: InstanceInfo[] } | null = null;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,14 +59,17 @@ function ensureDir(dir: string): void {
 	try { fs.mkdirSync(dir, { recursive: true }); } catch { /* already exists */ }
 }
 
-/** Atomic write: write to tmp file then rename (prevents partial reads). */
-function atomicWrite(filePath: string, data: string): void {
+/** Atomic write: write to tmp file then rename (prevents partial reads).
+ *  Returns true if the write succeeded, false otherwise. */
+function atomicWrite(filePath: string, data: string): boolean {
 	const tmp = filePath + `.tmp-${pid}`;
 	try {
 		fs.writeFileSync(tmp, data, "utf-8");
 		fs.renameSync(tmp, filePath);
+		return true;
 	} catch {
 		try { fs.unlinkSync(tmp); } catch { /* cleanup best-effort */ }
+		return false;
 	}
 }
 
@@ -82,6 +87,10 @@ function processAlive(checkPid: number): boolean {
 
 function instancePath(id: string): string {
 	return path.join(INSTANCES_DIR, `${id}.json`);
+}
+
+function isHeartbeatFresh(heartbeat: number, now: number): boolean {
+	return heartbeat > 0 && now - heartbeat <= INSTANCE_STALE_MS;
 }
 
 function tryAcquireGreetingLock(): number | null {
@@ -114,11 +123,13 @@ function releaseGreetingLock(fd: number): void {
 
 // ─── Core API ─────────────────────────────────────────────────────────────────
 
-/** Register this instance and start heartbeat. Call on session_start. */
+/** Register this instance and start heartbeat. Call on session_start.
+ *  Preserves original startedAt on session_switch (cwd change only). */
 export function registerInstance(cwd: string): void {
 	if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 	ensureDir(INSTANCES_DIR);
-	startedAt = Date.now();
+	// Only set startedAt on first registration — preserve seniority across session switches
+	if (!startedAt) startedAt = Date.now();
 	writeHeartbeat(cwd);
 	heartbeatTimer = setInterval(() => writeHeartbeat(cwd), HEARTBEAT_INTERVAL_MS);
 }
@@ -127,6 +138,7 @@ export function registerInstance(cwd: string): void {
 export function deregisterInstance(): void {
 	if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 	try { fs.unlinkSync(instancePath(instanceId)); } catch { /* may not exist */ }
+	invalidateLiveInstancesCache();
 }
 
 function writeHeartbeat(cwd: string): void {
@@ -140,12 +152,17 @@ function writeHeartbeat(cwd: string): void {
 	};
 	atomicWrite(instancePath(instanceId), JSON.stringify(info));
 	cleanStaleInstances();
+	invalidateLiveInstancesCache();
 }
 
-/** Read all live (non-stale) instances. Cleans up stale/crashed entries. */
+/** Read all live instances. Cleans up crashed entries. */
 export function getLiveInstances(): InstanceInfo[] {
-	ensureDir(INSTANCES_DIR);
 	const now = Date.now();
+	if (liveInstancesCache && now < liveInstancesCache.expiresAt) {
+		return [...liveInstancesCache.data];
+	}
+
+	ensureDir(INSTANCES_DIR);
 	const live: InstanceInfo[] = [];
 	let entries: string[];
 	try { entries = fs.readdirSync(INSTANCES_DIR); } catch { return []; }
@@ -156,7 +173,9 @@ export function getLiveInstances(): InstanceInfo[] {
 		try {
 			const raw = fs.readFileSync(filePath, "utf-8");
 			const info = JSON.parse(raw) as InstanceInfo;
-			if (now - info.heartbeat > STALE_THRESHOLD_MS || !processAlive(info.pid)) {
+			const isAlive = processAlive(info.pid);
+			const isFresh = isHeartbeatFresh(info.heartbeat, now);
+			if (!isAlive || !isFresh) {
 				try { fs.unlinkSync(filePath); } catch { /* race with other cleaner */ }
 				continue;
 			}
@@ -165,7 +184,12 @@ export function getLiveInstances(): InstanceInfo[] {
 			// Corrupt or partially written — skip
 		}
 	}
-	return live;
+
+	liveInstancesCache = {
+		expiresAt: now + LIVE_INSTANCES_CACHE_TTL_MS,
+		data: live,
+	};
+	return [...live];
 }
 
 /** Get instances other than this one. */
@@ -176,10 +200,11 @@ export function getOtherInstances(): InstanceInfo[] {
 /** Is this instance the elected primary (oldest live startedAt, tie-break by instanceId)? */
 export function isPrimaryInstance(): boolean {
 	const live = getLiveInstances();
-	// Ensure this instance is included even if file hasn't been written yet
-	if (!live.some(i => i.instanceId === instanceId)) {
+	// Include self if heartbeat file hasn't been written yet AND heartbeat is active
+	if (heartbeatTimer && !live.some(i => i.instanceId === instanceId)) {
 		live.push({ instanceId, pid, tty, cwd: "", startedAt: startedAt || Date.now(), heartbeat: Date.now() });
 	}
+	if (live.length === 0) return false; // no live instances at all — don't self-elect from nothing
 	live.sort((a, b) => a.startedAt - b.startedAt || a.instanceId.localeCompare(b.instanceId));
 	return live[0].instanceId === instanceId;
 }
@@ -206,8 +231,9 @@ export function claimGreeting(): boolean {
 	if (lockFd === null) return false;
 	try {
 		if (hasRecentGreeting()) return false;
-		atomicWrite(GREETING_FILE, JSON.stringify({ timestamp: Date.now(), pid }));
-		return true;
+		// Only claim if the greeting marker was actually written to disk
+		const wrote = atomicWrite(GREETING_FILE, JSON.stringify({ timestamp: Date.now(), pid }));
+		return wrote;
 	} finally {
 		releaseGreetingLock(lockFd);
 	}
@@ -230,15 +256,24 @@ function cleanStaleInstances(): void {
 		try {
 			const raw = fs.readFileSync(filePath, "utf-8");
 			const info = JSON.parse(raw) as InstanceInfo;
-			if (now - info.heartbeat > STALE_THRESHOLD_MS || !processAlive(info.pid)) {
+			const isAlive = processAlive(info.pid);
+			const isFresh = isHeartbeatFresh(info.heartbeat, now);
+			if (!isAlive || !isFresh) {
 				fs.unlinkSync(filePath);
 			}
 		} catch { /* skip corrupt files */ }
 	}
 }
 
+function invalidateLiveInstancesCache(): void {
+	liveInstancesCache = null;
+}
+
 /** Get this instance's ID (useful for logging/display). */
 export function getInstanceId(): string { return instanceId; }
+
+/** Stable key for per-instance persistence files. */
+export function getInstancePersistenceKey(): string { return instanceId; }
 
 /** Get count of all live instances including this one. */
 export function getInstanceCount(): number { return getLiveInstances().length; }

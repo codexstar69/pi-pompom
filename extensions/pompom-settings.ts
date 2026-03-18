@@ -6,6 +6,7 @@
  * Tabs: Pompom · Voice · Ambient · Personality · Theme · Accessories · Model · Shortcuts · About
  */
 
+import os from "node:os";
 import { matchesKey, Key, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
@@ -14,7 +15,15 @@ import {
 	setPompomModel, getPompomModel,
 	type Personality, type VoiceConfig,
 } from "./pompom-voice";
-import { pompomKeypress, pompomStatus, pompomGiveAccessory, pompomGetAccessories, pompomGetWeather, type Accessories } from "./pompom";
+import {
+	pompomKeypress,
+	pompomStatus,
+	pompomGiveAccessory,
+	pompomGetAccessories,
+	pompomGetWeather,
+	pompomRestoreAccessories,
+	type Accessories,
+} from "./pompom";
 import { getSessionStats } from "./pompom-agent";
 import {
 	getAmbientConfig, setAmbientEnabled, setAmbientVolume,
@@ -151,10 +160,13 @@ class PompomSettingsPanel {
 	public onTogglePompom?: (enabled: boolean) => void;
 	private cw?: number;
 	private cl?: string[];
+	private lastIw = 60; // inner width, updated each render
 	private statusMsg = "";
 	private statusTimer: ReturnType<typeof setTimeout> | null = null;
 	public onClose?: () => void;
 	public onPregenerate?: () => Promise<number>;
+	public onAmbientToggle?: (enabled: boolean) => void;
+	public onAccessoryChange?: (change: AccessoryChange) => void | Promise<void>;
 
 	private inv() { this.cw = undefined; this.cl = undefined; }
 
@@ -298,6 +310,7 @@ class PompomSettingsPanel {
 				const ambientCfg = getAmbientConfig();
 				const newState = !ambientCfg.enabled;
 				setAmbientEnabled(newState);
+				this.onAmbientToggle?.(newState);
 				this.showStatus(newState ? "Ambient ON" : "Ambient OFF");
 			}
 			// row 1 = volume (handled by +/-)
@@ -338,8 +351,27 @@ class PompomSettingsPanel {
 			if (key) {
 				const acc = pompomGetAccessories();
 				if (!acc[key]) {
+					const previousAccessories: Accessories = { ...acc };
 					pompomGiveAccessory(key);
-					this.showStatus(`Gave Pompom a ${key}!`);
+					const accessoryChange: AccessoryChange = {
+						accessory: key,
+						accessories: pompomGetAccessories(),
+					};
+					if (!this.onAccessoryChange) {
+						this.showStatus(`Gave Pompom a ${key}!`);
+						return;
+					}
+					this.showStatus(`Saving ${key}...`, 5000);
+					void Promise.resolve(this.onAccessoryChange(accessoryChange)).then(() => {
+						this.showStatus(`Gave Pompom a ${key}!`);
+						this.inv();
+					}).catch((error) => {
+						const message = error instanceof Error ? error.message : String(error);
+						console.error(`[pompom-settings] Failed to persist accessory change for ${key}: ${message}`);
+						pompomRestoreAccessories(previousAccessories);
+						this.showStatus(`Save failed for ${key}. Try again.`, 5000);
+						this.inv();
+					});
 				} else {
 					this.showStatus(`Already has ${key}`);
 				}
@@ -364,8 +396,10 @@ class PompomSettingsPanel {
 	render(width: number): string[] {
 		const liveTab = this.tab === TAB_POMPOM || this.tab === TAB_AMBIENT || this.tab === TAB_ABOUT;
 		if (this.cl && this.cw === width && !liveTab) return this.cl;
-		const w = Math.max(30, Math.min(width - 2, 68));
+		// Fully responsive — no fixed max width, use all available space
+		const w = Math.max(30, width - 2);
 		const iw = w - 4;
+		this.lastIw = iw;
 
 		const pad = (content: string) => {
 			const cw = visibleWidth(content);
@@ -373,7 +407,7 @@ class PompomSettingsPanel {
 			return content + " ".repeat(gap);
 		};
 		const line = (content: string) => truncateToWidth(`${DIM}\u2502${RST} ${pad(content)} ${DIM}\u2502${RST}`, w);
-		const border = (l: string, fill: string, r: string) => truncateToWidth(`${DIM}${l}${fill.repeat(w - 2)}${r}${RST}`, w);
+		const border = (l: string, fill: string, r: string) => truncateToWidth(`${DIM}${l}${fill.repeat(Math.max(0, w - 2))}${r}${RST}`, w);
 
 		const lines: string[] = [];
 
@@ -383,12 +417,30 @@ class PompomSettingsPanel {
 		lines.push(line(`${ACC}Pompom Settings${RST}${headerRight}`));
 		lines.push(border("\u251c", "\u2500", "\u2524"));
 
-		// Tab bar — two-line for narrow terminals
-		const useShort = w < 50;
-		let tabStr = "";
-		for (let i = 0; i < TABS.length; i++) {
-			const name = useShort ? TABS[i].slice(0, 3) : TABS[i];
-			tabStr += i === this.tab ? `${ACC}[${name}]${RST} ` : `${DIM}${name}${RST} `;
+		// Tab bar — responsive: full names → short names → scrolling window
+		const tabNames = iw < 40 ? TABS.map(t => t.slice(0, 3))
+			: iw < 55 ? TABS.map(t => t.length > 5 ? t.slice(0, 4) : t)
+			: TABS;
+		// Build tab string, truncating to fit width with scroll indicators
+		let tabParts: string[] = [];
+		for (let i = 0; i < tabNames.length; i++) {
+			const name = tabNames[i];
+			tabParts.push(i === this.tab ? `${ACC}[${name}]${RST}` : `${DIM}${name}${RST}`);
+		}
+		let tabStr = tabParts.join(" ");
+		// If tab bar overflows, show a scrolling window centered on active tab
+		if (visibleWidth(tabStr) > iw) {
+			const window = Math.max(3, Math.floor(iw / 10));
+			const start = Math.max(0, Math.min(this.tab - Math.floor(window / 2), TABS.length - window));
+			const end = Math.min(TABS.length, start + window);
+			tabParts = [];
+			if (start > 0) tabParts.push(`${DIM}\u2039${RST}`);
+			for (let i = start; i < end; i++) {
+				const name = tabNames[i];
+				tabParts.push(i === this.tab ? `${ACC}[${name}]${RST}` : `${DIM}${name}${RST}`);
+			}
+			if (end < TABS.length) tabParts.push(`${DIM}\u203a${RST}`);
+			tabStr = tabParts.join(" ");
 		}
 		lines.push(line(tabStr));
 		lines.push(border("\u251c", "\u2500", "\u2524"));
@@ -434,24 +486,67 @@ class PompomSettingsPanel {
 		// On/off toggle — first row
 		const togglePre = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
 		const toggleLabel = this.pompomEnabled
-			? `${GRN}ON${RST}  ${DIM}animation, voice, ambient all active${RST}`
-			: `${YEL}OFF${RST} ${DIM}everything muted — side chat still works${RST}`;
+			? `${GRN}ON${RST}` + (iw >= 40 ? `  ${DIM}animation, voice, ambient active${RST}` : "")
+			: `${YEL}OFF${RST}` + (iw >= 40 ? ` ${DIM}muted \u2014 chat still works${RST}` : "");
 		lines.push(line(`${togglePre}${BRT}Pompom: ${toggleLabel}`));
 		lines.push(line(""));
 
-		// Status section
-		lines.push(line(`${BRT}Mood:${RST}   ${s.mood}    ${BRT}Weather:${RST} ${weather}`));
-		lines.push(line(`${BRT}Hunger:${RST} ${bar10(s.hunger)} ${s.hunger}%`));
-		lines.push(line(`${BRT}Energy:${RST} ${bar10(s.energy)} ${s.energy}%`));
+		// Status section — responsive layout
+		const barSize = iw >= 50 ? 10 : iw >= 35 ? 6 : 4;
+		const barFn = (v: number) => {
+			const f = Math.max(0, Math.min(barSize, Math.round(v / (100 / barSize))));
+			return "\u2588".repeat(f) + "\u2591".repeat(barSize - f);
+		};
+		if (iw >= 55) {
+			// Wide: mood + weather on same line, bars with labels
+			lines.push(line(`${BRT}Mood:${RST} ${s.mood}    ${BRT}Weather:${RST} ${weather}`));
+			lines.push(line(`${BRT}Hunger:${RST} ${barFn(s.hunger)} ${s.hunger}%    ${BRT}Energy:${RST} ${barFn(s.energy)} ${s.energy}%`));
+		} else if (iw >= 35) {
+			// Medium: stacked but compact
+			lines.push(line(`${BRT}Mood:${RST} ${s.mood}  ${BRT}Wx:${RST} ${weather}`));
+			lines.push(line(`${BRT}Hnger:${RST} ${barFn(s.hunger)} ${s.hunger}%  ${BRT}Enrgy:${RST} ${barFn(s.energy)} ${s.energy}%`));
+		} else {
+			// Narrow: minimal
+			lines.push(line(`${s.mood} ${barFn(s.hunger)}${s.hunger}% ${barFn(s.energy)}${s.energy}%`));
+		}
 		lines.push(line(""));
-		lines.push(line(`${ACC}Actions${RST}  ${DIM}(press Enter to activate)${RST}`));
 
-		// Action rows — offset by 1 for the toggle row
-		for (let i = 0; i < POMPOM_ACTIONS.length; i++) {
-			const a = POMPOM_ACTIONS[i];
-			const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
-			const desc = truncateToWidth(a.description, Math.max(8, iw - a.label.length - 8));
-			lines.push(line(`${pre}${BRT}${a.label}${RST}  ${DIM}${desc}${RST}`));
+		// Actions header
+		if (iw >= 40) lines.push(line(`${ACC}Actions${RST}  ${DIM}(Enter to activate)${RST}`));
+		else lines.push(line(`${ACC}Actions${RST}`));
+
+		// Actions — 2-column layout for wide terminals, single column otherwise
+		if (iw >= 60) {
+			const colW = Math.floor((iw - 2) / 2);
+			for (let i = 0; i < POMPOM_ACTIONS.length; i += 2) {
+				const a1 = POMPOM_ACTIONS[i];
+				const a2 = i + 1 < POMPOM_ACTIONS.length ? POMPOM_ACTIONS[i + 1] : null;
+				const pre1 = (i + 1) === this.row ? `${SEL}\u25b8` : ` `;
+				const desc1 = truncateToWidth(a1.description, Math.max(4, colW - a1.label.length - 5));
+				let col1 = `${pre1} ${BRT}${a1.label}${RST} ${DIM}${desc1}${RST}`;
+				const col1W = visibleWidth(col1);
+				const gap = Math.max(1, colW - col1W);
+				col1 += " ".repeat(gap);
+				if (a2) {
+					const pre2 = (i + 2) === this.row ? `${SEL}\u25b8` : ` `;
+					const desc2 = truncateToWidth(a2.description, Math.max(4, colW - a2.label.length - 5));
+					lines.push(line(`${col1}${pre2} ${BRT}${a2.label}${RST} ${DIM}${desc2}${RST}`));
+				} else {
+					lines.push(line(col1));
+				}
+			}
+		} else {
+			// Single column — truncate descriptions to fit
+			for (let i = 0; i < POMPOM_ACTIONS.length; i++) {
+				const a = POMPOM_ACTIONS[i];
+				const pre = (i + 1) === this.row ? `${SEL}\u25b8 ` : `  `;
+				if (iw >= 30) {
+					const desc = truncateToWidth(a.description, Math.max(4, iw - a.label.length - 6));
+					lines.push(line(`${pre}${BRT}${a.label}${RST} ${DIM}${desc}${RST}`));
+				} else {
+					lines.push(line(`${pre}${BRT}${a.label}${RST}`));
+				}
+			}
 		}
 	}
 
@@ -460,25 +555,31 @@ class PompomSettingsPanel {
 		const voiceId = getCurrentVoiceId(cfg);
 		const catalog = getVoiceCatalog()[cfg.engine] || [];
 		const voiceName = catalog.find(v => v.id === voiceId)?.name || voiceId;
-		const vShort = visibleWidth(voiceName) > iw - 12
-			? truncateToWidth(voiceName, Math.max(8, iw - 15)) + "..."
+		const maxVoiceW = Math.max(8, iw - 14);
+		const vShort = visibleWidth(voiceName) > maxVoiceW
+			? truncateToWidth(voiceName, maxVoiceW - 3) + "..."
 			: voiceName;
 		const vol = cfg.volume;
-		const volBar = bar10(vol);
+		const barSize = iw >= 40 ? 10 : iw >= 30 ? 6 : 4;
+		const volBar = (() => { const f = Math.max(0, Math.min(barSize, Math.round(vol / (100 / barSize)))); return "\u2588".repeat(f) + "\u2591".repeat(barSize - f); })();
+		// Adaptive label width
+		const lbl = iw >= 40 ? (s: string) => s.padEnd(14) : (s: string) => s.padEnd(8);
 		const rows = [
-			`Engine:       ${cfg.engine}`,
-			`Voice:        ${vShort}`,
-			`Volume:       ${volBar} ${vol}%  [+/-]`,
-			`Status:       ${cfg.enabled ? GRN + "ON" : DIM + "OFF"}${RST}`,
+			`${lbl("Engine:")}${cfg.engine}`,
+			`${lbl("Voice:")}${vShort}`,
+			`${lbl("Volume:")}${volBar} ${vol}%` + (iw >= 35 ? "  [+/-]" : ""),
+			`${lbl("Status:")}${cfg.enabled ? GRN + "ON" : DIM + "OFF"}${RST}`,
 			`Test voice`,
 		];
 		for (let i = 0; i < rows.length; i++) {
 			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
 			lines.push(line(`${pre}${BRT}${rows[i]}${RST}`));
 		}
-		lines.push(line(""));
-		lines.push(line(`${DIM}Pompom speaks reactions and commentary aloud.${RST}`));
-		lines.push(line(`${DIM}Personality:  ${cfg.personality}  (change in Personality tab)${RST}`));
+		if (iw >= 40) {
+			lines.push(line(""));
+			lines.push(line(`${DIM}Pompom speaks reactions and commentary aloud.${RST}`));
+			lines.push(line(`${DIM}Personality:  ${cfg.personality}  (change in Personality tab)${RST}`));
+		}
 	}
 
 	private renderAmbientTab(lines: string[], line: (s: string) => string) {
@@ -486,16 +587,19 @@ class PompomSettingsPanel {
 		const cached = getCachedWeathers();
 		const sfxStatus = getSfxCacheStatus();
 		const vol = cfg.volume;
-		const volBar = bar10(vol);
+		const iw = this.lastIw;
+		const barSize = iw >= 40 ? 10 : iw >= 30 ? 6 : 4;
+		const volBar = (() => { const f = Math.max(0, Math.min(barSize, Math.round(vol / (100 / barSize)))); return "\u2588".repeat(f) + "\u2591".repeat(barSize - f); })();
 		const hasKey = Boolean(process.env.ELEVENLABS_API_KEY);
+		const lbl = iw >= 40 ? (s: string) => s.padEnd(14) : (s: string) => s.padEnd(8);
 
 		// Section: Ambient
 		lines.push(line(`${ACC}Ambient Loops${RST}  ${isAmbientPlaying() ? GRN + "playing" + RST : ""}`));
 		const ambientRows = [
-			`Status:       ${cfg.enabled ? GRN + "ON" : DIM + "OFF"}${RST}`,
-			`Volume:       ${volBar} ${vol}%  [+/-]`,
-			`Pregenerate   ${DIM}Generate all 5 weather sounds (60s each)${RST}`,
-			`Cached:       ${cached.length > 0 ? cached.join(", ") : "none"} ${DIM}(${cached.length}/5)${RST}`,
+			`${lbl("Status:")}${cfg.enabled ? GRN + "ON" : DIM + "OFF"}${RST}`,
+			`${lbl("Volume:")}${volBar} ${vol}%` + (iw >= 35 ? "  [+/-]" : ""),
+			`Pregenerate` + (iw >= 45 ? `   ${DIM}Generate 5 weather sounds${RST}` : ""),
+			`${lbl("Cached:")}${cached.length > 0 ? cached.join(", ") : "none"} ${DIM}(${cached.length}/5)${RST}`,
 		];
 		for (let i = 0; i < ambientRows.length; i++) {
 			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
@@ -505,45 +609,45 @@ class PompomSettingsPanel {
 		lines.push(line(""));
 
 		// Section: SFX
-		lines.push(line(`${ACC}Sound Effects${RST}  ${DIM}(${sfxStatus.cached}/${sfxStatus.total} sounds, ${sfxStatus.variants} variants)${RST}`));
+		lines.push(line(`${ACC}Sound Effects${RST}  ${DIM}(${sfxStatus.cached}/${sfxStatus.total}, ${sfxStatus.variants} var)${RST}`));
 		const sfxRows = [
-			`Pregenerate   ${DIM}Generate all SFX + 3 variants each${RST}`,
-			`Cached:       ${sfxStatus.cached}/${sfxStatus.total} sounds, ${sfxStatus.variants} variants`,
+			`Pregenerate` + (iw >= 45 ? `   ${DIM}Generate SFX + 3 variants${RST}` : ""),
+			`${lbl("Cached:")}${sfxStatus.cached}/${sfxStatus.total} sounds, ${sfxStatus.variants} variants`,
 		];
 		for (let i = 0; i < sfxRows.length; i++) {
-			const rowIdx = i + 4; // offset after ambient rows
+			const rowIdx = i + 4;
 			const pre = rowIdx === this.row ? `${SEL}\u25b8 ` : `  `;
 			lines.push(line(`${pre}${BRT}${sfxRows[i]}${RST}`));
 		}
 
-		lines.push(line(""));
-
-		// Info section
-		lines.push(line(`${DIM}Features: sleep ducking, crossfade, volume jitter,${RST}`));
-		lines.push(line(`${DIM}time-of-day SFX, mood-reactive layers, micro-variations${RST}`));
+		if (iw >= 45) {
+			lines.push(line(""));
+			lines.push(line(`${DIM}Features: sleep ducking, crossfade, jitter,${RST}`));
+			lines.push(line(`${DIM}time-of-day SFX, mood layers, micro-variations${RST}`));
+		}
 		lines.push(line(""));
 		const custom = getCustomWeathers();
-		if (custom.length > 0) {
-			lines.push(line(`${ACC}Custom:${RST} ${custom.join(", ")}`));
-		}
-		lines.push(line(`${DIM}Drop your own loops in:${RST}`));
-		lines.push(line(`${DIM}  ${getCustomAudioDir()}${RST}`));
-		lines.push(line(`${DIM}  Files: clear.mp3 cloudy.mp3 rain.mp3 snow.mp3 storm.mp3${RST}`));
+		if (custom.length > 0) lines.push(line(`${ACC}Custom:${RST} ${custom.join(", ")}`));
+		const audioDir = getCustomAudioDir();
+		const homeDir = os.homedir();
+		const shortDir = iw >= 55 || !homeDir ? audioDir : audioDir.replace(homeDir, "~");
+		lines.push(line(`${DIM}Custom loops: ${truncateToWidth(shortDir, Math.max(8, iw - 16))}${RST}`));
 		if (!hasKey && (custom.length < 5 || sfxStatus.cached < sfxStatus.total)) {
 			lines.push(line(`${YEL}Set ELEVENLABS_API_KEY for AI generation.${RST}`));
 		}
 	}
 
-	private renderPersonalityTab(lines: string[], line: (s: string) => string, w: number) {
+	private renderPersonalityTab(lines: string[], line: (s: string) => string, _w: number) {
 		const cfg = getVoiceConfig();
-		lines.push(line(`${DIM}Controls how often Pompom speaks during work.${RST}`));
+		const iw = this.lastIw;
+		if (iw >= 40) lines.push(line(`${DIM}Controls how often Pompom speaks during work.${RST}`));
 		lines.push(line(""));
 		for (let i = 0; i < PERSONALITY_OPTIONS.length; i++) {
 			const p = PERSONALITY_OPTIONS[i];
 			const active = cfg.personality === p.id ? ` ${GRN}\u2713${RST}` : "";
-			const label = w < 45 ? p.short : p.label;
+			const label = iw < 35 ? p.short : iw < 50 ? p.id : p.label;
 			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
-			lines.push(line(`${pre}${BRT}${label}${RST}${active}`));
+			lines.push(line(`${pre}${BRT}${truncateToWidth(label, Math.max(8, iw - 6))}${RST}${active}`));
 		}
 	}
 
@@ -560,55 +664,81 @@ class PompomSettingsPanel {
 
 	private renderAccessoriesTab(lines: string[], line: (s: string) => string) {
 		const acc = pompomGetAccessories();
-		lines.push(line(`${DIM}Give Pompom items. They appear based on weather.${RST}`));
+		const iw = this.lastIw;
+		if (iw >= 40) lines.push(line(`${DIM}Give Pompom items. They appear based on weather.${RST}`));
 		lines.push(line(""));
 		for (let i = 0; i < ACCESSORY_KEYS.length; i++) {
 			const key = ACCESSORY_KEYS[i];
 			const owned = acc[key];
-			const mark = owned ? ` ${GRN}\u2713 owned${RST}` : ` ${DIM}[Enter] give${RST}`;
+			const mark = owned ? ` ${GRN}\u2713${RST}` + (iw >= 35 ? ` ${DIM}owned${RST}` : "") : ` ${DIM}[Enter]${RST}`;
 			const pre = i === this.row ? `${SEL}\u25b8 ` : `  `;
 			const descriptions: Record<string, string> = {
-				umbrella: "Shows in rain/storm",
-				scarf: "Shows in snow",
-				sunglasses: "Shows in clear weather",
-				hat: "A cute collectible",
+				umbrella: "rain/storm",
+				scarf: "snow",
+				sunglasses: "clear",
+				hat: "collectible",
 			};
-			const desc = descriptions[key] || "";
-			lines.push(line(`${pre}${BRT}${key}${RST}${mark}  ${DIM}${desc}${RST}`));
+			const desc = iw >= 35 ? `  ${DIM}${descriptions[key] || ""}${RST}` : "";
+			lines.push(line(`${pre}${BRT}${key}${RST}${mark}${desc}`));
 		}
 	}
 
 	private renderModelTab(lines: string[], line: (s: string) => string) {
 		const current = getPompomModel();
+		const iw = this.lastIw;
 		const mainActive = current === "" ? ` ${GRN}\u2713${RST}` : "";
-		const customActive = current !== "" ? ` ${GRN}\u2713 ${current}${RST}` : "";
+		const customModel = current !== "" ? truncateToWidth(current, Math.max(8, iw - 20)) : "";
+		const customActive = current !== "" ? ` ${GRN}\u2713 ${customModel}${RST}` : "";
 		const pre0 = this.row === 0 ? `${SEL}\u25b8 ` : `  `;
 		const pre1 = this.row === 1 ? `${SEL}\u25b8 ` : `  `;
-		lines.push(line(`${DIM}AI model for /pompom:ask, /pompom:analyze, /pompom:chat${RST}`));
+		if (iw >= 45) lines.push(line(`${DIM}AI model for /pompom:ask, :analyze, :chat${RST}`));
 		lines.push(line(""));
-		lines.push(line(`${pre0}${BRT}Use main agent's model (default)${RST}${mainActive}`));
+		lines.push(line(`${pre0}${BRT}Use main model (default)${RST}${mainActive}`));
 		lines.push(line(`${pre1}${BRT}Set custom model...${RST}${customActive}`));
 		lines.push(line(""));
-		if (this.modelList.length === 0) {
-			lines.push(line(`${DIM}No models loaded — type a model ID manually${RST}`));
-		} else {
-			lines.push(line(`${DIM}${this.modelList.length} models available${RST}`));
-		}
+		const modelCount = this.modelList.length;
+		lines.push(line(`${DIM}${modelCount > 0 ? modelCount + " models available" : "Type a model ID manually"}${RST}`));
 	}
 
 	private renderShortcutsTab(lines: string[], line: (s: string) => string, iw: number) {
 		const modifier = process.platform === "darwin" ? "\u2325" : "Alt+";
 		for (const group of SHORTCUT_GROUPS) {
 			lines.push(line(`${ACC}${group.section}${RST}`));
-			for (const [key, desc] of group.items) {
-				const displayKey = key.replace("Alt+", modifier);
-				const keyW = 8;
-				const padded = displayKey + " ".repeat(Math.max(1, keyW - visibleWidth(displayKey)));
-				lines.push(line(`  ${BRT}${padded}${RST}${DIM}${truncateToWidth(desc, Math.max(8, iw - keyW - 4))}${RST}`));
+			const items = group.items;
+			// 2-column layout for wide terminals
+			if (iw >= 60 && group.section !== "Commands") {
+				const colW = Math.floor((iw - 2) / 2);
+				for (let i = 0; i < items.length; i += 2) {
+					const [k1, d1] = items[i];
+					const dk1 = k1.replace("Alt+", modifier);
+					const keyW = 7;
+					const pad1 = dk1 + " ".repeat(Math.max(1, keyW - visibleWidth(dk1)));
+					const desc1 = truncateToWidth(d1, Math.max(4, colW - keyW - 3));
+					let col1 = `${BRT}${pad1}${RST}${DIM}${desc1}${RST}`;
+					const col1Vis = visibleWidth(col1);
+					const gap = Math.max(1, colW - col1Vis);
+					col1 += " ".repeat(gap);
+					if (i + 1 < items.length) {
+						const [k2, d2] = items[i + 1];
+						const dk2 = k2.replace("Alt+", modifier);
+						const pad2 = dk2 + " ".repeat(Math.max(1, keyW - visibleWidth(dk2)));
+						const desc2 = truncateToWidth(d2, Math.max(4, colW - keyW - 3));
+						lines.push(line(`  ${col1}${BRT}${pad2}${RST}${DIM}${desc2}${RST}`));
+					} else {
+						lines.push(line(`  ${col1}`));
+					}
+				}
+			} else {
+				const keyW = iw >= 35 ? 8 : 6;
+				for (const [key, desc] of items) {
+					const displayKey = key.replace("Alt+", modifier);
+					const padded = displayKey + " ".repeat(Math.max(1, keyW - visibleWidth(displayKey)));
+					lines.push(line(`  ${BRT}${padded}${RST}${DIM}${truncateToWidth(desc, Math.max(4, iw - keyW - 4))}${RST}`));
+				}
 			}
 			lines.push(line(""));
 		}
-		lines.push(line(`${DIM}Commands: /pompom help  |  Settings: /pompom-settings${RST}`));
+		if (iw >= 45) lines.push(line(`${DIM}/pompom help  |  /pompom-settings${RST}`));
 	}
 
 	private renderAboutTab(lines: string[], line: (s: string) => string) {
@@ -617,31 +747,43 @@ class PompomSettingsPanel {
 		const cfg = getVoiceConfig();
 		const ambientCfg = getAmbientConfig();
 		const weather = pompomGetWeather();
+		const iw = this.lastIw;
+		const barSize = iw >= 45 ? 10 : iw >= 30 ? 6 : 4;
+		const barFn = (v: number) => { const f = Math.max(0, Math.min(barSize, Math.round(v / (100 / barSize)))); return "\u2588".repeat(f) + "\u2591".repeat(barSize - f); };
+		const lbl = iw >= 45 ? (s: string) => s.padEnd(13) : (s: string) => s.padEnd(8);
 
 		lines.push(line(`${ACC}Pompom${RST}`));
-		lines.push(line(`  ${BRT}Mood:${RST}        ${s.mood}`));
-		lines.push(line(`  ${BRT}Hunger:${RST}      ${bar10(s.hunger)} ${s.hunger}%`));
-		lines.push(line(`  ${BRT}Energy:${RST}      ${bar10(s.energy)} ${s.energy}%`));
-		lines.push(line(`  ${BRT}Theme:${RST}       ${s.theme}`));
-		lines.push(line(`  ${BRT}Weather:${RST}     ${weather}`));
+		if (iw >= 55) {
+			// Wide: 2-column status
+			lines.push(line(`  ${BRT}${lbl("Mood:")}${RST}${s.mood}    ${BRT}Weather:${RST} ${weather}`));
+			lines.push(line(`  ${BRT}${lbl("Hunger:")}${RST}${barFn(s.hunger)} ${s.hunger}%    ${BRT}Energy:${RST} ${barFn(s.energy)} ${s.energy}%`));
+			lines.push(line(`  ${BRT}${lbl("Theme:")}${RST}${s.theme}`));
+		} else {
+			lines.push(line(`  ${BRT}${lbl("Mood:")}${RST}${s.mood}  ${BRT}Wx:${RST} ${weather}`));
+			lines.push(line(`  ${BRT}${lbl("Hunger:")}${RST}${barFn(s.hunger)} ${s.hunger}%`));
+			lines.push(line(`  ${BRT}${lbl("Energy:")}${RST}${barFn(s.energy)} ${s.energy}%`));
+		}
 		lines.push(line(""));
 		const sfxInfo = getSfxCacheStatus();
 		lines.push(line(`${ACC}Audio${RST}`));
-		lines.push(line(`  ${BRT}Voice:${RST}       ${cfg.enabled ? cfg.engine : "off"} (${cfg.personality})`));
-		lines.push(line(`  ${BRT}Voice vol:${RST}   ${cfg.volume}%`));
-		lines.push(line(`  ${BRT}Ambient:${RST}     ${ambientCfg.enabled ? "on" : "off"} (${ambientCfg.volume}%)`));
-		lines.push(line(`  ${BRT}SFX:${RST}         ${sfxInfo.cached}/${sfxInfo.total} sounds, ${sfxInfo.variants} variants`));
+		lines.push(line(`  ${BRT}${lbl("Voice:")}${RST}${cfg.enabled ? cfg.engine : "off"} (${cfg.personality})`));
+		if (iw >= 55) {
+			lines.push(line(`  ${BRT}${lbl("Vol:")}${RST}voice ${cfg.volume}%  ambient ${ambientCfg.enabled ? ambientCfg.volume + "%" : "off"}`));
+		} else {
+			lines.push(line(`  ${BRT}${lbl("Voice vol:")}${RST}${cfg.volume}%`));
+			lines.push(line(`  ${BRT}${lbl("Ambient:")}${RST}${ambientCfg.enabled ? "on " + ambientCfg.volume + "%" : "off"}`));
+		}
+		lines.push(line(`  ${BRT}${lbl("SFX:")}${RST}${sfxInfo.cached}/${sfxInfo.total} sounds, ${sfxInfo.variants} var`));
 		lines.push(line(""));
-		lines.push(line(`${ACC}Agent Session${RST}`));
-		lines.push(line(`  ${BRT}Agent:${RST}       ${stats.isAgentActive ? "active" : "idle"} (${stats.mood})`));
-		lines.push(line(`  ${BRT}Tools:${RST}       ${stats.toolCalls} calls, ${stats.toolFailures} fails`));
-		lines.push(line(`  ${BRT}Model:${RST}       ${getPompomModel() || "(main agent)"}`));
+		lines.push(line(`${ACC}Agent${RST}`));
+		lines.push(line(`  ${BRT}${lbl("Status:")}${RST}${stats.isAgentActive ? "active" : "idle"} (${stats.mood})`));
+		lines.push(line(`  ${BRT}${lbl("Tools:")}${RST}${stats.toolCalls} calls, ${stats.toolFailures} fails`));
+		const model = getPompomModel() || "(main)";
+		lines.push(line(`  ${BRT}${lbl("Model:")}${RST}${truncateToWidth(model, Math.max(8, iw - 16))}`));
 		lines.push(line(""));
 		const termCount = getInstanceCount();
-		const role = isPrimaryInstance() ? `${GRN}primary${RST} (audio active)` : `${DIM}secondary${RST} (visual only)`;
-		lines.push(line(`${ACC}Terminals${RST}`));
-		lines.push(line(`  ${BRT}Running:${RST}     ${termCount} instance${termCount !== 1 ? "s" : ""}`));
-		lines.push(line(`  ${BRT}This:${RST}        ${role}`));
+		const role = isPrimaryInstance() ? `${GRN}primary${RST}` + (iw >= 40 ? " (audio)" : "") : `${DIM}secondary${RST}`;
+		lines.push(line(`${ACC}Terminals${RST}  ${termCount} instance${termCount !== 1 ? "s" : ""}, ${role}`));
 	}
 
 	private renderSubPicker(lines: string[], line: (s: string) => string, iw: number, w: number) {
@@ -680,11 +822,19 @@ class PompomSettingsPanel {
 	// ─── Footer hints ─────────────────────────────────────────────────────────
 
 	private getFooterHint(): string {
-		if (this.sub !== "main") return "[Esc] Back  [Type] Filter  [\u2191\u2193] Nav";
-		if (this.isVolumeRow()) return "[Esc] Close  [+/-] Volume  [\u2190\u2192] Tabs";
+		const iw = this.lastIw;
+		if (this.sub !== "main") {
+			return iw >= 40 ? "[Esc] Back  [Type] Filter  [\u2191\u2193] Nav" : "Esc:Back  \u2191\u2193:Nav";
+		}
+		if (iw < 35) {
+			return "Esc:Close \u2190\u2192:Tabs \u2191\u2193:Nav";
+		}
+		if (this.isVolumeRow()) return "[Esc] Close  [+/-] Vol  [\u2190\u2192] Tabs";
 		if (this.tab === TAB_SHORTCUTS || this.tab === TAB_ABOUT) return "[Esc] Close  [\u2190\u2192] Tabs";
-		if (this.tab === TAB_POMPOM) return "[Esc] Close  [\u2190\u2192] Tabs  [\u2191\u2193] Nav  [Enter] Do it!";
-		return "[Esc] Close  [\u2190\u2192] Tabs  [\u2191\u2193] Nav  [Enter] Select";
+		if (this.tab === TAB_POMPOM) {
+			return iw >= 50 ? "[Esc] Close  [\u2190\u2192] Tabs  [\u2191\u2193] Nav  [Enter] Do it!" : "[Esc] Close  [\u2190\u2192] Tabs  [Enter] Act";
+		}
+		return iw >= 50 ? "[Esc] Close  [\u2190\u2192] Tabs  [\u2191\u2193] Nav  [Enter] Select" : "[Esc] Close  [\u2190\u2192] Tabs  [Enter] Sel";
 	}
 
 	invalidate(): void { this.cw = undefined; this.cl = undefined; }
@@ -693,6 +843,13 @@ class PompomSettingsPanel {
 export interface PompomSettingsOptions {
 	pompomEnabled?: boolean;
 	onTogglePompom?: (enabled: boolean) => void;
+	onAmbientToggle?: (enabled: boolean) => void;
+	onAccessoryChange?: (change: AccessoryChange) => void | Promise<void>;
+}
+
+export interface AccessoryChange {
+	accessory: keyof Accessories;
+	accessories: Accessories;
 }
 
 export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSettingsOptions): Promise<void> {
@@ -700,6 +857,8 @@ export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSet
 	const panel = new PompomSettingsPanel();
 	panel.pompomEnabled = opts?.pompomEnabled ?? true;
 	panel.onTogglePompom = opts?.onTogglePompom;
+	panel.onAmbientToggle = opts?.onAmbientToggle;
+	panel.onAccessoryChange = opts?.onAccessoryChange;
 
 	// Wire pregenerate callback
 	panel.onPregenerate = async () => {
@@ -730,9 +889,9 @@ export async function openPompomSettings(ctx: ExtensionContext, opts?: PompomSet
 		{
 			overlay: true,
 			overlayOptions: {
-				width: "60%" as any,
-				minWidth: 40,
-				maxHeight: "80%" as any,
+				width: "75%" as any,
+				minWidth: 36,
+				maxHeight: "85%" as any,
 				anchor: "center" as any,
 			},
 		},

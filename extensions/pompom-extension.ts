@@ -54,7 +54,10 @@ import {
 	pompomStatus,
 	renderPompom,
 	resetPompom,
+	initSessionCount,
+	pompomClearParticles,
 } from "./pompom";
+import * as pompomModule from "./pompom";
 import {
 	initAmbient,
 	getAmbientConfig,
@@ -83,6 +86,7 @@ import {
 	stopWeatherSfx,
 	pregenerateSfx,
 	setMicSilence,
+	setMoodSfxEnabled,
 	type SfxName,
 } from "./pompom-ambient";
 import {
@@ -105,6 +109,8 @@ import {
 	getVoiceCatalog,
 	speakTest,
 	stopPlayback,
+	playDemoLine,
+	isDemoCached,
 	type SpeechEvent,
 	type Personality,
 } from "./pompom-voice";
@@ -113,12 +119,11 @@ import { installPompomFooter } from "./pompom-footer";
 import {
 	registerInstance,
 	deregisterInstance,
+	getInstancePersistenceKey,
 	isPrimaryInstance,
 	getOtherInstances,
 	getInstanceCount,
-	hasRecentGreeting,
 	markGreeting,
-	type InstanceInfo,
 } from "./pompom-instance";
 
 type MessageRole = "user" | "assistant" | "toolResult" | "unknown";
@@ -144,6 +149,10 @@ interface MessageLike {
 	api?: string;
 	usage?: unknown;
 	timestamp?: number;
+	toolCallId?: string;
+	toolName?: string;
+	details?: unknown;
+	isError?: boolean;
 }
 
 interface OverlayHint {
@@ -176,17 +185,18 @@ const emptyUsage = {
 
 function installPompomTheme(): void {
 	try {
-		const themesDir = path.join(os.homedir(), ".pi", "agent", "themes");
-		const themeFile = path.join(themesDir, "pompom.json");
 		const settingsFile = path.join(os.homedir(), ".pi", "agent", "settings.json");
 
-		// Find the theme source bundled with the package
-		const packageTheme = path.join(__dirname, "..", "themes", "pompom.json");
-		if (!fs.existsSync(packageTheme)) return; // not bundled (dev mode)
-
-		// Always copy latest theme (keeps it updated)
-		fs.mkdirSync(themesDir, { recursive: true });
-		fs.copyFileSync(packageTheme, themeFile);
+		// Remove legacy files if they exist
+		const legacyTheme = path.join(os.homedir(), ".pi", "agent", "themes", "pompom.json");
+		if (fs.existsSync(legacyTheme)) {
+			try { fs.unlinkSync(legacyTheme); } catch { /* ignore */ }
+		}
+		// Remove legacy cross-session chat history (chat is now per-session only)
+		const legacyChatHistory = path.join(os.homedir(), ".pi", "pompom", "chat-history.json");
+		if (fs.existsSync(legacyChatHistory)) {
+			try { fs.unlinkSync(legacyChatHistory); } catch { /* ignore */ }
+		}
 
 		// Auto-activate only if user is on a default theme or no theme set
 		if (!fs.existsSync(settingsFile)) return;
@@ -224,24 +234,40 @@ function loadAccessories(): Record<string, boolean> {
 	}
 }
 
-let savingAccessories = false;
+let accessoriesSavePromise: Promise<void> | null = null;
 let accessoriesDirty = false;
 
 async function saveAccessories(): Promise<void> {
-	if (savingAccessories) { accessoriesDirty = true; return; }
-	savingAccessories = true;
+	if (accessoriesSavePromise) {
+		const pendingSave = accessoriesSavePromise;
+		accessoriesDirty = true;
+		await pendingSave;
+		if (accessoriesDirty) {
+			await saveAccessories();
+		}
+		return;
+	}
+	const runSave = async (): Promise<void> => {
+		do {
+			accessoriesDirty = false;
+			const dir = SAVE_DIR;
+			await fs.promises.mkdir(dir, { recursive: true });
+			const tmp = SAVE_FILE + ".tmp." + process.pid;
+			await fs.promises.writeFile(tmp, JSON.stringify(pompomGetAccessories()));
+			await fs.promises.rename(tmp, SAVE_FILE);
+		} while (accessoriesDirty);
+	};
+	accessoriesSavePromise = runSave();
 	try {
-		const dir = SAVE_DIR;
-		await fs.promises.mkdir(dir, { recursive: true });
-		const tmp = SAVE_FILE + ".tmp." + process.pid;
-		await fs.promises.writeFile(tmp, JSON.stringify(pompomGetAccessories()));
-		await fs.promises.rename(tmp, SAVE_FILE);
+		await accessoriesSavePromise;
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom] saveAccessories failed: ${msg}`);
+		throw error;
 	} finally {
-		savingAccessories = false;
-		if (accessoriesDirty) { accessoriesDirty = false; void saveAccessories(); }
+		if (accessoriesSavePromise) {
+			accessoriesSavePromise = null;
+		}
 	}
 }
 
@@ -384,6 +410,17 @@ function getMessageText(message: unknown): string {
 	return extractTextContent(message.content);
 }
 
+function summarizeToolResultDetails(details: unknown): string {
+	if (!isRecord(details)) {
+		return "";
+	}
+	const keys = Object.keys(details).slice(0, 4);
+	if (keys.length === 0) {
+		return "";
+	}
+	return `details:${keys.join("|")}`;
+}
+
 function getEventMessage(event: unknown): unknown {
 	if (!isRecord(event)) {
 		return undefined;
@@ -435,6 +472,36 @@ function createAssistantMessage(text: string, model: ModelLike, messageLike: Mes
 	};
 }
 
+function createToolResultMessage(messageLike: MessageLike): Message | null {
+	const toolName = typeof messageLike.toolName === "string" && messageLike.toolName.trim()
+		? messageLike.toolName
+		: "tool";
+	const toolCallId = typeof messageLike.toolCallId === "string" && messageLike.toolCallId.trim()
+		? messageLike.toolCallId
+		: `${toolName}-${messageLike.timestamp ?? Date.now()}`;
+	const contentText = getMessageText(messageLike);
+	const detailsText = summarizeToolResultDetails(messageLike.details);
+	const stateLabel = messageLike.isError === true ? "failed" : "ok";
+	const parts = [`[${toolName} ${stateLabel}]`];
+	if (contentText) {
+		parts.push(contentText);
+	}
+	if (!contentText && detailsText) {
+		parts.push(`(${detailsText})`);
+	}
+	if (!contentText && !detailsText) {
+		parts.push("(completed without text output)");
+	}
+	return {
+		role: "toolResult",
+		toolCallId,
+		toolName,
+		content: [{ type: "text", text: parts.join(" ") }],
+		isError: messageLike.isError === true,
+		timestamp: typeof messageLike.timestamp === "number" ? messageLike.timestamp : Date.now(),
+	};
+}
+
 function buildRecentSessionMessages(currentContext: ExtensionContext): Message[] {
 	const model = currentContext.model;
 	if (!isModelLike(model)) {
@@ -442,43 +509,80 @@ function buildRecentSessionMessages(currentContext: ExtensionContext): Message[]
 	}
 
 	const messages: Message[] = [];
-	for (const entry of currentContext.sessionManager.getBranch() as SessionEntryLike[]) {
+	const branch = currentContext.sessionManager.getBranch() as SessionEntryLike[];
+	for (let index = branch.length - 1; index >= 0 && messages.length < 12; index--) {
+		const entry = branch[index];
 		if (entry.type !== "message" || !isRecord(entry.message)) {
 			continue;
 		}
 		const messageLike = entry.message as MessageLike;
 		const role = getMessageRole(messageLike);
-		const text = getMessageText(messageLike);
-		if (!text) {
-			continue;
-		}
 		if (role === "user") {
-			messages.push(createUserMessage(text));
+			const text = getMessageText(messageLike);
+			if (!text) {
+				continue;
+			}
+			messages.unshift(createUserMessage(text));
 			continue;
 		}
 		if (role === "assistant") {
-			messages.push(createAssistantMessage(text, model, messageLike));
+			const text = getMessageText(messageLike);
+			if (!text) {
+				continue;
+			}
+			messages.unshift(createAssistantMessage(text, model, messageLike));
+			continue;
+		}
+		if (role === "toolResult") {
+			const toolResultMessage = createToolResultMessage(messageLike);
+			if (!toolResultMessage) {
+				continue;
+			}
+			messages.unshift(toolResultMessage);
 		}
 	}
 
-	return messages.slice(-12);
+	return messages;
+}
+
+// Agent state is cached in-memory and persisted to a file — no more appending
+// to session history (which caused O(n) scans and unbounded entry growth).
+const AGENT_STATE_DIR = path.join(os.homedir(), ".pi", "pompom", "agent-states");
+const AGENT_STATE_RESTORE_MAX_AGE_MS = 30000;
+
+interface PersistedAgentStateRecord {
+	cwd: string;
+	persistedAt: number;
+	state: ReturnType<typeof serializeState>;
+}
+
+function agentStateFilePath(): string {
+	return path.join(AGENT_STATE_DIR, `${getInstancePersistenceKey()}.json`);
 }
 
 function findLatestSerializedState(currentContext: ExtensionContext) {
-	let latestState: ReturnType<typeof serializeState> | null = null;
-	let latestTimestamp = 0;
-	for (const entry of currentContext.sessionManager.getBranch() as SessionEntryLike[]) {
-		if (entry.type !== "custom" || entry.customType !== POMPOM_AGENT_STATE_TYPE || !entry.data || !entry.timestamp) {
-			continue;
+	// Read from file cache instead of scanning session history
+	try {
+		const agentStateFile = agentStateFilePath();
+		if (fs.existsSync(agentStateFile)) {
+			const parsed = JSON.parse(fs.readFileSync(agentStateFile, "utf-8")) as unknown;
+			if (!isRecord(parsed)) {
+				return null;
+			}
+			if ("cwd" in parsed && "persistedAt" in parsed && "state" in parsed) {
+				const record = parsed as Partial<PersistedAgentStateRecord>;
+				if (
+					record.cwd !== currentContext.cwd
+					|| typeof record.persistedAt !== "number"
+					|| Date.now() - record.persistedAt > AGENT_STATE_RESTORE_MAX_AGE_MS
+				) {
+					return null;
+				}
+				return record.state as ReturnType<typeof serializeState>;
+			}
 		}
-		const timestamp = Date.parse(entry.timestamp) || 0;
-		if (timestamp < latestTimestamp) {
-			continue;
-		}
-		latestTimestamp = timestamp;
-		latestState = entry.data as ReturnType<typeof serializeState>;
-	}
-	return latestState;
+	} catch { /* corrupt or missing — start fresh */ }
+	return null;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -495,14 +599,38 @@ export default function (pi: ExtensionAPI) {
 	let pulseOverlayTimer: ReturnType<typeof setTimeout> | null = null;
 	let lastAgentTickAt = 0;
 	const AGENT_TICK_COOLDOWN_MS = 30000; // max 1 agent_tick per 30s
+	let primaryAmbientOwner = false;
+	let demoAccessorySnapshot: ReturnType<typeof pompomGetAccessories> | null = null;
 
 	function persistAgentState() {
 		try {
-			pi.appendEntry(POMPOM_AGENT_STATE_TYPE, serializeState());
+			if (!ctx) {
+				return;
+			}
+			const agentStateFile = agentStateFilePath();
+			const dir = path.dirname(agentStateFile);
+			if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+			const tmp = agentStateFile + ".tmp." + process.pid;
+			const payload: PersistedAgentStateRecord = {
+				cwd: ctx.cwd,
+				persistedAt: Date.now(),
+				state: serializeState(),
+			};
+			fs.writeFileSync(tmp, JSON.stringify(payload), "utf-8");
+			fs.renameSync(tmp, agentStateFile);
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			console.error(`[pompom] persistAgentState failed: ${msg}`);
 		}
+	}
+
+	function resetVoiceActivityState() {
+		setMicRecording(false);
+		setMicSilence(false);
+		pompomSetTalking(false);
+		pompomSetTalkAudioLevel(0);
+		unduckAmbient();
+		unduckAmbientForSleep();
 	}
 
 	function currentOverlayHint(): OverlayHint | null {
@@ -614,7 +742,10 @@ export default function (pi: ExtensionAPI) {
 
 			const others = getOtherInstances();
 			const otherInfo = others.length > 0
-				? `other_terminals=${others.length} (dirs: ${others.map(o => (o.cwd.split("/").pop() ?? "").replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 40)).join(", ")})`
+				? `other_terminals=${others.length} (dirs: ${others.map((otherInstance) => {
+					const dirName = path.basename(otherInstance.cwd) || otherInstance.cwd;
+					return dirName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 40);
+				}).join(", ")})`
 				: "only_terminal=true";
 			// Grab a brief snapshot of recent conversation so Pompom can comment on actual work
 			let workContext = "";
@@ -643,17 +774,27 @@ export default function (pi: ExtensionAPI) {
 				workContext ? `\nRecent work:\n${workContext}` : "",
 			].join("");
 
-			const apiCall = completeSimple(
-				model as any,
-				{ messages: [createUserMessage(userPrompt)], systemPrompt },
-				{ apiKey },
-			).catch(() => null);
-			const response = await Promise.race([
-				apiCall,
-				new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
-			]);
+			const controller = new AbortController();
+			const timeoutHandle = setTimeout(() => {
+				controller.abort();
+			}, 6000);
+			let response: Awaited<ReturnType<typeof completeSimple>> | null = null;
+			try {
+				response = await completeSimple(
+					model as any,
+					{ messages: [createUserMessage(userPrompt)], systemPrompt },
+					{ apiKey, signal: controller.signal },
+				);
+			} catch (error) {
+				if (error instanceof Error && error.name === "AbortError") {
+					return null;
+				}
+				return null;
+			} finally {
+				clearTimeout(timeoutHandle);
+			}
 			if (!response) return null;
-			const text = extractTextContent((response as any).content);
+			const text = extractTextContent(response.content);
 			if (!text || text.length < 3) return null;
 			return sanitizeAscii(text.slice(0, 140));
 		} catch {
@@ -701,6 +842,21 @@ export default function (pi: ExtensionAPI) {
 		if (aiSpeechTimer) { clearTimeout(aiSpeechTimer); aiSpeechTimer = null; }
 	}
 
+	function resetAiSpeechState() {
+		stopAiSpeech();
+		aiSpeechCount = 0;
+		aiSpeechEverScheduled = false;
+		aiSpeechHistory.length = 0;
+	}
+
+	function cleanupSessionUiState() {
+		if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
+		clearHintTimers();
+		overlayHint = null;
+		overlayHintUntil = 0;
+		closeChatOverlay();
+	}
+
 	async function runSafely(label: string, fn: () => Promise<void> | void) {
 		try {
 			await fn();
@@ -716,23 +872,49 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		loadedVoiceHintShown = true;
-		setTimeout(() => {
-			if (ctx?.hasUI) {
-				ctx.ui.notify(
+		voiceHintTimer = scheduleSessionHint({
+			commandContext: ctx,
+			delayMs: 5000,
+			onFire: (commandContext) => {
+				commandContext.ui.notify(
 					"Tip: Give Pompom a voice! Set ELEVENLABS_API_KEY for the best experience.\n" +
 					"ElevenLabs v3 enables emotional audio tags — Pompom laughs, whispers, and sings!\n" +
 					"Run /pompom:voice on or /pompom:voice setup to get started.",
 					"info"
 				);
-			}
-		}, 5000);
+			},
+		});
 	}
 
 	// ─── Ambient weather sync ─────────────────────────────────────────────
 	let ambientWeatherTimer: ReturnType<typeof setInterval> | null = null;
+	let voiceHintTimer: ReturnType<typeof setTimeout> | null = null;
+	let ambientHintTimer: ReturnType<typeof setTimeout> | null = null;
 	let loadedAmbientHintShown = false;
 	let lastAmbientWeather: string | null = null;
 	let wasTTSPlaying = false;
+
+	function clearHintTimers() {
+		if (voiceHintTimer) { clearTimeout(voiceHintTimer); voiceHintTimer = null; }
+		if (ambientHintTimer) { clearTimeout(ambientHintTimer); ambientHintTimer = null; }
+	}
+
+	function scheduleSessionHint({
+		commandContext,
+		delayMs,
+		onFire,
+	}: {
+		commandContext: ExtensionContext;
+		delayMs: number;
+		onFire: (commandContext: ExtensionContext) => void;
+	}): ReturnType<typeof setTimeout> {
+		return setTimeout(() => {
+			if (ctx !== commandContext || !commandContext.hasUI) {
+				return;
+			}
+			onFire(commandContext);
+		}, delayMs);
+	}
 
 	function startAmbientWeatherSync() {
 		stopAmbientWeatherSync();
@@ -743,6 +925,7 @@ export default function (pi: ExtensionAPI) {
 
 	function stopAmbientWeatherSync() {
 		if (ambientWeatherTimer) { clearInterval(ambientWeatherTimer); ambientWeatherTimer = null; }
+		primaryAmbientOwner = false;
 		stopWeatherSfx();
 	}
 
@@ -759,13 +942,21 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			if (isPrimaryInstance()) {
+				primaryAmbientOwner = true;
 				if (weather !== lastAmbientWeather || (!isAmbientPlaying() && !ambientBlocked)) {
 					lastAmbientWeather = weather;
 					setAmbientWeather(weather).catch(err => { console.error(`[pompom] setAmbientWeather failed: ${err instanceof Error ? err.message : err}`); });
 					startWeatherSfx();
 				}
-			} else if (weather !== lastAmbientWeather) {
-				lastAmbientWeather = weather;
+			} else {
+				if (primaryAmbientOwner) {
+					stopAmbient();
+					stopWeatherSfx();
+					primaryAmbientOwner = false;
+				}
+				if (weather !== lastAmbientWeather) {
+					lastAmbientWeather = weather;
+				}
 			}
 			// TTS ducking: duck when TTS starts, unduck when it stops
 			const ttsPlaying = isPlayingTTS();
@@ -781,6 +972,7 @@ export default function (pi: ExtensionAPI) {
 	function enablePompom(commandContext: ExtensionContext) {
 		enabled = true;
 		setVoiceEnabled(getVoiceConfig().enabled);
+		setMoodSfxEnabled(true);
 		// Only primary instance enables ambient audio to prevent duplicate sounds
 		if (isPrimaryInstance()) {
 			setAmbientEnabled(getAmbientConfig().enabled);
@@ -793,8 +985,11 @@ export default function (pi: ExtensionAPI) {
 
 	function disablePompom() {
 		enabled = false;
+		cancelAiCommand();
 		stopAiSpeech();
+		setMoodSfxEnabled(false);
 		hideCompanion();
+		resetVoiceActivityState();
 		stopAmbient();
 		stopAmbientWeatherSync();
 		stopPlayback();
@@ -808,6 +1003,10 @@ export default function (pi: ExtensionAPI) {
 		if (!enabled || !event.allowTts) {
 			return false;
 		}
+		// During demo, block all live TTS — cached demo audio handles voiceover
+		if (demoRunning) {
+			return false;
+		}
 		if (!isPrimaryInstance() && event.source !== "user_action") {
 			return false;
 		}
@@ -819,15 +1018,17 @@ export default function (pi: ExtensionAPI) {
 		const ambientConfig = getAmbientConfig();
 		if (!ambientConfig.enabled) return;
 		loadedAmbientHintShown = true;
-		setTimeout(() => {
-			if (ctx?.hasUI) {
-				ctx.ui.notify(
+		ambientHintTimer = scheduleSessionHint({
+			commandContext: ctx,
+			delayMs: 8000,
+			onFire: (commandContext) => {
+				commandContext.ui.notify(
 					"Ambient sounds are enabled — Pompom will play weather-matching background audio.\n" +
 					"Use /pompom:ambient off to disable, or /pompom:ambient volume 0-100 to adjust.",
 					"info"
 				);
-			}
-		}, 8000);
+			},
+		});
 	}
 
 	function safeRender(width: number): string[] {
@@ -935,8 +1136,7 @@ export default function (pi: ExtensionAPI) {
 			voiceCheckTimer = null;
 		}
 		stopHealthCheck();
-		pompomSetTalking(false);
-		pompomSetTalkAudioLevel(0);
+		resetVoiceActivityState();
 		pompomSetAgentOverlay({ active: false });
 		pompomSetAntennaGlow({ intensity: 0 });
 		pompomSetAgentEarBoost({ amount: 0 });
@@ -956,15 +1156,50 @@ export default function (pi: ExtensionAPI) {
 		"≈": "x", "†": "t", "˙": "h", "©": "g",
 	};
 
-	const POMPOM_KEYS = "pfbmcdswoxthg";
-
-	// Map keyboard letter → pompom action key (for Kitty CSI u sequences)
-	// Alt+e sends codepoint 'e', but we need to call pompomKeypress('f') for feed
-	const kittyKeyToAction: Record<string, string> = {
-		p: "p", e: "f", r: "b", z: "d", u: "h",
-		a: "w", t: "t", x: "x", g: "g", s: "s",
-		o: "o", c: "c", m: "m",
+	const shortcutKeyToAction: Record<string, string> = {
+		p: "p",
+		e: "f",
+		f: "f",
+		t: "t",
+		u: "h",
+		h: "h",
+		r: "b",
+		b: "b",
+		z: "d",
+		d: "d",
+		a: "w",
+		w: "w",
+		s: "s",
+		x: "x",
+		g: "g",
+		m: "m",
+		o: "o",
+		c: "c",
 	};
+
+	function mapLegacyShortcutToAction(rawKey: string): string | null {
+		const key = rawKey.toLowerCase();
+		return shortcutKeyToAction[key] ?? null;
+	}
+
+	function resetSessionCountGuardIfAvailable(): void {
+		const maybeHelper = Object.entries(pompomModule)
+			.filter(([exportName, value]) => {
+				const loweredName = exportName.toLowerCase();
+				return (
+					loweredName.includes("session")
+					&& loweredName.includes("count")
+					&& loweredName.includes("reset")
+					&& typeof value === "function"
+				);
+			})
+			.map(([, value]) => value)
+			.find((value): value is () => void => typeof value === "function");
+		if (!maybeHelper) {
+			return;
+		}
+		maybeHelper();
+	}
 
 	function setupKeyHandler() {
 		if (!ctx?.hasUI) {
@@ -987,8 +1222,12 @@ export default function (pi: ExtensionAPI) {
 
 				try {
 					// Fallback: ESC prefix (legacy terminals without Kitty protocol)
-					if (data.length === 2 && data[0] === "\x1b" && POMPOM_KEYS.includes(data[1])) {
-						pompomKeypress(data[1]);
+					if (data.length === 2 && data[0] === "\x1b") {
+						const actionKey = mapLegacyShortcutToAction(data[1]);
+						if (!actionKey) {
+							return undefined;
+						}
+						pompomKeypress(actionKey);
 						return { consume: true };
 					}
 
@@ -1003,7 +1242,7 @@ export default function (pi: ExtensionAPI) {
 						const mod = parseInt(kittyMatch[2], 10);
 						if ((mod - 1) & 2) { // Alt modifier bit set
 							const keyChar = String.fromCharCode(parseInt(kittyMatch[1], 10)).toLowerCase();
-							const actionKey = kittyKeyToAction[keyChar];
+							const actionKey = mapLegacyShortcutToAction(keyChar);
 							if (actionKey) {
 								pompomKeypress(actionKey);
 								return { consume: true };
@@ -1050,31 +1289,108 @@ export default function (pi: ExtensionAPI) {
 		return isModelLike(model) ? model : null;
 	}
 
+	function beginAiCommand(): { runId: number; signal: AbortSignal } {
+		aiCommandRunId += 1;
+		aiCommandInProgress = true;
+		if (aiCommandAbortController) {
+			aiCommandAbortController.abort();
+		}
+		aiCommandAbortController = new AbortController();
+		return {
+			runId: aiCommandRunId,
+			signal: aiCommandAbortController.signal,
+		};
+	}
+
+	function isAiCommandCurrent(runId: number): boolean {
+		return runId === aiCommandRunId;
+	}
+
+	function throwIfAiCommandCanceled(runId: number): void {
+		if (isAiCommandCurrent(runId)) {
+			return;
+		}
+		const error = new Error("Pompom AI command canceled");
+		error.name = "AbortError";
+		throw error;
+	}
+
+	function cancelAiCommand(): void {
+		aiCommandRunId += 1;
+		aiCommandInProgress = false;
+		if (!aiCommandAbortController) {
+			return;
+		}
+		aiCommandAbortController.abort();
+		aiCommandAbortController = null;
+	}
+
+	function finishAiCommand(runId: number): void {
+		if (!isAiCommandCurrent(runId)) {
+			return;
+		}
+		aiCommandInProgress = false;
+		aiCommandAbortController = null;
+	}
+
+	async function giveAccessoryWithPersistence({
+		item,
+		commandContext,
+	}: {
+		item: string;
+		commandContext: ExtensionContext;
+	}): Promise<void> {
+		const previousAccessories = { ...pompomGetAccessories() };
+		const result = pompomGiveAccessory(item);
+		if (result.startsWith("Unknown")) {
+			commandContext.ui.notify(result, "info");
+			return;
+		}
+		try {
+			await saveAccessories();
+		} catch (error) {
+			pompomRestoreAccessories(previousAccessories);
+			const message = error instanceof Error ? error.message : String(error);
+			commandContext.ui.notify(`Could not save ${item}: ${message}`, "error");
+			return;
+		}
+		await playSfx("accessory_equip");
+		commandContext.ui.notify(result, "info");
+	}
+
 	async function runPompomAsk(commandArgs: string, commandContext: ExtensionContext) {
 		if (aiCommandInProgress) {
 			commandContext.ui.notify("Pompom is already working on a request. Please wait.", "warning");
 			return;
 		}
-		aiCommandInProgress = true; // Set IMMEDIATELY to prevent race
 		const question = commandArgs.trim();
 		if (!question) {
-			aiCommandInProgress = false;
 			commandContext.ui.notify("Usage: /pompom:ask <question>", "warning");
 			return;
 		}
+		const aiCommand = beginAiCommand();
+		const { runId, signal } = aiCommand;
 		const model = resolvePompomModel(commandContext);
 		if (!model) {
-			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
+			finishAiCommand(runId);
 			return;
 		}
 
-		const apiKey = await commandContext.modelRegistry.getApiKey(model);
-		if (!apiKey) {
-			aiCommandInProgress = false;
-			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+		let apiKey: string | undefined;
+		try {
+			apiKey = await commandContext.modelRegistry.getApiKey(model);
+		} catch (err) {
+			commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
+			finishAiCommand(runId);
 			return;
 		}
+		if (!apiKey) {
+			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+			finishAiCommand(runId);
+			return;
+		}
+		throwIfAiCommandCanceled(runId);
 
 		const stats = getSessionStats();
 		const recentMessages = buildRecentSessionMessages(commandContext);
@@ -1105,10 +1421,11 @@ export default function (pi: ExtensionAPI) {
 					].join("\n"),
 					messages: promptMessages,
 				},
-				{ apiKey, reasoning }
+				{ apiKey, reasoning, signal }
 			);
 
 			for await (const event of stream) {
+				throwIfAiCommandCanceled(runId);
 				if (event.type === "text_delta") {
 					answer += event.delta;
 					const now = Date.now();
@@ -1133,6 +1450,7 @@ export default function (pi: ExtensionAPI) {
 					throw event.error;
 				}
 			}
+			throwIfAiCommandCanceled(runId);
 
 			const finalAnswer = answer.trim();
 			if (!finalAnswer) {
@@ -1143,11 +1461,14 @@ export default function (pi: ExtensionAPI) {
 			pompomSay(sanitizeAscii(finalAnswer.slice(0, 140)), 6.0, "assistant", 3, true);
 			commandContext.ui.notify(`Pompom: ${finalAnswer}`, "info");
 		} catch (error) {
+			if (error instanceof Error && error.name === "AbortError") {
+				return;
+			}
 			const message = error instanceof Error ? error.message : "Unknown error";
 			pompomSay("I hit a snag while thinking.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:ask error - ${message}`, "error");
 		} finally {
-			aiCommandInProgress = false;
+			finishAiCommand(runId);
 			overlayHint = null;
 			overlayHintUntil = 0;
 			applyAgentVisualState();
@@ -1159,26 +1480,35 @@ export default function (pi: ExtensionAPI) {
 			commandContext.ui.notify("Pompom is already working on a request. Please wait.", "warning");
 			return;
 		}
-		aiCommandInProgress = true; // Set IMMEDIATELY to prevent race
+		const aiCommand = beginAiCommand();
+		const { runId, signal } = aiCommand;
 		const model = resolvePompomModel(commandContext);
 		if (!model) {
-			aiCommandInProgress = false;
 			commandContext.ui.notify("No model selected", "error");
+			finishAiCommand(runId);
 			return;
 		}
 
-		const apiKey = await commandContext.modelRegistry.getApiKey(model);
-		if (!apiKey) {
-			aiCommandInProgress = false;
-			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+		let apiKey: string | undefined;
+		try {
+			apiKey = await commandContext.modelRegistry.getApiKey(model);
+		} catch (err) {
+			commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
+			finishAiCommand(runId);
 			return;
 		}
+		if (!apiKey) {
+			commandContext.ui.notify(`No API key for ${model.provider}/${model.id}`, "error");
+			finishAiCommand(runId);
+			return;
+		}
+		throwIfAiCommandCanceled(runId);
 
 		const stats = getSessionStats();
 		const recentMessages = buildRecentSessionMessages(commandContext);
 		if (recentMessages.length === 0) {
-			aiCommandInProgress = false;
 			commandContext.ui.notify("No session context to recap yet.", "warning");
+			finishAiCommand(runId);
 			return;
 		}
 
@@ -1210,8 +1540,9 @@ export default function (pi: ExtensionAPI) {
 				{
 					messages: [createUserMessage(recapPrompt)],
 				},
-				{ apiKey, reasoning: "low" }
+				{ apiKey, reasoning: "low", signal }
 			);
+			throwIfAiCommandCanceled(runId);
 
 			const summary = extractTextContent(response.content);
 
@@ -1223,11 +1554,14 @@ export default function (pi: ExtensionAPI) {
 			pompomSay(sanitizeAscii(summary.slice(0, 140)), 6.0, "assistant", 3, true);
 			commandContext.ui.notify(`Pompom recap:\n${summary}`, "info");
 		} catch (error) {
+			if (error instanceof Error && error.name === "AbortError") {
+				return;
+			}
 			const message = error instanceof Error ? error.message : "Unknown error";
 			pompomSay("Recap failed. I need another try.", 4.2, "commentary", 2, true);
 			commandContext.ui.notify(`pompom:recap error - ${message}`, "error");
 		} finally {
-			aiCommandInProgress = false;
+			finishAiCommand(runId);
 			overlayHint = null;
 			overlayHintUntil = 0;
 			applyAgentVisualState();
@@ -1241,6 +1575,7 @@ export default function (pi: ExtensionAPI) {
 				loadedVoiceHintShown = false;
 				installPompomTheme();
 				registerInstance(startCtx.cwd);
+				initSessionCount();
 				initVoice(Boolean(startCtx.hasUI));
 				initAmbient(Boolean(startCtx.hasUI));
 				if (isPrimaryInstance()) void playSfx("session_chime");
@@ -1249,6 +1584,8 @@ export default function (pi: ExtensionAPI) {
 					enqueueSpeech(event);
 				});
 				pompomOnSfx((sfx) => {
+					// Block SFX during demo — demo voiceover handles all audio
+					if (demoRunning) return;
 					// Weather SFX only on primary; user-triggered SFX on all instances
 					const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip", "cricket_chirp"];
 					if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
@@ -1270,54 +1607,61 @@ export default function (pi: ExtensionAPI) {
 			});
 		});
 
-	pi.on("session_shutdown", async () => {
-		await runSafely("session_shutdown", () => {
-			deregisterInstance();
-			persistAgentState();
-			setAgentBusy(false);
-			void playSfx("session_goodbye");
-			stopPlayback();
-			stopAmbient();
-			stopAmbientWeatherSync();
-			stopAiSpeech();
-			aiSpeechCount = 0;
-			aiSpeechEverScheduled = false;
-			aiSpeechHistory.length = 0;
-			sessionStartMs = 0;
-			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
-			chatOverlayHandle = null;
-			pompomOnSpeech(null);
-			pompomOnSfx(null);
-			pompomOnEmotionalState(null);
-			setMoodSfxState(null);
-			hideCompanion();
-			resetPompom();
-			resetAgentState();
-			if (terminalInputUnsub) {
-				terminalInputUnsub();
-				terminalInputUnsub = null;
-			}
+		pi.on("session_shutdown", async () => {
+			await runSafely("session_shutdown", async () => {
+				const wasPrimary = isPrimaryInstance();
+				deregisterInstance();
+				stopDemo();
+				cancelAiCommand();
+				persistAgentState();
+				setAgentBusy(false);
+				setMoodSfxEnabled(false);
+				resetVoiceActivityState();
+				stopPlayback();
+				stopAmbient();
+				stopAmbientWeatherSync();
+				if (wasPrimary) {
+					await playSfx("session_goodbye");
+				}
+				resetAiSpeechState();
+				sessionStartMs = 0;
+				cleanupSessionUiState();
+				pompomOnSpeech(null);
+				pompomOnSfx(null);
+				pompomOnEmotionalState(null);
+				setMoodSfxState(null);
+				resetSessionCountGuardIfAvailable();
+				hideCompanion();
+				resetPompom();
+				resetAgentState();
+				if (terminalInputUnsub) {
+					terminalInputUnsub();
+					terminalInputUnsub = null;
+				}
+			});
 		});
-	});
 
-	pi.on("session_switch", async (_event, switchCtx) => {
-		await runSafely("session_switch", () => {
-			deregisterInstance();
-			persistAgentState();
-			setAgentBusy(false);
-			stopPlayback();
-			stopAmbient();
-			stopAmbientWeatherSync();
-			stopAiSpeech();
-			aiSpeechCount = 0;
-			aiSpeechEverScheduled = false;
-			aiSpeechHistory.length = 0;
-			sessionStartMs = Date.now();
-			if (pulseOverlayTimer) { clearTimeout(pulseOverlayTimer); pulseOverlayTimer = null; }
-			chatOverlayHandle = null;
+		pi.on("session_switch", async (_event, switchCtx) => {
+			await runSafely("session_switch", () => {
+				// Teardown old session state (but keep instance registered until new one is ready)
+				stopDemo();
+				cancelAiCommand();
+				persistAgentState();
+				setAgentBusy(false);
+				setMoodSfxEnabled(false);
+				resetVoiceActivityState();
+				stopPlayback();
+				stopAmbient();
+				stopAmbientWeatherSync();
+				resetAiSpeechState();
+				sessionStartMs = Date.now();
+				cleanupSessionUiState();
+				resetSessionCountGuardIfAvailable();
+				initSessionCount();
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
+				// Re-register with new cwd (replaces old heartbeat atomically)
 				registerInstance(switchCtx.cwd);
 				loadedVoiceHintShown = false;
 				loadedAmbientHintShown = false;
@@ -1332,6 +1676,7 @@ export default function (pi: ExtensionAPI) {
 					enqueueSpeech(event);
 				});
 				pompomOnSfx((sfx) => {
+					if (demoRunning) return;
 					const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip", "cricket_chirp"];
 					if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
 					void playSfx(sfx as SfxName);
@@ -1358,7 +1703,6 @@ export default function (pi: ExtensionAPI) {
 			setAgentBusy(true);
 			pulseOverlay({ forceOverlay: true, lookX: 0.2, lookY: -0.1, glow: 0.92, earBoost: 0.7 }, 2600);
 			speakCommentary({ eventName: "agent_start" });
-			persistAgentState();
 		});
 	});
 
@@ -1384,7 +1728,6 @@ export default function (pi: ExtensionAPI) {
 				lastAgentTickAt = now;
 				void playSfx("agent_tick");
 			}
-			persistAgentState();
 		});
 	});
 
@@ -1405,7 +1748,6 @@ export default function (pi: ExtensionAPI) {
 				earBoost: payload.isError ? 0.5 : 0.3,
 			}, 1800);
 			speakCommentary({ eventName: "tool_result", toolName: payload.toolName, isError: payload.isError });
-			persistAgentState();
 		});
 	});
 
@@ -1428,7 +1770,6 @@ export default function (pi: ExtensionAPI) {
 			const role = getMessageRole(message);
 			// Don't mirror assistant text as Pompom speech — that causes double-speak
 			speakCommentary({ eventName: "message_end", role });
-			persistAgentState();
 		});
 	});
 
@@ -1509,6 +1850,7 @@ export default function (pi: ExtensionAPI) {
 		if (!enabled) return;
 		if (widgetVisible) {
 			widgetVisible = false;
+			setMoodSfxEnabled(false);
 			// Only stop the render loop and remove the widget — keep companionActive true
 			// so that AI speech, health checks, and voice/mic timers continue running.
 			if (companionTimer) {
@@ -1525,13 +1867,15 @@ export default function (pi: ExtensionAPI) {
 			}
 		} else {
 			widgetVisible = true;
+			setMoodSfxEnabled(true);
 			const weather = pompomGetWeather();
 			lastAmbientWeather = weather;
 			if (isPrimaryInstance()) {
 				setAmbientWeather(weather).catch(err => { console.error(`[pompom] setAmbientWeather failed: ${err instanceof Error ? err.message : err}`); });
 				startWeatherSfx();
 			} else {
-				resumeAmbient();
+				stopAmbient();
+				stopWeatherSfx();
 			}
 			if (companionActive) {
 				mountCompanionWidget();
@@ -1566,6 +1910,13 @@ export default function (pi: ExtensionAPI) {
 						} else {
 							disablePompom();
 						}
+					},
+					onAmbientToggle: (on) => {
+						if (on) startAmbientWeatherSync();
+						else stopAmbientWeatherSync();
+					},
+					onAccessoryChange: async () => {
+						await saveAccessories();
 					},
 				});
 			});
@@ -1634,9 +1985,10 @@ export default function (pi: ExtensionAPI) {
 						`  /pompom:agents       Agent status dashboard\n` +
 						`  /pompom:stuck        Check if agent is stuck\n` +
 						`  /pompom:analyze      AI session analysis\n` +
-						`  /pompom:ambient      Weather ambient sounds — on|off|volume\n` +
+						`  /pompom:ambient      Weather ambient sounds — on|off|volume|pregenerate|reset\n` +
 						`  /pompom:terminals    Show all running Pompom terminals\n` +
 						`  /pompom-give-hat     Give Pompom a hat (also: umbrella, scarf, sunglasses)\n` +
+						`  /pompom demo         Autonomous ~135s showcase\n` +
 						`  /pompom-settings     Interactive settings panel`,
 						"info"
 					);
@@ -1670,10 +2022,10 @@ export default function (pi: ExtensionAPI) {
 						commandContext.ui.notify("Usage: /pompom give <umbrella|scarf|sunglasses|hat>", "info");
 						return;
 					}
-					const result = pompomGiveAccessory(item);
-					void saveAccessories();
-					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
-					commandContext.ui.notify(result, "info");
+					await giveAccessoryWithPersistence({
+						item,
+						commandContext,
+					});
 					return;
 				}
 
@@ -1691,14 +2043,12 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 
-				if (pompomCommands[sub]) {
-					if (!companionActive) {
-						enabled = true;
-						showCompanion();
-						setupKeyHandler();
-					}
-					const actionKey = pompomCommands[sub];
-					pompomKeypress(actionKey);
+					if (pompomCommands[sub]) {
+						if (!companionActive) {
+							enablePompom(commandContext);
+						}
+						const actionKey = pompomCommands[sub];
+						pompomKeypress(actionKey);
 					const sfxMap: Record<string, SfxName> = {
 						p: "pet_purr", f: "eat_crunch", t: "eat_crunch",
 						b: "ball_bounce", h: "hug_squeeze", s: "sleep_snore",
@@ -1706,6 +2056,160 @@ export default function (pi: ExtensionAPI) {
 						d: "flip_whoosh", c: "color_switch", g: "game_start",
 					};
 					if (sfxMap[actionKey]) void playSfx(sfxMap[actionKey]);
+					return;
+				}
+
+				if (sub === "demo") {
+					if (demoRunning) { stopDemo(); commandContext.ui.notify("Demo stopped.", "info"); return; }
+
+					// DEMO v8 — Storytelling narration with pre-cached voiceover.
+					// Weather fires 2s BEFORE narration. Actions fire WITH narration.
+					// allowTts=true so speech bubbles show + TTS plays from cache.
+					const chatKeyName = process.platform === "darwin" ? "Option slash" : "Alt slash";
+					const DL: [string, string][] = [
+						["d01", "[excited] Hi there! I'm Pompom!"],
+						["d02", "[happy] I'm your coding companion. I live right here in your terminal while you work!"],
+						["d03", "[happy] When you've been coding for a while, I get hungry! You can feed me like this"],
+						["d04", "[happy] And when things get tough, sometimes I just need a hug"],
+						["d05", "[excited] But my favorite thing? Playing fetch! Throw me the ball!"],
+						["d06", "[excited] I also love to dance when the code is flowing!"],
+						["d07", "[sings] And sometimes I just can't help but sing a little song!"],
+						["d08", "[curious] See those clouds? I react to real weather changes"],
+						["d09", "[happy] And you can give me accessories! Like this umbrella for the rain"],
+						["d10", "[concerned] When storms roll in, things get intense! Listen to that thunder"],
+						["d11", "[excited] Oh! Snow! This is my absolute favorite weather!"],
+						["d12", "[happy] And look, a cozy scarf to keep me warm in the cold"],
+						["d13", "[happy] When the sky clears up, I put on my sunglasses and hat!"],
+						["d14", "[excited] Want to play a game? Let's catch some stars!"],
+						["d15", "[curious] I also come in different color themes, check this out"],
+						["d16", "[whispers] And when you're done for the day, I curl up for a little nap"],
+						["d17", "[sighs] Ahh, that was such a good nap!"],
+						["d18", "[curious] But here's the thing. I'm not just a cute face"],
+						["d19", "[happy] I actually watch your coding agent work. I track every tool call and catch errors"],
+						["d20", "[happy] If your agent gets stuck, I'll let you know. Just ask me anything about your session"],
+						["d21", `[excited] And press ${chatKeyName} to open my side chat anytime!`],
+						["d22", "[happy] I run as a separate AI alongside your main agent. I won't interrupt anything"],
+						["d23", "[happy] I can peek at what your agent is doing and explain it all to you"],
+						["d24", "[excited] Three voice engines, twenty three sound effects, and six different personalities!"],
+						["d25", "[excited] Try me! pi install at codexstar slash pi pompom"],
+					];
+					const demoKeys = DL.map(l => l[0]);
+
+
+					const cached = isDemoCached(demoKeys);
+					if (!companionActive) { enablePompom(commandContext); }
+					demoAccessorySnapshot = pompomGetAccessories();
+					pompomRestoreAccessories({ umbrella: false, scarf: false, sunglasses: false, hat: false });
+					demoRunning = true;
+					activeDemoTimers.length = 0;
+					const q = (ms: number, fn: () => void) => {
+						activeDemoTimers.push(setTimeout(() => { if (demoRunning) fn(); }, ms));
+					};
+					// Show bubble + play cached audio. allowTts=true so the speech system works normally.
+					// The live TTS queue will try to synthesize but we stop it immediately after playing cached.
+					const say = (key: string, text: string, dur = 3.0) => {
+						// Clear transient particles (sparkles/notes) but keep weather
+						pompomClearParticles("transient");
+						if (cached) {
+							pompomSay(text, dur, "system", 10, false);
+							if (isPrimaryInstance()) { stopPlayback(); playDemoLine(key); }
+						} else {
+							pompomSay(text, dur, "system", 10, true);
+						}
+					};
+
+					let t = 0;
+
+					// ─── OPENING (0-7s) ──────────────────────────────────────
+					q(t, () => { pompomKeypress("p"); say("d01", DL[0][1]); });
+					t += 3500;
+					q(t, () => { pompomKeypress("d"); say("d02", DL[1][1], 4.5); });
+
+					// ─── INTERACTIONS (7-32s) ────────────────────────────────
+					t += 5000;
+					q(t, () => { pompomKeypress("f"); pompomKeypress("f"); say("d03", DL[2][1], 5.5); });
+					t += 5500;
+					q(t, () => { pompomKeypress("h"); say("d04", DL[3][1], 4.0); });
+					t += 4500;
+					q(t, () => { pompomKeypress("b"); say("d05", DL[4][1], 5.0); });
+					t += 7000;
+					q(t, () => { pompomKeypress("x"); say("d06", DL[5][1]); });
+					t += 4000;
+					q(t, () => { pompomKeypress("m"); say("d07", DL[6][1], 3.5); });
+
+					const DEMO_WEATHER_PREROLL_MS = 2800;
+					const DEMO_WEATHER_TRANSITION_MS = 900;
+
+					// ─── WEATHER (32-65s) — weather changes early enough to be seen ─
+					t += 4500;
+					q(t, () => pompomSetWeatherOverride({ weather: "cloudy", transitionMs: DEMO_WEATHER_TRANSITION_MS }));
+					q(t + DEMO_WEATHER_PREROLL_MS, () => say("d08", DL[7][1], 4.5));
+					t += 6500;
+					q(t, () => pompomSetWeatherOverride({ weather: "rain", transitionMs: DEMO_WEATHER_TRANSITION_MS }));
+					q(t + DEMO_WEATHER_PREROLL_MS, () => { pompomGiveAccessory("umbrella"); say("d09", DL[8][1], 3.8); });
+					t += 7000;
+					q(t, () => pompomSetWeatherOverride({ weather: "storm", transitionMs: DEMO_WEATHER_TRANSITION_MS }));
+					q(t + DEMO_WEATHER_PREROLL_MS, () => say("d10", DL[9][1], 5.5));
+					t += 7600;
+					q(t, () => pompomSetWeatherOverride({ weather: "snow", transitionMs: DEMO_WEATHER_TRANSITION_MS }));
+					q(t + DEMO_WEATHER_PREROLL_MS, () => say("d11", DL[10][1], 5.0));
+					t += 7800;
+					q(t, () => { pompomGiveAccessory("scarf"); say("d12", DL[11][1], 3.5); });
+					t += 5200;
+					q(t, () => pompomSetWeatherOverride({ weather: "clear", transitionMs: DEMO_WEATHER_TRANSITION_MS }));
+					q(t + 2200, () => { pompomGiveAccessory("sunglasses"); pompomGiveAccessory("hat"); say("d13", DL[12][1], 4.0); });
+
+					// ─── GAME + COLORS (65-82s) ──────────────────────────────
+					t += 5500;
+					q(t, () => { pompomKeypress("g"); say("d14", DL[13][1], 3.5); });
+					t += 10000;
+					q(t, () => { pompomKeypress("c"); say("d15", DL[14][1], 3.0); });
+					q(t + 1500, () => pompomKeypress("c"));
+					q(t + 3000, () => pompomKeypress("c"));
+					q(t + 4500, () => pompomKeypress("c"));
+
+					// ─── SLEEP (82-93s) ──────────────────────────────────────
+					t += 6000;
+					q(t, () => { pompomSetWeatherOverride({ weather: null }); pompomKeypress("s"); });
+					q(t + 1800, () => { say("d16", DL[15][1], 3.5); });
+					t += 8000;
+					q(t, () => { pompomKeypress("w"); say("d17", DL[16][1]); });
+
+					// ─── INTELLIGENCE (93-110s) ──────────────────────────────
+					t += 4000;
+					q(t, () => {
+						pompomSetAgentOverlay({ active: true });
+						pompomSetAntennaGlow({ intensity: 0.9 });
+						pompomSetAgentEarBoost({ amount: 0.7 });
+						say("d18", DL[17][1], 3.5);
+					});
+					t += 4500;
+					q(t, () => { say("d19", DL[18][1], 5.5); });
+					t += 5000;
+					q(t, () => {
+						pompomSetAgentOverlay({ active: false });
+						pompomSetAntennaGlow({ intensity: 0 });
+						pompomSetAgentEarBoost({ amount: 0 });
+						say("d20", DL[19][1], 5.0);
+					});
+
+					// ─── SIDE CHAT (110-125s) ───────────────────────────────
+					t += 5000;
+					q(t, () => say("d21", DL[20][1], 3.5));
+					t += 5000;
+					q(t, () => say("d22", DL[21][1], 5.0));
+					t += 5000;
+					q(t, () => say("d23", DL[22][1], 4.0));
+
+					// ─── FINALE (125-135s) ───────────────────────────────────
+					t += 5000;
+					q(t, () => say("d24", DL[23][1], 5.5));
+					t += 6200;
+					q(t, () => { pompomKeypress("d"); say("d25", DL[24][1], 5.0); });
+					t += 5000;
+					q(t, () => stopDemo());
+
+					commandContext.ui.notify(`Demo${cached ? " with voiceover" : ""} (~${Math.round(t / 1000)}s). /pompom demo to stop.`, "info");
 					return;
 				}
 
@@ -1862,7 +2366,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("pompom:ambient", {
-		description: "Ambient weather sounds — on/off/volume/pregenerate",
+		description: "Ambient weather sounds — on/off/volume/pregenerate/reset",
 		handler: async (args, commandContext) => {
 			await runSafely("pompom:ambient", async () => {
 				ctx = commandContext;
@@ -1912,7 +2416,7 @@ export default function (pi: ExtensionAPI) {
 				if (sub === "reset" || sub === "regenerate") {
 					const deleted = resetGeneratedAudio();
 					commandContext.ui.notify(
-						`Deleted ${deleted} generated audio files. They'll regenerate on next weather change.\n` +
+						`Deleted ${deleted} generated cache files. They'll regenerate on the next weather change.\n` +
 						`Custom files in ${getCustomAudioDir()} are preserved.`,
 						"info"
 					);
@@ -1952,7 +2456,7 @@ export default function (pi: ExtensionAPI) {
 					"  /pompom:ambient on|off\n" +
 					"  /pompom:ambient volume <0-100>\n" +
 					"  /pompom:ambient pregenerate   Generate all 5 sounds\n" +
-					"  /pompom:ambient reset         Delete generated, regenerate fresh\n" +
+					"  /pompom:ambient reset         Delete generated cache; regenerate on next weather change\n" +
 					"  /pompom:ambient folder         Show custom audio folder path",
 					"info"
 				);
@@ -2016,20 +2520,29 @@ export default function (pi: ExtensionAPI) {
 					commandContext.ui.notify("Pompom is already working on a request. Please wait.", "info");
 					return;
 				}
-				aiCommandInProgress = true;
+				const aiCommand = beginAiCommand();
+				const { runId, signal } = aiCommand;
 				ctx = commandContext;
 				const model = resolvePompomModel(commandContext);
 				if (!model) {
-					aiCommandInProgress = false;
 					commandContext.ui.notify("No model selected.", "error");
+					finishAiCommand(runId);
 					return;
 				}
-				const apiKey = await commandContext.modelRegistry.getApiKey(model);
+				let apiKey: string | undefined;
+				try {
+					apiKey = await commandContext.modelRegistry.getApiKey(model);
+				} catch (err) {
+					commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
+					finishAiCommand(runId);
+					return;
+				}
 				if (!apiKey) {
-					aiCommandInProgress = false;
 					commandContext.ui.notify("No API key for " + model.provider + "/" + model.id, "error");
+					finishAiCommand(runId);
 					return;
 				}
+				throwIfAiCommandCanceled(runId);
 
 				const stats = getSessionStats();
 				const stuck = detectStuck();
@@ -2072,8 +2585,9 @@ export default function (pi: ExtensionAPI) {
 					const response = await completeSimple(
 						model,
 						{ messages: [createUserMessage(prompt)] },
-						{ apiKey, reasoning: "low" },
+						{ apiKey, reasoning: "low", signal },
 					);
+					throwIfAiCommandCanceled(runId);
 					const analysis = extractTextContent(response.content);
 					if (analysis) {
 						pompomSay(sanitizeAscii(analysis.slice(0, 120)), 6.0, "assistant", 3, true);
@@ -2081,12 +2595,15 @@ export default function (pi: ExtensionAPI) {
 					} else {
 						commandContext.ui.notify("Could not generate analysis.", "warning");
 					}
-				} catch (err: any) {
+				} catch (err) {
+					if (err instanceof Error && err.name === "AbortError") {
+						return;
+					}
 					const msg = err instanceof Error ? err.message : "Unknown error";
 					pompomSay("Analysis hit a snag.", 3.0, "commentary", 2, true);
 					commandContext.ui.notify("pompom:analyze error - " + msg, "error");
 				} finally {
-					aiCommandInProgress = false;
+					finishAiCommand(runId);
 					overlayHint = null;
 					overlayHintUntil = 0;
 					applyAgentVisualState();
@@ -2143,10 +2660,10 @@ export default function (pi: ExtensionAPI) {
 			handler: async (_args, commandContext) => {
 				await runSafely(acc.name, async () => {
 					ctx = commandContext;
-					const result = pompomGiveAccessory(acc.item);
-					void saveAccessories();
-					if (!result.startsWith("Unknown")) void playSfx("accessory_equip");
-					commandContext.ui.notify(result, "info");
+					await giveAccessoryWithPersistence({
+						item: acc.item,
+						commandContext,
+					});
 				});
 			},
 		});
@@ -2217,6 +2734,41 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// ─── Demo Mode ──────────────────────────────────────────────────
+
+	let demoTimer: ReturnType<typeof setTimeout> | null = null; // legacy ref for cleanup
+	let demoRunning = false;
+
+	const activeDemoTimers: ReturnType<typeof setTimeout>[] = [];
+
+	function stopDemo() {
+		demoRunning = false;
+		for (const t of activeDemoTimers) clearTimeout(t);
+		activeDemoTimers.length = 0;
+		if (demoTimer) { clearTimeout(demoTimer); demoTimer = null; }
+		if (demoAccessorySnapshot) {
+			pompomRestoreAccessories(demoAccessorySnapshot);
+			demoAccessorySnapshot = null;
+		}
+		pompomSetWeatherOverride({ weather: null });
+		stopPlayback(); // kill any playing demo audio
+		pompomSetAgentOverlay({ active: false });
+		pompomSetAntennaGlow({ intensity: 0 });
+		pompomSetAgentEarBoost({ amount: 0 });
+	}
+
+	pi.registerCommand("pompom:demo", {
+		description: "Run an autonomous showcase of Pompom (~135s, social-media ready)",
+		handler: async (_args, commandContext) => {
+			await runSafely("pompom:demo", async () => {
+				ctx = commandContext;
+				// Delegate to the /pompom demo subcommand handler
+				if (demoRunning) { stopDemo(); commandContext.ui.notify("Demo stopped.", "info"); return; }
+				commandContext.ui.notify("Use /pompom demo instead.", "info");
+			});
+		},
+	});
+
 	// ─── Pompom Side Chat ───────────────────────────────────────────
 
 	const CHAT_SHORTCUT = "alt+/";
@@ -2224,6 +2776,8 @@ export default function (pi: ExtensionAPI) {
 	let chatOverlayHandle: { focus: () => void; unfocus: () => void; isFocused: () => boolean } | null = null;
 	let chatOpenInProgress = false;
 	let aiCommandInProgress = false;
+	let aiCommandRunId = 0;
+	let aiCommandAbortController: AbortController | null = null;
 
 	pi.registerCommand("pompom:chat", {
 		description: "Open Pompom side chat — parallel agent with read-only tools",
@@ -2255,6 +2809,70 @@ export default function (pi: ExtensionAPI) {
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		console.error(`[pompom] registerShortcut ${CHAT_SHORTCUT} failed: ${msg}`);
+	}
+
+	// ─── Pi Voice → Pompom Chat redirect ────────────────────────────────────
+	// When Pompom chat is focused, intercept ctx.ui.setEditorText so pi-voice
+	// (hold-to-talk) sends transcripts to Pompom's editor instead of the main one.
+	let chatOverlayRef: {
+		editor: { getText(): string; setText(t: string): void };
+		dispose(): void;
+	} | null = null;
+	let originalSetEditorText: ((text: string) => void) | null = null;
+	let originalGetEditorText: (() => string) | null = null;
+	let editorInterceptActive = false;
+
+	function installEditorIntercept(commandContext: ExtensionContext) {
+		if (editorInterceptActive || !chatOverlayRef) return;
+		const ui = commandContext.ui as any;
+		if (!ui.setEditorText || !ui.getEditorText) return;
+		originalSetEditorText = ui.setEditorText.bind(ui);
+		originalGetEditorText = ui.getEditorText.bind(ui);
+		editorInterceptActive = true;
+		ui.setEditorText = (text: string) => {
+			// When chat is focused, redirect voice transcript to Pompom's editor
+			if (chatOverlayHandle && chatOverlayRef) {
+				try { chatOverlayRef.editor.setText(text); } catch { /* fallback below */ }
+				return;
+			}
+			originalSetEditorText!(text);
+		};
+		ui.getEditorText = () => {
+			if (chatOverlayHandle && chatOverlayRef) {
+				try { return chatOverlayRef.editor.getText(); } catch { /* fallback below */ }
+			}
+			return originalGetEditorText!();
+		};
+	}
+
+	function restoreEditorIntercept() {
+		if (!editorInterceptActive) return;
+		editorInterceptActive = false;
+		if (ctx?.hasUI) {
+			const ui = ctx.ui as any;
+			if (originalSetEditorText) ui.setEditorText = originalSetEditorText;
+			if (originalGetEditorText) ui.getEditorText = originalGetEditorText;
+		}
+		originalSetEditorText = null;
+		originalGetEditorText = null;
+	}
+
+	function closeChatOverlay() {
+		const overlay = chatOverlayRef;
+		restoreEditorIntercept();
+		if (!overlay) {
+			chatOverlayHandle = null;
+			chatOverlayRef = null;
+			return;
+		}
+		try {
+			overlay.dispose();
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			console.error(`[pompom] closeChatOverlay failed: ${msg}`);
+			chatOverlayRef = null;
+			chatOverlayHandle = null;
+		}
 	}
 
 	async function openPompomChat(commandContext: ExtensionContext) {
@@ -2294,12 +2912,22 @@ export default function (pi: ExtensionAPI) {
 								applyAgentVisualState();
 							}
 						},
-						onUnfocus: () => chatOverlayHandle?.unfocus(),
+						onUnfocus: () => {
+							chatOverlayHandle?.unfocus();
+							// Restore main editor text interception when chat loses focus
+							restoreEditorIntercept();
+						},
 						onClose: () => {
+							restoreEditorIntercept();
+							chatOverlayRef = null;
 							chatOverlayHandle = null;
 							done();
 						},
 					});
+					// Intercept ctx.ui.setEditorText while chat is focused:
+					// pi-voice writes transcripts here — redirect to Pompom's editor
+					chatOverlayRef = overlay;
+					installEditorIntercept(commandContext);
 					return overlay;
 				},
 				{
@@ -2318,6 +2946,8 @@ export default function (pi: ExtensionAPI) {
 				},
 			);
 		} catch (err) {
+			restoreEditorIntercept();
+			chatOverlayRef = null;
 			chatOverlayHandle = null;
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`[pompom] openPompomChat failed: ${msg}`);

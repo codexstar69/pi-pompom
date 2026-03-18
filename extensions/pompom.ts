@@ -14,17 +14,31 @@ import os from "node:os";
 // ─── Rendering Config ────────────────────────────────────────────────────────
 // Widget dimensions — set once, used by renderPompom
 let W = 50;
-let H = 13; // character rows — visible but not dominant
+let H = getWidgetHeight(W); // extra headroom without scaling the world up
 const VIEW_OFFSET_Y = 0.12; // shift camera slightly down — balanced between sky (sun/moon) and ground
 
 const PHYSICS_DT = 0.016; // 60fps physics sub-stepping
+
+function getWidgetHeight(width: number): number {
+	return Math.max(12, Math.min(24, Math.floor(width * 0.30)));
+}
+
+function getProjectionEffectDim(): number {
+	const legacyHeight = Math.max(10, Math.min(18, Math.floor(W * 0.22)));
+	return Math.max(40, Math.min(W, legacyHeight * 4.5));
+}
+
+function getProjectionScale(): number {
+	return 2.0 / getProjectionEffectDim();
+}
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(max, value));
 }
 
 function sanitizeSpeechText(text: string): string {
-	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
+	// Replace ⌥ (Option key glyph) with "Alt+" for TTS before stripping non-ASCII
+	return text.replace(/\u2325/g, "Alt+").replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
 }
 
 // ─── Pet State ───────────────────────────────────────────────────────────────
@@ -422,24 +436,30 @@ function recordGreetingText(text: string): void {
 // ─── Session Tracking ───────────────────────────────────────────────────────
 const STATS_FILE = path.join(os.homedir(), ".pi", "pompom", "stats.json");
 let sessionCount = 1;
-try {
-	const statsDir = path.dirname(STATS_FILE);
-	if (!fs.existsSync(statsDir)) fs.mkdirSync(statsDir, { recursive: true });
-	if (fs.existsSync(STATS_FILE)) {
-		const data = JSON.parse(fs.readFileSync(STATS_FILE, "utf-8"));
-		const raw = data.sessionCount;
-		sessionCount = (typeof raw === "number" && Number.isFinite(raw) && raw >= 1 ? raw : 0) + 1;
+let sessionCountInitialized = false;
+
+function prepareSessionCountForNextSession(): void {
+	// Prevent first-session-only greetings from repeating after a reset in a long-lived process.
+	if (sessionCount < 2) {
+		sessionCount = 2;
 	}
-	const statsTmp = STATS_FILE + ".tmp." + process.pid;
-	fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount }), "utf-8");
-	fs.renameSync(statsTmp, STATS_FILE);
-} catch {
-	// Stats file read/write failure — write fresh stats so next launch sees sessionCount=2
+	sessionCountInitialized = false;
+}
+
+/** Call on real session_start — NOT at import time. */
+export function initSessionCount(): void {
+	if (sessionCountInitialized) return;
+	sessionCountInitialized = true;
 	try {
 		const statsDir = path.dirname(STATS_FILE);
 		if (!fs.existsSync(statsDir)) fs.mkdirSync(statsDir, { recursive: true });
+		if (fs.existsSync(STATS_FILE)) {
+			const data = JSON.parse(fs.readFileSync(STATS_FILE, "utf-8"));
+			const raw = data.sessionCount;
+			sessionCount = (typeof raw === "number" && Number.isFinite(raw) && raw >= 1 ? raw : 0) + 1;
+		}
 		const statsTmp = STATS_FILE + ".tmp." + process.pid;
-		fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount: 1 }), "utf-8");
+		fs.writeFileSync(statsTmp, JSON.stringify({ sessionCount }), "utf-8");
 		fs.renameSync(statsTmp, STATS_FILE);
 	} catch { /* best-effort */ }
 }
@@ -477,19 +497,19 @@ const ACTIVITY_REQUESTS: ActivityRequest[] = [
 	{ text: `[playful] I've got the wiggles... let's dance! (${modifier}X)`, states: ["playful", "happy"], minEnergy: 40 },
 	{ text: `[excited] Watch my moves! (${modifier}X)`, states: ["blissful", "playful"], minEnergy: 50 },
 	// Ball
-	{ text: `[excited] Throw me the ball! Please! (${modifier}R)`, states: ["playful", "happy", "bored", "content"], minEnergy: 30 },
-	{ text: `[curious] Where's the ball? I wanna play! (${modifier}R)`, states: ["playful", "bored"], minEnergy: 30 },
+	{ text: `[excited] Throw me the ball! Please! (${modifier}B)`, states: ["playful", "happy", "bored", "content"], minEnergy: 30 },
+	{ text: `[curious] Where's the ball? I wanna play! (${modifier}B)`, states: ["playful", "bored"], minEnergy: 30 },
 	// Game
 	{ text: `[excited] Let's play catch the stars! (${modifier}G)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
 	{ text: `[curious] Star game? I bet I beat my record! (${modifier}G)`, states: ["playful", "happy"], minEnergy: 40 },
 	// Flip
-	{ text: `[excited] Do a flip! Do a flip! (${modifier}Z)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
-	{ text: `[mischievously] Flip time? Flip time. (${modifier}Z)`, states: ["playful"], minEnergy: 40 },
+	{ text: `[excited] Do a flip! Do a flip! (${modifier}D)`, states: ["playful", "happy", "blissful"], minEnergy: 40 },
+	{ text: `[mischievously] Flip time? Flip time. (${modifier}D)`, states: ["playful"], minEnergy: 40 },
 	// Hug
-	{ text: `[happy] I could really use a hug right now (${modifier}U)`, states: ["content", "bored", "happy"], minEnergy: 20 },
-	{ text: `[whispers] Hug? (${modifier}U)`, states: ["content", "bored"], minEnergy: 10 },
+	{ text: `[happy] I could really use a hug right now (${modifier}H)`, states: ["content", "bored", "happy"], minEnergy: 20 },
+	{ text: `[whispers] Hug? (${modifier}H)`, states: ["content", "bored"], minEnergy: 10 },
 	// Feed
-	{ text: `[curious] Is it snack time yet? (${modifier}E)`, states: ["content", "bored"], minEnergy: 30 },
+	{ text: `[curious] Is it snack time yet? (${modifier}F)`, states: ["content", "bored"], minEnergy: 30 },
 	{ text: `[excited] Treat? Did someone say treat? (${modifier}T)`, states: ["happy", "playful", "bored"], minEnergy: 30 },
 	// Pet
 	{ text: `[happy] Head scratches? Please? (${modifier}P)`, states: ["content", "happy", "bored"], minEnergy: 20 },
@@ -553,6 +573,7 @@ let ffX = 0, ffY = 0, ffZ = 0;
 interface Food { x: number; y: number; vy: number; createdAt: number; }
 const foods: Food[] = [];
 let ballX = -10, ballY = -10, ballZ = 0, ballVx = 0, ballVy = 0, ballVz = 0, hasBall = false;
+let ballSpin = 0; // radians/sec — visual spin for realism
 
 interface Particle {
 	x: number; y: number; vx: number; vy: number;
@@ -560,6 +581,21 @@ interface Particle {
 }
 const particles: Particle[] = [];
 const MAX_PARTICLES = 200;
+const WEATHER_BLEND_DURATION_MS = 2500;
+
+function pushParticle(particle: Particle): void {
+	if (particles.length >= MAX_PARTICLES) {
+		const evictionIndex = particles.findIndex((existingParticle) => {
+			return existingParticle.type !== "snowpile";
+		});
+		if (evictionIndex >= 0) {
+			particles.splice(evictionIndex, 1);
+		} else {
+			particles.shift();
+		}
+	}
+	particles.push(particle);
+}
 
 let screenChars: string[][] = [];
 let screenColors: string[][] = [];
@@ -583,6 +619,8 @@ function emitSfx(name: string): void {
 	}
 }
 
+let currentSpeechPriority = 0;
+
 function say(
 	text: string,
 	duration = 4.0,
@@ -597,8 +635,18 @@ function say(
 		spokenRing.push(safeText);
 		if (spokenRing.length > RING_SIZE) spokenRing.shift();
 	}
+	// Priority-based bubble protection: don't let lower-priority speech
+	// overwrite a higher-priority bubble that's still displaying
+	if (speechTimer > 0 && priority < currentSpeechPriority) {
+		// Still fire TTS callback (voice can queue independently) but don't touch the bubble
+		if (safeText && onSpeechCallback) {
+			try { onSpeechCallback({ text: safeText, source, priority, allowTts }); } catch { /* non-fatal */ }
+		}
+		return;
+	}
 	speechText = safeText;
 	speechTimer = duration;
+	currentSpeechPriority = priority;
 	if (safeText && onSpeechCallback) {
 		try {
 			onSpeechCallback({ text: safeText, source, priority, allowTts });
@@ -609,16 +657,17 @@ function say(
 }
 
 function project2D(x: number, y: number): [number, number] {
-	const effectDim = Math.max(40, Math.min(W, H * 4.5));
-	const scale = 2.0 / effectDim;
+	const scale = getProjectionScale();
 	const cx = (x / scale) + (W / 2.0);
 	const cy = (y - VIEW_OFFSET_Y) / scale + H; // pixel-row units [0..2H], callers divide by 2 for char rows
 	return [Math.floor(cx), Math.floor(cy)];
 }
 
 function getStringWidth(str: string): number {
+	// Strip ANSI escape sequences before measuring width
+	const clean = str.replace(/\x1b\[[0-9;]*m/g, "");
 	let w = 0;
-	for (const char of str) {
+	for (const char of clean) {
 		w += (char.match(/[\u2600-\u26FF\u2700-\u27BF\uE000-\uF8FF\u{1F300}-\u{1F5FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}]/u)) ? 2 : 1;
 	}
 	return w;
@@ -679,7 +728,9 @@ function getTimeOfDay(): TimeOfDay {
 let weatherOverride: Weather | null = null;
 let lastRenderedWeatherState: Weather = "clear";
 let weatherBlend = 0;
+let weatherBlendDurationMs = WEATHER_BLEND_DURATION_MS;
 let prevWeatherColors = { rTop: 0, gTop: 0, bTop: 0, rBot: 0, gBot: 0, bBot: 0 };
+let lastRenderedColors = { rTop: 0, gTop: 0, bTop: 0, rBot: 0, gBot: 0, bBot: 0 };
 
 // ─── Weather Arc System (Gemini 3.1 Pro — realistic gradual weather) ─────────
 
@@ -790,10 +841,95 @@ let weatherArcNode = 0;
 let weatherArcTimer = 0;
 let weatherReactionTimer = 0;
 let weatherReactionInterval = 180000; // 3 min first, then 2-5 min
+let clearAccessoryReactionTimer = 0;
+let clearAccessoryReactionInterval = 180000; // 3 min first, then 2-5 min
 let weatherAskedAccessory = false;
 let weatherWasRaining = false;
 let weatherTimer = 0;
 let lastAnnouncedWeatherState: Weather = "clear";
+
+interface NaturalWeatherSnapshot {
+	weatherState: Weather;
+	weatherIntensity: number;
+	weatherTargetIntensity: number;
+	weatherIntensityRate: number;
+	weatherArc: WeatherArc | null;
+	weatherArcNode: number;
+	weatherArcTimer: number;
+	weatherReactionTimer: number;
+	weatherReactionInterval: number;
+	clearAccessoryReactionTimer: number;
+	clearAccessoryReactionInterval: number;
+	weatherAskedAccessory: boolean;
+	weatherWasRaining: boolean;
+	weatherTimer: number;
+	lastAnnouncedWeatherState: Weather;
+}
+
+let naturalWeatherSnapshot: NaturalWeatherSnapshot | null = null;
+
+function captureNaturalWeatherSnapshot(): NaturalWeatherSnapshot {
+	return {
+		weatherState,
+		weatherIntensity,
+		weatherTargetIntensity,
+		weatherIntensityRate,
+		weatherArc,
+		weatherArcNode,
+		weatherArcTimer,
+		weatherReactionTimer,
+		weatherReactionInterval,
+		clearAccessoryReactionTimer,
+		clearAccessoryReactionInterval,
+		weatherAskedAccessory,
+		weatherWasRaining,
+		weatherTimer,
+		lastAnnouncedWeatherState,
+	};
+}
+
+function restoreNaturalWeatherSnapshot(snapshot: NaturalWeatherSnapshot): void {
+	weatherState = snapshot.weatherState;
+	weatherIntensity = snapshot.weatherIntensity;
+	weatherTargetIntensity = snapshot.weatherTargetIntensity;
+	weatherIntensityRate = snapshot.weatherIntensityRate;
+	weatherArc = snapshot.weatherArc;
+	weatherArcNode = snapshot.weatherArcNode;
+	weatherArcTimer = snapshot.weatherArcTimer;
+	weatherReactionTimer = snapshot.weatherReactionTimer;
+	weatherReactionInterval = snapshot.weatherReactionInterval;
+	clearAccessoryReactionTimer = snapshot.clearAccessoryReactionTimer;
+	clearAccessoryReactionInterval = snapshot.clearAccessoryReactionInterval;
+	weatherAskedAccessory = snapshot.weatherAskedAccessory;
+	weatherWasRaining = snapshot.weatherWasRaining;
+	weatherTimer = snapshot.weatherTimer;
+	lastAnnouncedWeatherState = snapshot.lastAnnouncedWeatherState;
+}
+
+function getOverrideWeatherTargetIntensity(weather: Weather | null): number {
+	if (weather === "storm" || weather === "rain" || weather === "snow") {
+		return 1;
+	}
+	if (weather === "cloudy") {
+		return 0.75;
+	}
+	return 0;
+}
+
+function clearWeatherParticles(): void {
+	for (let i = particles.length - 1; i >= 0; i--) {
+		const particle = particles[i];
+		if (
+			particle.type === "rain"
+			|| particle.type === "snow"
+			|| particle.type === "lightning"
+			|| particle.type === "splash"
+			|| particle.type === "snowpile"
+		) {
+			particles.splice(i, 1);
+		}
+	}
+}
 
 function startWeatherArc(): void {
 	const arc = WEATHER_ARCS[Math.floor(Math.random() * WEATHER_ARCS.length)];
@@ -805,6 +941,9 @@ function startWeatherArc(): void {
 }
 
 function applyWeatherArcNode(node: WeatherArcNode): void {
+	// Don't let the arc system overwrite an active weather override
+	if (weatherOverride !== null) return;
+
 	// Track rain→clear for rainbow reactions
 	if (weatherState === "rain" || weatherState === "storm") weatherWasRaining = true;
 	else if (node.weather === "clear" && weatherWasRaining) {
@@ -819,6 +958,9 @@ function applyWeatherArcNode(node: WeatherArcNode): void {
 }
 
 function updateWeatherSystem(dtMs: number): void {
+	// Skip all weather arc updates while override is active
+	if (weatherOverride !== null) return;
+
 	// Intensity ramping
 	if (weatherIntensity !== weatherTargetIntensity) {
 		weatherIntensity += weatherIntensityRate * dtMs;
@@ -854,6 +996,7 @@ function updateWeatherSystem(dtMs: number): void {
 	// Periodic weather reactions (every 2-5 min during active weather)
 	if (weatherState !== "clear" || weatherIntensity > 0.1) {
 		weatherReactionTimer += dtMs;
+		clearAccessoryReactionTimer = 0;
 		if (weatherReactionTimer >= weatherReactionInterval && speechTimer <= 0) {
 			weatherReactionTimer = 0;
 			weatherReactionInterval = (120 + Math.random() * 180) * 1000; // 2-5 min
@@ -874,12 +1017,22 @@ function updateWeatherSystem(dtMs: number): void {
 				} else if (weatherState === "snow" && !accessories.scarf) {
 					weatherAskedAccessory = true;
 					say("[concerned] Brrr! A scarf would be nice... /pompom give scarf", 5.0, "system", 2, true);
-				} else if (weatherState === "clear" && !accessories.sunglasses) {
-					weatherAskedAccessory = true;
-					say("[curious] It's so bright! Sunglasses would help... /pompom give sunglasses", 5.0, "system", 2, true);
 				}
 			}
 		}
+	}
+
+	// Sunglasses prompt — runs during clear weather (outside the active-weather gate above)
+	if (weatherState === "clear" && !accessories.sunglasses && !weatherAskedAccessory) {
+		clearAccessoryReactionTimer += dtMs;
+		if (clearAccessoryReactionTimer >= clearAccessoryReactionInterval && speechTimer <= 0 && getTimeOfDay() === "day") {
+			clearAccessoryReactionTimer = 0;
+			clearAccessoryReactionInterval = (120 + Math.random() * 180) * 1000;
+			weatherAskedAccessory = true;
+			say("[curious] It's so bright! Sunglasses would help... /pompom give sunglasses", 5.0, "system", 2, true);
+		}
+	} else if (weatherState !== "clear") {
+		clearAccessoryReactionTimer = 0;
 	}
 }
 
@@ -887,6 +1040,19 @@ function updateWeatherSystem(dtMs: number): void {
 function weatherParticleRate(): number {
 	const baseRates: Record<Weather, number> = { clear: 0, cloudy: 0, rain: 0.4, snow: 0.2, storm: 0.6 };
 	return (baseRates[weatherState] || 0) * weatherIntensity;
+}
+
+function weatherSpawnAttempts(weather: Weather): number {
+	if (weather === "rain") {
+		return Math.max(1, Math.round((W / 18) * Math.max(0.8, weatherIntensity)));
+	}
+	if (weather === "storm") {
+		return Math.max(2, Math.round((W / 14) * Math.max(0.9, weatherIntensity)));
+	}
+	if (weather === "snow") {
+		return Math.max(1, Math.round((W / 24) * Math.max(0.7, weatherIntensity)));
+	}
+	return 1;
 }
 
 let agentOverlayActive = false;
@@ -928,16 +1094,19 @@ function getWeatherAndTime() {
 	const now = new Date();
 	const hour = now.getHours() + now.getMinutes() / 60;
 
-	// Define color keyframes
+	// Define color keyframes — realistic sky with golden hour, pink/purple sunset, deep blue night
 	const keyframes = [
-		{ h: 4.0, t: [5, 5, 15], b: [12, 8, 25] },
-		{ h: 5.0, t: [40, 20, 60], b: [200, 100, 60] },
-		{ h: 7.0, t: [50, 130, 240], b: [170, 210, 250] },
-		{ h: 9.0, t: [35, 115, 255], b: [170, 215, 255] },
-		{ h: 17.0, t: [35, 115, 255], b: [170, 215, 255] },
-		{ h: 18.5, t: [160, 60, 40], b: [255, 130, 50] },
-		{ h: 20.0, t: [20, 15, 50], b: [40, 25, 60] },
-		{ h: 22.0, t: [5, 5, 15], b: [12, 8, 25] }
+		{ h: 4.0, t: [8, 8, 20], b: [15, 10, 30] },              // deep night
+		{ h: 5.0, t: [45, 25, 70], b: [180, 90, 70] },            // dawn — purple-pink horizon
+		{ h: 6.0, t: [70, 50, 90], b: [230, 150, 100] },           // early sunrise — warm peach
+		{ h: 7.0, t: [55, 135, 240], b: [175, 215, 250] },         // morning blue
+		{ h: 9.0, t: [40, 120, 255], b: [170, 215, 255] },         // day — clean blue
+		{ h: 16.0, t: [45, 125, 255], b: [175, 218, 255] },        // late afternoon — still blue
+		{ h: 17.5, t: [120, 80, 60], b: [245, 180, 100] },         // golden hour — warm amber
+		{ h: 18.5, t: [100, 45, 80], b: [240, 130, 80] },          // sunset — pink-gold horizon
+		{ h: 19.5, t: [50, 25, 80], b: [150, 60, 90] },            // dusk — purple-magenta
+		{ h: 20.5, t: [20, 15, 55], b: [45, 25, 65] },             // twilight — deep purple
+		{ h: 22.0, t: [8, 8, 20], b: [15, 10, 30] },               // night — dark blue
 	];
 
 	let k1 = keyframes[keyframes.length - 1];
@@ -973,26 +1142,28 @@ function getWeatherAndTime() {
 
 	// Weather tinting — overcast dims the sky, storm darkens further
 	if (weather === "cloudy") {
-		rTop = rTop * 0.7 + 40; gTop = gTop * 0.7 + 40; bTop = bTop * 0.7 + 40;
-		rBot = rBot * 0.7 + 40; gBot = gBot * 0.7 + 40; bBot = bBot * 0.7 + 40;
+		rTop = rTop * 0.55 + 58; gTop = gTop * 0.55 + 58; bTop = bTop * 0.58 + 64;
+		rBot = rBot * 0.55 + 58; gBot = gBot * 0.55 + 58; bBot = bBot * 0.58 + 64;
 	} else if (weather === "rain") {
-		rTop = rTop * 0.5 + 30; gTop = gTop * 0.5 + 30; bTop = bTop * 0.5 + 40;
-		rBot = rBot * 0.5 + 30; gBot = gBot * 0.5 + 30; bBot = bBot * 0.5 + 40;
+		rTop = rTop * 0.34 + 26; gTop = gTop * 0.34 + 28; bTop = bTop * 0.42 + 46;
+		rBot = rBot * 0.34 + 26; gBot = gBot * 0.34 + 28; bBot = bBot * 0.42 + 46;
 	} else if (weather === "storm") {
-		rTop = rTop * 0.3 + 15; gTop = gTop * 0.3 + 15; bTop = bTop * 0.3 + 20;
-		rBot = rBot * 0.3 + 20; gBot = gBot * 0.3 + 20; bBot = bBot * 0.3 + 25;
+		rTop = rTop * 0.16 + 14; gTop = gTop * 0.16 + 14; bTop = bTop * 0.22 + 24;
+		rBot = rBot * 0.18 + 18; gBot = gBot * 0.18 + 18; bBot = bBot * 0.24 + 28;
 	} else if (weather === "snow") {
-		rTop = rTop * 0.6 + 60; gTop = gTop * 0.6 + 60; bTop = bTop * 0.6 + 70;
-		rBot = rBot * 0.6 + 60; gBot = gBot * 0.6 + 60; bBot = bBot * 0.6 + 70;
+		rTop = rTop * 0.48 + 84; gTop = gTop * 0.48 + 84; bTop = bTop * 0.55 + 102;
+		rBot = rBot * 0.48 + 82; gBot = gBot * 0.48 + 82; bBot = bBot * 0.55 + 100;
 	}
 
-	// Snapshot tinted colors AFTER weather tint is applied, so blend transitions
-	// from the old weather's tinted sky to the new weather's tinted sky
+	// On weather change, snapshot the CURRENT rendered colors (which still have
+	// the OLD weather's tint from the previous frame) so we blend from old→new.
 	if (weather !== lastRenderedWeatherState) {
-		prevWeatherColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
+		prevWeatherColors = { ...lastRenderedColors };
 		weatherBlend = 1.0;
 		lastRenderedWeatherState = weather;
 	}
+	// Store this frame's final tinted colors for the next transition snapshot
+	lastRenderedColors = { rTop: Math.floor(rTop), gTop: Math.floor(gTop), bTop: Math.floor(bTop), rBot: Math.floor(rBot), gBot: Math.floor(gBot), bBot: Math.floor(bBot) };
 
 	if (weatherBlend > 0) {
 		rTop = rTop * (1 - weatherBlend) + prevWeatherColors.rTop * weatherBlend;
@@ -1001,7 +1172,6 @@ function getWeatherAndTime() {
 		rBot = rBot * (1 - weatherBlend) + prevWeatherColors.rBot * weatherBlend;
 		gBot = gBot * (1 - weatherBlend) + prevWeatherColors.gBot * weatherBlend;
 		bBot = bBot * (1 - weatherBlend) + prevWeatherColors.bBot * weatherBlend;
-		weatherBlend = Math.max(0, weatherBlend - 0.02);
 	}
 
 	rTop = Math.floor(rTop); gTop = Math.floor(gTop); bTop = Math.floor(bTop);
@@ -1084,15 +1254,12 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 		let isOnFace = false;
 	if (hitObj.id === "body") {
 		let bdx = px - hitObj.x, bdy = py - hitObj.y;
-		if (isFlipping) {
-			const s = Math.sin(-flipPhase), c = Math.cos(-flipPhase);
-			const nx = bdx * c - bdy * s, ny = bdx * s + bdy * c;
-			bdx = nx; bdy = ny;
-		}
+		// During flip, hide face features — terminal cells can't render rotated eyes/mouth
+		const showFace = !isFlipping || (flipPhase < 0.4 || flipPhase > Math.PI * 2 - 0.4);
 
 		// ── Face plate: bright cream area so features pop ──
 		const faceR = Math.sqrt(bdx * bdx + bdy * bdy);
-		if (faceR < 0.22) {
+		if (faceR < 0.22 && showFace) {
 			isOnFace = true;
 			const faceMix = Math.max(0, 1.0 - faceR / 0.22);
 			r = Math.floor(r * (1 - faceMix * 0.8) + 255 * faceMix * 0.8);
@@ -1100,7 +1267,8 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 			b = Math.floor(b * (1 - faceMix * 0.8) + 248 * faceMix * 0.8);
 		}
 
-		// ── Blush: big rosy cheeks ──
+		// ── Blush: big rosy cheeks (hidden during flip) ──
+		if (!showFace) return [r, g, b];
 		const blx1 = bdx + 0.15, bly1 = bdy - 0.05;
 		const blx2 = bdx - 0.15, bly2 = bdy - 0.05;
 		const blush = Math.exp(-(blx1 * blx1 + bly1 * bly1) * 40) + Math.exp(-(blx2 * blx2 + bly2 * bly2) * 40);
@@ -1215,7 +1383,11 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 	} else if (hitObj.mat === 3) {
 		r = 255; g = 230; b = 90; gloss = 128;
 	} else if (hitObj.mat === 5) {
-		return [100, 255, 200];
+		// Firefly: brighter at night, dimmer during day
+		const tod = getTimeOfDay();
+		const ffBright = tod === "night" ? 1.0 : tod === "dawn" || tod === "sunset" ? 0.6 : 0.25;
+		const ffPulse = (Math.sin(time * 4.0) * 0.5 + 0.5) * ffBright;
+		return [Math.floor(60 + 40 * ffPulse), Math.floor(150 + 105 * ffPulse), Math.floor(120 + 80 * ffPulse)];
 	} else if (hitObj.mat === 6) {
 		r = 240; g = 220; b = 180; gloss = 16;
 	} else if (hitObj.mat === 7) {
@@ -1328,6 +1500,18 @@ function shadeObject(hit: ReturnType<typeof getObjHit>, px: number, py: number, 
 }
 
 function getPixel(px: number, py: number, objects: RenderObj[], skyColors: ReturnType<typeof getWeatherAndTime>): [number, number, number] {
+	const w = skyColors.weather;
+	const weatherPresence = w === "clear" ? 0 : clamp(weatherIntensity, 0, 1);
+	const skyOcclusion = w === "storm"
+		? 1.0
+		: w === "rain"
+			? 0.88
+			: w === "snow"
+				? 0.72
+				: w === "cloudy"
+					? 0.58
+					: 0;
+
 	if (py > 0.6) {
 		let shadowDist = Math.sqrt((px - posX) ** 2 + ((py - 0.6) * 2.5) ** 2);
 		let shadow = Math.max(0.2, Math.min(1.0, shadowDist / 0.7));
@@ -1340,11 +1524,40 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 			shadow = Math.min(shadow, Math.max(0.4, Math.min(1.0, bShadowDist / 0.2)));
 		}
 		const isWood = (Math.sin(px * 10) + Math.sin(py * 40)) > 0;
-		const wr = isWood ? 55 : 45, wg = isWood ? 35 : 30, wb = isWood ? 25 : 20;
+		let wr = isWood ? 55 : 45, wg = isWood ? 35 : 30, wb = isWood ? 25 : 20;
+		// Snow accumulation — ground tints white based on weather intensity
+		if (w === "snow" && weatherIntensity > 0.2) {
+			const acc = clamp((weatherIntensity - 0.2) * 1.25, 0, 0.7);
+			wr = Math.floor(wr * (1 - acc) + 230 * acc);
+			wg = Math.floor(wg * (1 - acc) + 235 * acc);
+			wb = Math.floor(wb * (1 - acc) + 245 * acc);
+		}
 		const grad = (py - 0.6) / 0.4;
+		// Cloud shadows — drifting dark patches across the ground during cloudy/rain/storm
+		if (w === "cloudy" || w === "rain" || w === "storm") {
+			const cloudSpeed = w === "storm" ? 0.4 : 0.15;
+			const cloudDensity = w === "storm" ? 0.25 : w === "rain" ? 0.15 : 0.16;
+			const cloudShadow = Math.sin((px + time * cloudSpeed) * 3.0) * Math.sin((px + time * cloudSpeed * 0.7) * 5.0);
+			if (cloudShadow > 0.3) shadow *= 1.0 - cloudDensity * Math.min(1.0, (cloudShadow - 0.3) * 2.0);
+		}
 		let fr = Math.floor((wr - grad * 10) * shadow);
 		let fg = Math.floor((wg - grad * 10) * shadow);
 		let fb = Math.floor((wb - grad * 10) * shadow);
+		if (w === "snow") {
+			fr = Math.floor(fr * 0.25 + 196 * 0.75);
+			fg = Math.floor(fg * 0.28 + 204 * 0.72);
+			fb = Math.floor(fb * 0.35 + 220 * 0.65);
+		}
+		if (w === "rain") {
+			fr = Math.floor(fr * 0.55 + 26 * 0.45);
+			fg = Math.floor(fg * 0.60 + 36 * 0.40);
+			fb = Math.floor(fb * 0.72 + 76 * 0.28);
+		}
+		if (w === "storm") {
+			fr = Math.floor(fr * 0.38 + 18 * 0.62);
+			fg = Math.floor(fg * 0.42 + 22 * 0.58);
+			fb = Math.floor(fb * 0.58 + 56 * 0.42);
+		}
 		// Floor reflection — visible but not a full mirror
 		const refPy = 1.2 - py;
 		const refHit = getObjHit(px, refPy, objects);
@@ -1360,9 +1573,6 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	const directHit = getObjHit(px, py, objects);
 	if (directHit.hitObj) return shadeObject(directHit, px, py, objects);
 
-	const w = (skyColors as any).weather as Weather | undefined;
-	const tod = (skyColors as any).timeOfDay as TimeOfDay | undefined;
-
 	// BASE: Clean gradient from deep blue (top) to light blue (bottom) during daytime
 	// We keep the skyColors from getWeatherAndTime()
 	const grad = Math.max(0, (1.0 + py) / 2.0);
@@ -1376,15 +1586,42 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		bgG = Math.min(255, bgG + 30);
 		bgB = Math.min(255, bgB + 40);
 	}
+	if (w === "cloudy") {
+		bgR = Math.floor(bgR * (1 - weatherPresence * 0.18) + 168 * weatherPresence * 0.18);
+		bgG = Math.floor(bgG * (1 - weatherPresence * 0.18) + 176 * weatherPresence * 0.18);
+		bgB = Math.floor(bgB * (1 - weatherPresence * 0.22) + 188 * weatherPresence * 0.22);
+	}
+	if (w === "rain") {
+		bgR = Math.floor(bgR * (1 - weatherPresence * 0.28) + 86 * weatherPresence * 0.28);
+		bgG = Math.floor(bgG * (1 - weatherPresence * 0.30) + 104 * weatherPresence * 0.30);
+		bgB = Math.floor(bgB * (1 - weatherPresence * 0.34) + 142 * weatherPresence * 0.34);
+	}
+	if (w === "storm") {
+		bgR = Math.floor(bgR * (1 - weatherPresence * 0.44) + 34 * weatherPresence * 0.44);
+		bgG = Math.floor(bgG * (1 - weatherPresence * 0.44) + 38 * weatherPresence * 0.44);
+		bgB = Math.floor(bgB * (1 - weatherPresence * 0.50) + 64 * weatherPresence * 0.50);
+	}
 
 	const now = new Date();
 	const hour = now.getHours() + now.getMinutes() / 60;
 
 	// DISTANT HILLS
 	if (py > 0.35 + Math.sin(px * 4) * 0.06 + Math.sin(px * 7) * 0.03 && py < 0.6) {
-		const hr = skyColors.isNight ? 20 : 60;
-		const hg = skyColors.isNight ? 40 : 100;
-		const hb = skyColors.isNight ? 30 : 80;
+		let hr = skyColors.isNight ? 20 : 60;
+		let hg = skyColors.isNight ? 40 : 100;
+		let hb = skyColors.isNight ? 30 : 80;
+		if (w === "cloudy") {
+			hr = 90; hg = 102; hb = 112;
+		}
+		if (w === "rain") {
+			hr = 52; hg = 68; hb = 92;
+		}
+		if (w === "storm") {
+			hr = 28; hg = 34; hb = 48;
+		}
+		if (w === "snow") {
+			hr = 178; hg = 188; hb = 205;
+		}
 		bgR = Math.floor(bgR * 0.5 + hr * 0.5);
 		bgG = Math.floor(bgG * 0.5 + hg * 0.5);
 		bgB = Math.floor(bgB * 0.5 + hb * 0.5);
@@ -1394,12 +1631,23 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 	if (py > 0.5 && py < 0.6) {
 		const sway = Math.sin(time * 2 + px * 10) * 0.005;
 		if (Math.sin(px * 60) * 0.03 + 0.55 + sway > py) {
-			const tipVal = Math.sin(px * 100);
-			bgR = tipVal > 0 ? 50 : 30;
-			bgG = tipVal > 0 ? 120 : 80;
-			bgB = tipVal > 0 ? 30 : 20;
+			if (w === "snow") {
+				bgR = 214;
+				bgG = 220;
+				bgB = 232;
+			} else {
+				const tipVal = Math.sin(px * 100);
+				bgR = tipVal > 0 ? 50 : 30;
+				bgG = tipVal > 0 ? 120 : 80;
+				bgB = tipVal > 0 ? 30 : 20;
+				if (w === "rain" || w === "storm") {
+					bgR = Math.floor(bgR * 0.42);
+					bgG = Math.floor(bgG * 0.55);
+					bgB = Math.floor(bgB * 1.20);
+				}
+			}
 
-			if (Math.sin(px * 17) > 0.95) {
+			if (w !== "snow" && Math.sin(px * 17) > 0.95) {
 				const isYellow = Math.sin(px * 31) > 0;
 				bgR = isYellow ? 240 : 220;
 				bgG = isYellow ? 220 : 120;
@@ -1413,21 +1661,24 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 		const moonDx = px - (-0.4);
 		const moonDy = py - (-0.25);
 		const moonDist = Math.sqrt(moonDx * moonDx + moonDy * moonDy);
+		const moonVisibility = 1 - skyOcclusion;
 		
 		if (moonDist < 0.15) {
 			const isCrescentDark = moonDist < 0.035 && moonDx > 0.01;
 			if (moonDist < 0.035 && !isCrescentDark) {
-				bgR = 230; bgG = 235; bgB = 255;
+				bgR = Math.floor(bgR * (1 - moonVisibility) + 230 * moonVisibility);
+				bgG = Math.floor(bgG * (1 - moonVisibility) + 235 * moonVisibility);
+				bgB = Math.floor(bgB * (1 - moonVisibility) + 255 * moonVisibility);
 			} else if (moonDist >= 0.035) {
 				const glow = 1.0 - (moonDist / 0.15);
-				bgR = Math.min(255, bgR + glow * 40);
-				bgG = Math.min(255, bgG + glow * 40);
-				bgB = Math.min(255, bgB + glow * 60);
+				bgR = Math.min(255, bgR + glow * 40 * moonVisibility);
+				bgG = Math.min(255, bgG + glow * 40 * moonVisibility);
+				bgB = Math.min(255, bgB + glow * 60 * moonVisibility);
 			}
 		}
 		
 		const starPattern = Math.sin(px * 150) * Math.cos(py * 150 + px * 40);
-		if (starPattern > 0.95) { // rarer stars
+		if (starPattern > 0.95 && moonVisibility > 0.08) { // rarer stars
 			const twinkle = Math.sin(time * 3 + px * 30 + py * 40) * 0.5 + 0.5;
 			const starColorHash = Math.abs(Math.sin(px * 313 + py * 717));
 			let sr = 255, sg = 255, sb = 255;
@@ -1436,7 +1687,7 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 			else if (starColorHash < 0.8) { sr = 255; sg = 180; sb = 150; }
 			
 			// dimmer stars
-			const intensity = starPattern > 0.98 ? twinkle * 0.5 : twinkle * 0.2;
+			const intensity = (starPattern > 0.98 ? twinkle * 0.5 : twinkle * 0.2) * moonVisibility;
 			bgR = Math.min(255, bgR + sr * intensity);
 			bgG = Math.min(255, bgG + sg * intensity);
 			bgB = Math.min(255, bgB + sb * intensity);
@@ -1445,79 +1696,152 @@ function getPixel(px: number, py: number, objects: RenderObj[], skyColors: Retur
 
 	// SUN (daytime)
 	if (hour >= 7 && hour < 17) {
+		const sunVisibility = w === "clear"
+			? 1.0
+			: w === "cloudy"
+				? 0.32
+				: w === "snow"
+					? 0.18
+					: w === "rain"
+						? 0.08
+						: 0;
 		const sunDx = px - 0.5;
 		const sunDy = py - (-0.2);
 		const sunDist = Math.sqrt(sunDx * sunDx + sunDy * sunDy);
-		if (sunDist < 0.15) {
+		if (sunDist < 0.15 && sunVisibility > 0) {
 			if (sunDist < 0.03) {
-				bgR = 255; bgG = 250; bgB = 220;
+				bgR = Math.floor(bgR * (1 - sunVisibility) + 255 * sunVisibility);
+				bgG = Math.floor(bgG * (1 - sunVisibility) + 250 * sunVisibility);
+				bgB = Math.floor(bgB * (1 - sunVisibility) + 220 * sunVisibility);
 			} else {
 				const halo = 1.0 - (sunDist / 0.15);
 				const hIntensity = halo * halo;
-				bgR = Math.min(255, bgR + Math.floor(hIntensity * 80));
-				bgG = Math.min(255, bgG + Math.floor(hIntensity * 70));
-				bgB = Math.min(255, bgB + Math.floor(hIntensity * 45));
+				bgR = Math.min(255, bgR + Math.floor(hIntensity * 80 * sunVisibility));
+				bgG = Math.min(255, bgG + Math.floor(hIntensity * 70 * sunVisibility));
+				bgB = Math.min(255, bgB + Math.floor(hIntensity * 45 * sunVisibility));
 			}
 		}
 	}
 
-	// CLOUDS: SUBTLE only. Small, soft wisps. Only upper portion of sky.
-	if (py < -0.15) {
-		const drift = time * 0.05; // drift slowly
-		const n1 = Math.sin((px + drift) * 4) * Math.cos(py * 6) * 0.5 + 0.5;
-		const n2 = Math.sin((px - drift * 0.5) * 8 + py * 10) * 0.5 + 0.5;
-		const noise = n1 * 0.6 + n2 * 0.4;
-		
-		if (noise > 0.6) {
-			let maxOpacity = 0.15;
+	// CLOUDS: multi-layer parallax cloud decks with depth.
+	if (py < 0.25) { // Extended coverage for more dramatic sky
+		const drift = time * (w === "storm" ? 0.12 : w === "rain" ? 0.09 : 0.05);
+		const n1 = Math.sin((px + drift) * 3.6) * Math.cos(py * 5.5) * 0.5 + 0.5;
+		const n2 = Math.sin((px - drift * 0.55) * 7.5 + py * 8.5) * 0.5 + 0.5;
+		const n3 = Math.cos((px + drift * 0.35) * 2.4 - py * 6.0) * 0.5 + 0.5;
+		const noise = n1 * 0.42 + n2 * 0.33 + n3 * 0.25;
+		const cloudThreshold = w === "storm"
+			? 0.34
+			: w === "rain"
+				? 0.42
+				: w === "snow"
+					? 0.45
+					: w === "cloudy"
+						? 0.47
+						: 0.68;
+		if (noise > cloudThreshold) {
+			let maxOpacity = 0.12;
 			let cr = 240, cg = 245, cb = 255;
-			
-			if (w === "storm") { cr = 100; cg = 105; cb = 110; }
-			else if (w === "clear" || !w) { maxOpacity = 0.08; }
-			
-			const blend = Math.min(maxOpacity, (noise - 0.6) * 0.5);
-
+			if (w === "cloudy") {
+				maxOpacity = 0.38;
+				cr = 186; cg = 192; cb = 204;
+			}
+			if (w === "rain") {
+				maxOpacity = 0.52;
+				cr = 126; cg = 136; cb = 154;
+			}
+			if (w === "storm") {
+				maxOpacity = 0.72;
+				cr = 62; cg = 68; cb = 84;
+			}
+			if (w === "snow") {
+				maxOpacity = 0.44;
+				cr = 228; cg = 234; cb = 244;
+			}
+			const density = (noise - cloudThreshold) / Math.max(0.001, 1 - cloudThreshold);
+			const blend = Math.min(maxOpacity, density * maxOpacity);
 			bgR = Math.floor(bgR * (1 - blend) + cr * blend);
 			bgG = Math.floor(bgG * (1 - blend) + cg * blend);
 			bgB = Math.floor(bgB * (1 - blend) + cb * blend);
 		}
 	}
 
-	// STORM LIGHTNING: rarer
-	if (w === "storm" && Math.sin(time * 47) > 0.995) {
-		bgR = Math.min(255, bgR + 180);
-		bgG = Math.min(255, bgG + 180);
-		bgB = Math.min(255, bgB + 200);
+	if ((w === "rain" || w === "storm") && py > -0.1 && py < 0.42) {
+		const rainSheet = Math.sin(px * 24 - py * 18 + time * 5.5) * 0.5 + 0.5;
+		const haze = (w === "storm" ? 0.18 : 0.11) * weatherPresence;
+		if (rainSheet > 0.76) {
+			bgR = Math.floor(bgR * (1 - haze) + 118 * haze);
+			bgG = Math.floor(bgG * (1 - haze) + 128 * haze);
+			bgB = Math.floor(bgB * (1 - haze) + 152 * haze);
+		}
+	}
+
+	if (w === "snow" && py > -0.08 && py < 0.45) {
+		const haze = 0.16 * weatherPresence;
+		bgR = Math.floor(bgR * (1 - haze) + 234 * haze);
+		bgG = Math.floor(bgG * (1 - haze) + 238 * haze);
+		bgB = Math.floor(bgB * (1 - haze) + 246 * haze);
+	}
+
+	// STORM LIGHTNING: full-scene flash — illuminates sky AND ground
+	if (w === "storm" && Math.sin(time * 47) > 0.993) {
+		const flash = Math.sin(time * 47) > 0.998 ? 220 : 120; // bright vs dim flash
+		bgR = Math.min(255, bgR + flash);
+		bgG = Math.min(255, bgG + flash);
+		bgB = Math.min(255, bgB + flash + 20);
 	}
 
 	return [bgR, bgG, bgB];
 }
 
 function buildObjects(): RenderObj[] {
-	breathe = Math.sin(time * (isSleeping ? 1.5 : 3)) * 0.015;
+	// Enhanced breathing — visible chest expansion, slower when sleeping
+	const breatheFreq = isSleeping ? 1.2 : 2.5;
+	const breatheAmp = isSleeping ? 0.025 : 0.018;
+	breathe = Math.sin(time * breatheFreq) * breatheAmp + Math.sin(time * breatheFreq * 2.1) * breatheAmp * 0.3;
+
+	// Wind force from weather — affects ears, antenna, and body sway
+	const weather = getWeather();
+	const windForce = weather === "storm" ? 0.6 + Math.sin(time * 1.7) * 0.3
+		: weather === "rain" ? 0.25 + Math.sin(time * 2.3) * 0.1
+		: weather === "snow" ? 0.1 + Math.sin(time * 0.8) * 0.05
+		: 0;
+	const windGust = weather === "storm" ? Math.sin(time * 7.3) * Math.sin(time * 3.1) * 0.15 : 0;
+
 	let earWave = Math.sin(time * 4) * 0.08;
 	if (currentState === "excited" || currentState === "fetching" || currentState === "singing") earWave = Math.sin(time * 15) * 0.2;
 	if (isTalking) earWave = Math.sin(time * 12 + talkAudioLevel * 5) * 0.15;
 	if (isWalking) earWave += Math.sin(time * 10) * 0.1;
 	earWave += agentEarBoost * (0.08 + Math.sin(time * 14) * 0.06);
+	// Wind pushes ears in one direction (asymmetric)
+	earWave += windForce * 0.12 + windGust;
+
 	const pawSwing = (isWalking || currentState === "chasing" || currentState === "fetching" || currentState === "peek") ? Math.sin(time * 12) * 0.08 : 0;
-	const antRot = Math.sin(time * 2.5) * 0.15 + (isWalking || currentState === "fetching" ? Math.sin(time * 12) * 0.3 : 0);
+	// Antenna bends further in wind
+	let antRot = Math.sin(time * 2.5) * 0.15 + (isWalking || currentState === "fetching" ? Math.sin(time * 12) * 0.3 : 0);
+	antRot += windForce * 0.2 + windGust * 0.5;
+
 	const effectiveBounceY = getEffectiveBounceY();
 	const baseY = posY + effectiveBounceY + breathe;
 
 	const objects: RenderObj[] = [];
 	if (isSleeping) objects.push({ id: "pillow", mat: 10, x: 0, y: 0.65, rx: 0.6, ry: 0.15, z: posZ - 0.1 });
 
+	// Breathing visible as subtle body radius pulse
+	const breatheScale = 1.0 + Math.sin(time * breatheFreq) * 0.012;
+	// Wind lean — body shifts slightly in wind direction
+	const windLean = windForce * 0.02 + windGust * 0.03;
+
 	objects.push(
-		{ id: "antenna_stalk", mat: 7, x: posX + Math.sin(antRot) * 0.08, y: baseY - 0.35, rx: 0.012, ry: 0.08, rot: antRot, z: 0.05 },
-		{ id: "antenna_bulb", mat: 8, x: posX + Math.sin(antRot) * 0.16, y: baseY - 0.42, r: 0.035, z: 0.08 },
-		{ id: "body", mat: 1, x: posX, y: baseY, r: 0.32, z: 0 },
-		{ id: "earL", mat: 1, x: posX - 0.28, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: 0.5 + earWave, z: 0.1 },
-		{ id: "earR", mat: 1, x: posX + 0.28, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: -0.5 - earWave, z: 0.1 },
-		{ id: "pawL", mat: 2, x: posX - 0.14, y: baseY + 0.22, r: 0.05, z: 0.2 + pawSwing },
-		{ id: "pawR", mat: 2, x: posX + 0.14, y: baseY + 0.22, r: 0.05, z: 0.2 - pawSwing },
-		{ id: "tail", mat: 3, x: posX + Math.cos(time * 2) * 0.35, y: baseY - 0.05, r: 0.06, z: Math.sin(time * 2) * 0.4 },
-		{ id: "firefly", mat: 5, x: ffX, y: ffY, r: 0.015, z: ffZ },
+		{ id: "antenna_stalk", mat: 7, x: posX + Math.sin(antRot) * 0.08 + windLean, y: baseY - 0.35, rx: 0.012, ry: 0.08, rot: antRot, z: 0.05 },
+		{ id: "antenna_bulb", mat: 8, x: posX + Math.sin(antRot) * 0.16 + windLean * 1.5, y: baseY - 0.42, r: 0.035, z: 0.08 },
+		{ id: "body", mat: 1, x: posX + windLean * 0.3, y: baseY, r: 0.32 * breatheScale, z: 0 },
+		{ id: "earL", mat: 1, x: posX - 0.28 + windLean * 0.5, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: 0.5 + earWave, z: 0.1 },
+		{ id: "earR", mat: 1, x: posX + 0.28 + windLean * 0.5, y: baseY - 0.05, rx: 0.08, ry: 0.22, rot: -0.5 - earWave + windForce * 0.08, z: 0.1 },
+		{ id: "pawL", mat: 2, x: posX - 0.14 + windLean * 0.2, y: baseY + 0.22, r: 0.05, z: 0.2 + pawSwing },
+		{ id: "pawR", mat: 2, x: posX + 0.14 + windLean * 0.2, y: baseY + 0.22, r: 0.05, z: 0.2 - pawSwing },
+		{ id: "tail", mat: 3, x: posX + Math.cos(time * 2) * 0.35 + windLean, y: baseY - 0.05, r: 0.06, z: Math.sin(time * 2) * 0.4 },
+		{ id: "firefly", mat: 5, x: ffX, y: ffY, r: (getTimeOfDay() === "night" ? 0.02 : 0.012) + Math.sin(time * 4) * 0.003, z: ffZ },
 	);
 
 	if (isSleeping) {
@@ -1545,41 +1869,44 @@ function buildObjects(): RenderObj[] {
 		}
 	}
 
-	const weather = getWeather();
+	const curWeather = weather; // reuse from above
 	const tod = getTimeOfDay();
 
 	// Umbrella — when raining/storming and user gave one
-	if ((weather === "rain" || weather === "storm") && accessories.umbrella) {
+	if ((curWeather === "rain" || curWeather === "storm") && accessories.umbrella) {
 		objects.push(
 			// Umbrella handle (thin stick above head)
-			{ id: "umbrella_handle", mat: 7, x: posX + 0.05, y: baseY - 0.38, rx: 0.008, ry: 0.12, z: 0.15 },
+			{ id: "umbrella_handle", mat: 7, x: posX + 0.05, y: baseY - 0.30, rx: 0.008, ry: 0.11, z: 0.15 },
 			// Umbrella canopy (wide flat ellipse)
-			{ id: "umbrella_top", mat: 11, x: posX + 0.05, y: baseY - 0.50, rx: 0.18, ry: 0.04, z: 0.2 }
+			{ id: "umbrella_top", mat: 11, x: posX + 0.05, y: baseY - 0.39, rx: 0.17, ry: 0.038, z: 0.19 }
 		);
 	}
 
 	// Scarf — when snowing and user gave one
-	if (weather === "snow" && accessories.scarf) {
+	if (curWeather === "snow" && accessories.scarf) {
 		objects.push(
-			{ id: "scarf", mat: 12, x: posX, y: baseY + 0.18, rx: 0.15, ry: 0.035, z: 0.25 }
+			{ id: "scarf", mat: 12, x: posX, y: baseY + 0.20, rx: 0.18, ry: 0.045, z: 0.25 },
+			{ id: "scarf_tail", mat: 12, x: posX + 0.10, y: baseY + 0.30, rx: 0.04, ry: 0.10, z: 0.23 }
 		);
 	}
 
-	// Sunglasses — during bright day
-	if (tod === "day" && weather === "clear" && accessories.sunglasses) {
+	// Sunglasses — during bright day (thin bar across eyes, not blocking them)
+	if (tod === "day" && curWeather === "clear" && accessories.sunglasses) {
 		objects.push(
-			{ id: "sunglasses", mat: 13, x: posX - 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 },
-			{ id: "sunglasses", mat: 13, x: posX + 0.07, y: baseY + 0.02, r: 0.035, z: 0.3 }
+			// Thin horizontal bar across both eyes — sits just below eye center
+			{ id: "sunglasses_bar", mat: 13, x: posX, y: baseY + 0.04, rx: 0.18, ry: 0.012, z: 0.32 },
+			// Small nose bridge
+			{ id: "sunglasses_bridge", mat: 7, x: posX, y: baseY + 0.03, rx: 0.015, ry: 0.008, z: 0.33 },
 		);
 	}
 
-	// Hat — always visible when owned (a cute little beret/beanie on top of head)
+	// Hat — always visible when owned (sits well above head, clears antenna)
 	if (accessories.hat) {
 		objects.push(
-			// Hat brim — wide flat ellipse sitting on top of head
-			{ id: "hat_brim", mat: 14, x: posX, y: baseY - 0.28, rx: 0.16, ry: 0.025, z: 0.22 },
-			// Hat crown — rounded dome above brim
-			{ id: "hat_crown", mat: 14, x: posX, y: baseY - 0.34, rx: 0.12, ry: 0.06, z: 0.22 }
+			// Hat brim — centered on head, slightly tilted
+			{ id: "hat_brim", mat: 14, x: posX + 0.02, y: baseY - 0.18, rx: 0.13, ry: 0.02, z: 0.17 },
+			// Hat crown — centered dome
+			{ id: "hat_crown", mat: 14, x: posX + 0.02, y: baseY - 0.23, rx: 0.095, ry: 0.045, z: 0.17 }
 		);
 	}
 
@@ -1840,7 +2167,7 @@ function resolveAndSpeak(now: number): void {
 			{ condition: () => currentEmotionalState === "content" && energy > 70 && Date.now() - lastPlayedAt > 300_000, text: "[playful] Hey! Wanna play? Throw me a ball! Use /pompom ball", cooldownKey: "play_request" },
 			{ condition: () => currentEmotionalState === "happy" && energy > 60, text: "[excited] I feel like dancing! Press Alt+X or /pompom dance", cooldownKey: "dance_request" },
 			{ condition: () => currentEmotionalState === "bored" && energy > 40, text: "[curious] We could play a game! Try /pompom game", cooldownKey: "game_request" },
-			{ condition: () => currentEmotionalState === "content" && energy > 50 && !isSleeping, text: "[playful] Flip! Do a flip! Press Alt+Z!", cooldownKey: "flip_request" },
+			{ condition: () => currentEmotionalState === "content" && energy > 50 && !isSleeping, text: "[playful] Flip! Do a flip! Press Alt+D!", cooldownKey: "flip_request" },
 		];
 		const eligible = CONTEXTUAL_DESIRES.filter(d => {
 			const lastUsed = contextualDesireCooldowns[d.cooldownKey] || 0;
@@ -1883,14 +2210,16 @@ function resolveAndSpeak(now: number): void {
 }
 
 function getScreenEdgeX(): number {
-	const effectDim = Math.max(40, Math.min(W, H * 4.5));
-	const scale = 2.0 / effectDim;
+	const scale = getProjectionScale();
 	return (W / 2.0) * scale;
 }
 
 function updatePhysics(dt: number) {
 	if (actionTimer > 0) actionTimer -= dt;
-	if (speechTimer > 0) speechTimer = Math.max(0, speechTimer - dt);
+	if (speechTimer > 0) {
+		speechTimer = Math.max(0, speechTimer - dt);
+		if (speechTimer <= 0) currentSpeechPriority = 0; // reset priority when bubble expires
+	}
 
 	// Needs decay
 	const now = Date.now();
@@ -1919,16 +2248,19 @@ function updatePhysics(dt: number) {
 
 	// Weather arc system — gradual realistic transitions
 	const dtMs = dt * 1000;
-	if (time < 60) {
+	if (time < 60 && weatherOverride === null) {
 		// First 60s: stay clear, initialize arc timer
 		weatherState = "clear";
 		weatherIntensity = 0;
 		if (!weatherArc && weatherTimer <= 0) weatherTimer = 60000;
 	}
 	updateWeatherSystem(dtMs);
+	if (weatherBlend > 0) {
+		weatherBlend = Math.max(0, weatherBlend - dtMs / Math.max(1, weatherBlendDurationMs));
+	}
 
-	// Announce weather state changes
-	if (weatherState !== lastAnnouncedWeatherState) {
+	// Announce weather state changes (skip during override — demo handles its own narration)
+	if (weatherState !== lastAnnouncedWeatherState && !weatherOverride) {
 		lastAnnouncedWeatherState = weatherState;
 		let weatherAnnouncement = "";
 		if (weatherState === "cloudy") weatherAnnouncement = "[curious] Clouds rolling in...";
@@ -1946,65 +2278,113 @@ function updatePhysics(dt: number) {
 
 	// Weather particles
 	const weather = getWeather();
-	const effectDim = Math.max(40, Math.min(W, H * 4.5));
-	const wScale = 2.0 / effectDim;
+	const wScale = getProjectionScale();
 	// Intensity-driven particle spawning (gradual weather)
 	const pRate = weatherParticleRate();
-	if (weather === "rain" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
-		const speed = 2.0 + weatherIntensity * 1.5;
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.1 + weatherIntensity * 0.1, vy: speed + Math.random(), char: weatherIntensity > 0.6 ? "/" : "|", r: 150, g: 200, b: 255, life: 1.0, type: "rain" });
-	}
-	if (weather === "storm" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.3 + weatherIntensity * 0.4, vy: 3.0 + Math.random() * 2 * weatherIntensity, char: "/", r: 180, g: 200, b: 255, life: 0.8, type: "rain" });
-		if (Math.random() < 0.005 * weatherIntensity) {
-			particles.push({ x: (Math.random() - 0.5) * W * wScale * 0.5, y: -H * wScale * 0.5, vx: 0, vy: 0, char: "#", r: 255, g: 255, b: 255, life: 0.1, type: "lightning" });
+	const burstCount = weather === "storm"
+		? Math.max(2, Math.round(W / 14))
+		: weather === "rain"
+			? Math.max(2, Math.round(W / 18))
+			: weather === "snow"
+				? Math.max(1, Math.round(W / 24))
+				: 1;
+	if (weather === "rain") {
+		for (let i = 0; i < burstCount; i++) {
+			if (Math.random() >= pRate) {
+				continue;
+			}
+			const speed = 2.0 + weatherIntensity * 1.5;
+			pushParticle({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.1 + weatherIntensity * 0.1, vy: speed + Math.random(), char: weatherIntensity > 0.6 ? "/" : "|", r: 150, g: 200, b: 255, life: 1.1, type: "rain" });
 		}
 	}
-	if (weather === "snow" && Math.random() < pRate && particles.length < MAX_PARTICLES) {
-		const drift = (Math.random() - 0.5) * (0.2 + weatherIntensity * 0.3);
-		particles.push({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: drift, vy: 0.3 + weatherIntensity * 0.4 + Math.random() * 0.3, char: weatherIntensity > 0.7 ? "*" : ".", r: 240, g: 245, b: 255, life: 3.0, type: "snow" });
+	if (weather === "storm") {
+		for (let i = 0; i < burstCount; i++) {
+			if (Math.random() >= Math.min(1, pRate + 0.15)) {
+				continue;
+			}
+			pushParticle({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: 0.3 + weatherIntensity * 0.4, vy: 3.0 + Math.random() * 2 * weatherIntensity, char: "/", r: 180, g: 200, b: 255, life: 0.95, type: "rain" });
+		}
+		if (Math.random() < 0.012 * Math.max(0.5, weatherIntensity)) {
+			pushParticle({ x: (Math.random() - 0.5) * W * wScale * 0.5, y: -H * wScale * 0.5, vx: 0, vy: 0, char: "#", r: 255, g: 255, b: 255, life: 0.12, type: "lightning" });
+		}
+	}
+	if (weather === "snow") {
+		for (let i = 0; i < burstCount; i++) {
+			if (Math.random() >= Math.min(1, pRate + 0.08)) {
+				continue;
+			}
+			// 3-layer depth snow: foreground (big, fast), mid, background (tiny, slow)
+			const layer = Math.random();
+			const drift = (Math.random() - 0.5) * (0.2 + weatherIntensity * 0.3);
+			if (layer < 0.3) {
+				// Foreground: big flakes, faster fall, more drift
+				pushParticle({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: drift * 1.5, vy: 0.5 + weatherIntensity * 0.5 + Math.random() * 0.3, char: "*", r: 255, g: 255, b: 255, life: 2.5, type: "snow" });
+			} else if (layer < 0.7) {
+				// Mid layer: medium flakes
+				pushParticle({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: drift, vy: 0.3 + weatherIntensity * 0.4 + Math.random() * 0.2, char: weatherIntensity > 0.7 ? "*" : ".", r: 240, g: 245, b: 255, life: 3.2, type: "snow" });
+			} else {
+				// Background: tiny dots, slow drift
+				pushParticle({ x: (Math.random() - 0.5) * W * wScale, y: -H * wScale, vx: drift * 0.4, vy: 0.15 + weatherIntensity * 0.2 + Math.random() * 0.1, char: "\u00b7", r: 200, g: 210, b: 230, life: 4.0, type: "snow" });
+			}
+		}
 	}
 
-	// Ball physics
+	// Ball physics — realistic arc, spin, air resistance
 	if (ballY !== -10 && !hasBall) {
-		ballVy += dt * 5.0;
+		const gravity = 5.5;
+		const airDrag = 0.985; // subtle air resistance
+		ballVy += dt * gravity;
+		ballVx *= Math.pow(airDrag, dt * 60);
 		ballX += ballVx * dt; ballY += ballVy * dt;
-		if (ballY > 0.55) { ballY = 0.55; ballVy *= -0.7; ballVx *= 0.8; if (Math.abs(ballVy) > 0.5) emitSfx("ball_bounce"); if (Math.abs(ballVy) < 0.2) ballVy = 0; if (Math.abs(ballVx) < 0.1) ballVx = 0; }
-		if (ballX < -getScreenEdgeX() + 0.1) { ballX = -getScreenEdgeX() + 0.1; ballVx *= -0.8; }
-		if (ballX > getScreenEdgeX() - 0.1) { ballX = getScreenEdgeX() - 0.1; ballVx *= -0.8; }
+		// Spin proportional to velocity, clamped to prevent unbounded growth
+		ballSpin += (ballVx * 8.0 + ballVy * 2.0) * dt;
+		ballSpin = clamp(ballSpin, -50, 50);
+		// Ground bounce with energy loss + spin transfer
+		if (ballY > 0.55) {
+			ballY = 0.55;
+			ballVy *= -0.65; // slightly less bouncy for realism
+			ballVx *= 0.85;
+			// Spin friction — spin transfers to horizontal velocity on bounce
+			ballVx += ballSpin * 0.01;
+			ballSpin *= 0.7;
+			if (Math.abs(ballVy) > 0.5) emitSfx("ball_bounce");
+			if (Math.abs(ballVy) < 0.15) { ballVy = 0; ballSpin *= 0.3; }
+			if (Math.abs(ballVx) < 0.08) ballVx = 0;
+		}
+		// Wall bounces
+		if (ballX < -getScreenEdgeX() + 0.1) { ballX = -getScreenEdgeX() + 0.1; ballVx *= -0.75; ballSpin *= -0.5; }
+		if (ballX > getScreenEdgeX() - 0.1) { ballX = getScreenEdgeX() - 0.1; ballVx *= -0.75; ballSpin *= -0.5; }
 	}
 
 	// State machine
 	// Voice recording override — Pompom rushes to center and talks
-	if (isTalking && currentState !== "game") {
+	if (isTalking && currentState !== "game" && currentState !== "sleep") {
 		// Interrupt any current state except sleep
-		if (currentState !== "sleep" || energy > 30) {
-			if (isSleeping) { isSleeping = false; }
-			currentState = "idle"; // Reset state so talk animation takes over
-			
-			// Rush to center if not already there
-			const centerDist = Math.abs(posX);
-			if (centerDist > 0.05) {
-				const dir = Math.sign(0 - posX);
-				posX += dir * dt * 2.0; // Fast rush to center
-				isWalking = true;
-				bounceY = -Math.abs(Math.sin(time * 15)) * 0.08;
-			} else {
-				isWalking = false;
-				posX = 0;
-			}
-			
-			// Look at viewer (center)
-			lookX += (0 - lookX) * dt * 8.0;
-			lookY += (0 - lookY) * dt * 8.0;
-			
-			// Bounce with audio level — bigger bounce = louder voice
-			bounceY = -talkAudioLevel * 0.15 - Math.abs(Math.sin(time * 10)) * 0.03;
-			
-			// Ear wiggle synced to audio
-			// (ears already wiggle via earWave in buildObjects, but we can enhance by
-			//  modifying the earWave base in the existing code)
+		if (isSleeping) { isSleeping = false; }
+		currentState = "idle"; // Reset state so talk animation takes over
+		
+		// Rush to center if not already there
+		const centerDist = Math.abs(posX);
+		if (centerDist > 0.05) {
+			const dir = Math.sign(0 - posX);
+			posX += dir * dt * 2.0; // Fast rush to center
+			isWalking = true;
+			bounceY = -Math.abs(Math.sin(time * 15)) * 0.08;
+		} else {
+			isWalking = false;
+			posX = 0;
 		}
+		
+		// Look at viewer (center)
+		lookX += (0 - lookX) * dt * 8.0;
+		lookY += (0 - lookY) * dt * 8.0;
+		
+		// Bounce with audio level — bigger bounce = louder voice
+		bounceY = -talkAudioLevel * 0.15 - Math.abs(Math.sin(time * 10)) * 0.03;
+		
+		// Ear wiggle synced to audio
+		// (ears already wiggle via earWave in buildObjects, but we can enhance by
+		//  modifying the earWave base in the existing code)
 	}
 
 	const overlayWeightTarget = agentOverlayActive ? 1 : 0;
@@ -2052,7 +2432,7 @@ function updatePhysics(dt: number) {
 					star.caught = true;
 					emitSfx("star_chime");
 					gameStars.splice(i, 1);
-					particles.push({ x: star.x, y: star.y, vx: (Math.random() - 0.5)*0.5, vy: (Math.random() - 0.5)*0.5, char: "*", r: 255, g: 255, b: 0, life: 1.0, type: "sparkle" });
+					pushParticle({ x: star.x, y: star.y, vx: (Math.random() - 0.5)*0.5, vy: (Math.random() - 0.5)*0.5, char: "*", r: 255, g: 255, b: 0, life: 1.0, type: "sparkle" });
 					continue;
 				}
 				if (star.y < 0.5 && distX < minDist) {
@@ -2082,7 +2462,7 @@ function updatePhysics(dt: number) {
 		else blinkFade = Math.max(0, blinkFade - dt * 6.0);
 		bounceY += (0 - bounceY) * dt * 5.0;
 		lookX += (0 - lookX) * dt * 3.0;
-		if (ballY !== -10 && !hasBall) {
+		if (ballY !== -10 && !hasBall && !isTalking) {
 			currentState = "fetching";
 			const fetchLines = ["[excited] Ball! I got it I got it!", "[excited] Ooh, ball incoming!", "[happy] Here I come!", "[excited] Mine mine mine!"];
 			say(fetchLines[Math.floor(Math.random() * fetchLines.length)], 2.0, "reaction", 2, true);
@@ -2177,7 +2557,7 @@ function updatePhysics(dt: number) {
 		if (Math.abs(posX) > 0.05) { posX += dir * dt * 1.5; bounceY = -Math.abs(Math.sin(time * 12)) * 0.1; }
 		else { posX = 0; bounceY += (0.4 - bounceY) * dt * 5.0; }
 		if (Math.random() < 0.02) {
-			particles.push({ x: posX + 0.2, y: posY + bounceY, vx: 0.15, vy: -0.2, char: "z", r: 150, g: 200, b: 255, life: 1.2, type: "z" });
+			pushParticle({ x: posX + 0.2, y: posY + bounceY, vx: 0.15, vy: -0.2, char: "z", r: 150, g: 200, b: 255, life: 1.2, type: "z" });
 		}
 		if (actionTimer <= 0) {
 			currentState = "idle"; isSleeping = false;
@@ -2196,7 +2576,7 @@ function updatePhysics(dt: number) {
 		blinkFade = 1.0;
 		bounceY = -Math.abs(Math.sin(time * 12) * 0.15);
 		if (Math.random() < 0.15) {
-			particles.push({ x: posX + (Math.random() - 0.5) * 0.6, y: posY + bounceY + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 0.4, vy: -0.4 - Math.random() * 0.4, char: "*", r: 255, g: 255, b: 150, life: 1.0, type: "sparkle" });
+			pushParticle({ x: posX + (Math.random() - 0.5) * 0.6, y: posY + bounceY + (Math.random() - 0.5) * 0.4, vx: (Math.random() - 0.5) * 0.4, vy: -0.4 - Math.random() * 0.4, char: "*", r: 255, g: 255, b: 150, life: 1.0, type: "sparkle" });
 		}
 		if (actionTimer <= 0) currentState = "idle";
 	}
@@ -2205,7 +2585,7 @@ function updatePhysics(dt: number) {
 		bounceY = -Math.abs(Math.sin(time * 8) * 0.1);
 		lookX = Math.sin(time * 4) * 0.3;
 		if (Math.random() < 0.08) {
-			particles.push({ x: posX + (Math.random() - 0.5) * 0.6, y: posY + bounceY - 0.4, vx: (Math.random() - 0.5) * 0.4, vy: -0.6 - Math.random() * 0.4, char: "~", r: 255, g: 150, b: 200, life: 1.5, type: "note" });
+			pushParticle({ x: posX + (Math.random() - 0.5) * 0.6, y: posY + bounceY - 0.4, vx: (Math.random() - 0.5) * 0.4, vy: -0.6 - Math.random() * 0.4, char: "~", r: 255, g: 150, b: 200, life: 1.5, type: "note" });
 		}
 		if (actionTimer <= 0) currentState = "idle";
 	}
@@ -2214,7 +2594,7 @@ function updatePhysics(dt: number) {
 		lookX = Math.sin(time * 6) * 0.4;
 		posX += Math.sin(time * 8) * dt * 0.3;
 		if (Math.random() < 0.12) {
-			particles.push({ x: posX + (Math.random() - 0.5) * 0.5, y: posY + bounceY - 0.3, vx: (Math.random() - 0.5) * 0.6, vy: -0.5 - Math.random() * 0.3, char: "*", r: 255, g: 200, b: 100, life: 1.2, type: "sparkle" });
+			pushParticle({ x: posX + (Math.random() - 0.5) * 0.5, y: posY + bounceY - 0.3, vx: (Math.random() - 0.5) * 0.6, vy: -0.5 - Math.random() * 0.3, char: "*", r: 255, g: 200, b: 100, life: 1.2, type: "sparkle" });
 		}
 		if (actionTimer <= 0) currentState = "idle";
 	}
@@ -2255,7 +2635,7 @@ function updatePhysics(dt: number) {
 			currentState = "excited"; actionTimer = 2.0;
 			emitSfx("eat_crunch");
 			for (let k = 0; k < 5; k++) {
-				particles.push({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
+				pushParticle({ x: f.x, y: f.y, vx: (Math.random() - 0.5) * 0.4, vy: -0.2 - Math.random() * 0.3, char: "*", r: 255, g: 255, b: 200, life: 1.0, type: "crumb" });
 			}
 			const wasStarving = hunger < 15;
 			const wasHungry = hunger < 30;
@@ -2275,22 +2655,57 @@ function updatePhysics(dt: number) {
 		}
 	}
 
-	// Particles
+	// Particles — enhanced with splash, accumulation, wind
+	const wForce = getWeather() === "storm" ? 0.6 + Math.sin(time * 1.7) * 0.3
+		: getWeather() === "rain" ? 0.25 + Math.sin(time * 2.3) * 0.1
+		: getWeather() === "snow" ? 0.1 + Math.sin(time * 0.8) * 0.05
+		: 0;
 	for (let i = particles.length - 1; i >= 0; i--) {
 		const p = particles[i];
 		p.x += p.vx * dt; p.y += p.vy * dt;
 		if (p.type === "z") p.x += Math.sin(p.y * 4.0) * 0.005;
 		if (p.type === "note") p.x += Math.sin(p.y * 6.0) * 0.01;
-		if (p.type === "rain" && p.y > 0.6) { p.type = "splash"; p.char = "."; p.vy = -0.5; p.vx = (Math.random() - 0.5) * 0.5; p.life = 0.2; }
-		if (p.type === "snow") { p.vx += Math.sin(time * 2 + p.x * 5) * 0.01; if (p.y > 0.55) { p.life = 0; } }
-		p.life -= dt * (p.type === "lightning" ? 8 : 0.8);
+		// Rain → multi-droplet splash on ground impact
+		if (p.type === "rain" && p.y > 0.6) {
+			// Spawn 2-3 tiny splash droplets
+			const splashCount = 2 + (Math.random() < 0.4 ? 1 : 0);
+			for (let s = 0; s < splashCount; s++) {
+				const angle = Math.random() * Math.PI;
+				const speed = 0.3 + Math.random() * 0.4;
+				pushParticle({ x: p.x, y: 0.6, vx: Math.cos(angle) * speed * (Math.random() > 0.5 ? 1 : -1), vy: -Math.sin(angle) * speed, char: "\u00b7", r: 140, g: 180, b: 235, life: 0.15 + Math.random() * 0.1, type: "splash" });
+			}
+			// Brief ground ripple
+			if (Math.random() < 0.3) {
+				pushParticle({ x: p.x, y: 0.62, vx: 0, vy: 0, char: "\u2248", r: 120, g: 160, b: 210, life: 0.2, type: "splash" });
+			}
+			p.life = 0;
+		}
+		// Snow → settle at bottom with accumulation effect
+		if (p.type === "snow") {
+			p.vx += Math.sin(time * 2 + p.x * 5) * 0.01;
+			p.vx += wForce * 0.05 * dt; // wind pushes snow sideways
+			if (p.y > 0.55) {
+				// Snow settles — create a brief accumulation sparkle
+				if (Math.random() < 0.5) {
+					pushParticle({ x: p.x + (Math.random() - 0.5) * 0.05, y: 0.58 + Math.random() * 0.03, vx: 0, vy: 0, char: "\u00b7", r: 220, g: 230, b: 255, life: 2.0 + Math.random() * 3.0, type: "snowpile" });
+				}
+				p.life = 0;
+			}
+		}
+		// Splash particles arc and fade
+		if (p.type === "splash") { p.vy += dt * 3.0; }
+		// Wind pushes rain particles sideways
+		if (p.type === "rain") { p.vx += wForce * 0.1 * dt; }
+		// Life decay — each type has its own rate
+		if (p.type === "snowpile") p.life -= dt * 0.15;
+		else if (p.type === "lightning") p.life -= dt * 8;
+		else p.life -= dt * 0.8;
 		if (p.life <= 0) particles.splice(i, 1);
 	}
 }
 
 function renderToBuffers() {
-	const effectDim = Math.max(40, Math.min(W, H * 4.5));
-	const scale = 2.0 / effectDim;
+	const scale = getProjectionScale();
 	const objects = buildObjects();
 	const skyColors = getWeatherAndTime();
 
@@ -2367,10 +2782,13 @@ function renderToBuffers() {
 		}
 	}
 
-	// Speech bubble
+	// Speech bubble — strip audio/emotion tags like [curious], [happy], etc.
 	if (speechTimer > 0 && speechText !== "") {
-		const [scX, scY] = project2D(posX, posY + getEffectiveBounceY() - 0.2); // just above head, not off-screen
-		drawSpeechBubble(speechText, scX, Math.floor(scY / 2));
+		const cleanBubbleText = speechText.replace(/^\[[\w\s]+\]\s*/, "");
+		if (cleanBubbleText) {
+			const [scX, scY] = project2D(posX, posY + getEffectiveBounceY() - 0.2); // just above head, not off-screen
+			drawSpeechBubble(cleanBubbleText, scX, Math.floor(scY / 2));
+		}
 	}
 }
 
@@ -2385,11 +2803,12 @@ function renderToBuffers() {
  * @returns string[] of H lines, each with ANSI color codes
  */
 export function renderPompom(width: number, audioLevel: number, dt: number): string[] {
-	// Adapt dimensions — compact: secondary addon, must not dominate the terminal
+	// Adapt dimensions — keep enough vertical room for hats, umbrella canopies,
+	// and stronger weather scenes without clipping the top of the widget.
 	const clampedWidth = Math.max(20, width);
 	if (clampedWidth !== W) {
 		W = clampedWidth;
-		H = Math.max(10, Math.min(14, Math.floor(W * 0.18)));
+		H = getWidgetHeight(W);
 		allocBuffers();
 	}
 
@@ -2426,69 +2845,72 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		lines.push(line);
 	}
 
-	// ── Compact single-line status (Gemini 3.1 Pro design) ──
-	// Catppuccin Mocha: sapphire keys, overlay0 labels, subtext0 state
-	const dim = "\x1b[38;2;108;112;134m";     // Overlay0
-	const keyC = "\x1b[38;2;116;199;236m";    // Sapphire
-	const lblC = "\x1b[38;2;108;112;134m";    // Overlay0
-	const accC = "\x1b[38;5;153m";
-	const mod = process.platform === "darwin" ? "⌥" : "Alt+";
+	// ── Contextual shortcut bar (Gemini 3.1 Pro redesign) ──
+	// Context-aware: only 3-4 relevant shortcuts based on Pompom's state
+	// Bold keys in pink/peach/lavender, dim labels, paw icon prefix
+	const PINK_C = "\x1b[38;2;245;194;231m";
+	const SAPH_C = "\x1b[38;2;116;199;236m";
+	const PEACH_C = "\x1b[38;2;250;179;135m";
+	const LAV_C = "\x1b[38;2;180;190;254m";
+	const DIM_C = "\x1b[38;2;88;91;112m";
+	const SUB_C = "\x1b[38;2;186;194;222m";
+	const BOLD_C = "\x1b[1m";
+	const RST_C = "\x1b[0m";
+	const mod = process.platform === "darwin" ? "\u2325" : "Alt+";
 
 	// State message — varied and character-rich, rotates with time
 	const pick = (arr: string[]) => arr[Math.floor((time * 0.1) % arr.length)];
 	let stateMsg = "";
-	// When Pompom is actively speaking, show a contextual shortcut hint that matches her words
 	if (speechTimer > 0 && speechText) {
 		const cleanSpeech = speechText.replace(/^\[[^\]]+\]\s*/, "");
 		const st = cleanSpeech.toLowerCase();
 		if (st.includes("feed") || st.includes("food") || st.includes("hungry") || st.includes("snack") || st.includes("tummy"))
-			stateMsg = `${cleanSpeech}  —  ${mod}e to feed`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}f to feed`;
 		else if (st.includes("sleep") || st.includes("tired") || st.includes("nap") || st.includes("rest") || st.includes("eyes open"))
-			stateMsg = `${cleanSpeech}  —  ${mod}s to sleep`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}s to sleep`;
 		else if (st.includes("ball") || st.includes("play") || st.includes("catch"))
-			stateMsg = `${cleanSpeech}  —  ${mod}r to throw ball`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}b to throw ball`;
 		else if (st.includes("dance") || st.includes("groove") || st.includes("moves"))
-			stateMsg = `${cleanSpeech}  —  ${mod}x to dance`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}x to dance`;
 		else if (st.includes("flip") || st.includes("boing"))
-			stateMsg = `${cleanSpeech}  —  ${mod}z to flip`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}d to flip`;
 		else if (st.includes("treat") || st.includes("perk me up"))
-			stateMsg = `${cleanSpeech}  —  ${mod}t for treat`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}t for treat`;
 		else if (st.includes("pet") || st.includes("hug") || st.includes("cuddle"))
-			stateMsg = `${cleanSpeech}  —  ${mod}p to pet, ${mod}u to hug`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}p to pet`;
 		else if (st.includes("game") || st.includes("stars"))
-			stateMsg = `${cleanSpeech}  —  ${mod}g to play game`;
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}g to play game`;
 		else if (st.includes("umbrella"))
-			stateMsg = `${cleanSpeech}  —  /pompom give umbrella`;
+			stateMsg = `${cleanSpeech}  \u2014  /pompom give umbrella`;
 		else if (st.includes("scarf"))
-			stateMsg = `${cleanSpeech}  —  /pompom give scarf`;
+			stateMsg = `${cleanSpeech}  \u2014  /pompom give scarf`;
 		else if (st.includes("sunglasses"))
-			stateMsg = `${cleanSpeech}  —  /pompom give sunglasses`;
+			stateMsg = `${cleanSpeech}  \u2014  /pompom give sunglasses`;
 		else if (st.includes("hat"))
-			stateMsg = `${cleanSpeech}  —  /pompom give hat`;
+			stateMsg = `${cleanSpeech}  \u2014  /pompom give hat`;
 		else if (st.includes("music") || st.includes("sing") || st.includes("song"))
-			stateMsg = `${cleanSpeech}  —  ${mod}m for music`;
-		else
-			stateMsg = cleanSpeech; // show speech text as-is even without a shortcut match
+			stateMsg = `${cleanSpeech}  \u2014  ${mod}m for music`;
+		else stateMsg = cleanSpeech;
 	}
 	else if (hunger < 15) stateMsg = pick([
-		`Pompom's tummy won't stop growling... ${mod}e to feed`,
-		`Pompom is desperately hungry... please feed her ${mod}e`,
-		`Pompom can't focus... she needs food ${mod}e`,
+		"Pompom's tummy won't stop growling...",
+		"Pompom is desperately hungry...",
+		"Pompom can't focus... she needs food",
 	]);
 	else if (hunger < 30) stateMsg = pick([
-		`Pompom could use a snack right now... ${mod}e`,
-		`Pompom's tummy is rumbling... feed her ${mod}e`,
-		`Pompom keeps glancing at the food bowl... ${mod}e`,
+		"Pompom could use a snack right now...",
+		"Pompom's tummy is rumbling...",
+		"Pompom keeps glancing at the food bowl...",
 	]);
 	else if (energy < 15 && !isSleeping) stateMsg = pick([
-		`Pompom can barely keep her eyes open... ${mod}s to nap`,
-		`Pompom is swaying with exhaustion... let her sleep ${mod}s`,
-		`Pompom needs rest badly... ${mod}s for nap time`,
+		"Pompom can barely keep her eyes open...",
+		"Pompom is swaying with exhaustion...",
+		"Pompom needs rest badly...",
 	]);
 	else if (energy < 30 && !isSleeping) stateMsg = pick([
-		`Pompom is getting sleepy... ${mod}s for a nap`,
-		`Pompom yawns... maybe a short nap? ${mod}s`,
-		`Pompom's eyelids are drooping... ${mod}s`,
+		"Pompom is getting sleepy...",
+		"Pompom yawns... maybe a short nap?",
+		"Pompom's eyelids are drooping...",
 	]);
 	else if (currentState === "excited") stateMsg = pick([
 		"Pompom is bouncing with pure joy!",
@@ -2506,137 +2928,141 @@ export function renderPompom(width: number, audioLevel: number, dt: number): str
 		"Pompom's tiny paws pad across the screen",
 	]);
 	else if (currentState === "chasing") stateMsg = pick([
-		"Pompom spotted a glowing firefly! She's on the chase!",
-		"A firefly! Pompom leaps after it, antenna bobbing",
-		"Pompom bounds after a tiny light, ears perked up",
+		"Pompom spotted a glowing firefly!",
+		"A firefly! Pompom leaps after it",
+		"Pompom bounds after a tiny light",
 	]);
 	else if (currentState === "fetching") stateMsg = hasBall
-		? pick(["Pompom snatched the ball! Trotting back proudly", "Got it! Pompom carries the ball back, tail wagging"])
+		? pick(["Pompom snatched the ball! Trotting back proudly", "Got it! Pompom carries the ball back"])
 		: pick(["Pompom sprints after the bouncing ball!", "The ball! Pompom races to catch it!"]);
 	else if (currentState === "singing") stateMsg = pick([
-		"Pompom hums a sweet little tune, swaying gently",
-		"Pompom sings softly, her antenna glowing in rhythm",
-		"A little melody fills the terminal... la la la",
+		"Pompom hums a sweet little tune",
+		"Pompom sings softly, antenna glowing in rhythm",
+		"A little melody fills the terminal...",
 	]);
 	else if (currentState === "dance") stateMsg = pick([
-		"Pompom grooves to her own beat, sparkles flying!",
-		"Dance party! Pompom's moves are surprisingly good",
-		"Pompom shimmies and spins with reckless joy",
+		"Pompom grooves to her own beat!",
+		"Dance party! Pompom's moves are great",
+		"Pompom shimmies and spins with joy",
 	]);
 	else if (currentState === "peek") stateMsg = pick([
-		"Pompom peeks around the edge... is it safe?",
-		"A tiny ear appears... then a curious eye. Hi!",
-		"Pompom sneaks back in, trying to look innocent",
+		"Pompom peeks around the edge...",
+		"A tiny ear appears... then a curious eye",
+		"Pompom sneaks back in, looking innocent",
 	]);
 	else if (currentState === "offscreen") stateMsg = pick([
-		"Pompom tiptoed away... she'll sneak back soon",
-		"Where did Pompom go? She's hiding just off screen",
-		"Pompom is on a tiny adventure, she'll return",
+		"Pompom tiptoed away... she'll be back",
+		"Where did Pompom go?",
+		"Pompom is on a tiny adventure",
 	]);
 	else if (currentState === "game") stateMsg = pick([
-		"Stars are falling! Pompom leaps to catch them!",
-		"Game on! Pompom chases golden stars across the sky",
-		`Score: ${gameScore} stars! Go Pompom go!`,
+		"Stars are falling! Pompom leaps!",
+		"Game on! Chasing golden stars!",
+		`Score: ${gameScore} stars! Go Pompom!`,
 	]);
 	else if (isTalking) stateMsg = pick([
-		"Pompom is chatting with you, ears perked up",
-		"Pompom listens intently, antenna tilted your way",
-		"Pompom hangs on every word you say",
+		"Pompom is chatting with you",
+		"Pompom listens intently",
+		"Pompom hangs on every word",
 	]);
 	else {
 		const w = getWeather(), tod = getTimeOfDay();
 		if (w === "storm") stateMsg = pick([
-			"Thunder rumbles... Pompom huddles under her umbrella",
-			"Pompom watches the lightning from a safe spot",
-			"The storm rages, but Pompom feels cozy in here",
+			"Thunder rumbles... Pompom huddles close",
+			"The storm rages, but Pompom feels cozy",
 		]);
 		else if (w === "rain") stateMsg = pick([
-			"Pompom watches raindrops race down the window",
-			"Pitter-patter... Pompom loves the gentle rain",
-			"Rainy day vibes. Pompom listens to the drops",
+			"Pitter-patter... Pompom loves the rain",
+			"Rainy day vibes",
 		]);
 		else if (w === "snow") stateMsg = pick([
-			"Snowflakes drift down... Pompom tries to catch one",
-			"A white world outside. Pompom presses her nose to the glass",
-			"Pompom watches the snow fall, cozy and warm",
+			"Snowflakes drift down gently...",
+			"Pompom watches the snow fall, cozy",
 		]);
 		else if (tod === "dawn") stateMsg = pick([
-			"The first light of dawn... Pompom watches the sky turn pink",
-			"Early morning. Pompom blinks sleepily at the sunrise",
-			"A new day begins. Pompom stretches and yawns",
+			"The sky turns pink... a new day",
+			"Early morning. Pompom stretches",
 		]);
 		else if (tod === "sunset") stateMsg = pick([
-			"Golden hour... Pompom's fur glows in the sunset light",
-			"The sky blazes orange. Pompom gazes at the horizon",
-			"Sunset. Pompom settles in for the evening",
+			"Golden hour... Pompom glows",
+			"Sunset. Pompom settles in",
 		]);
 		else if (tod === "night") stateMsg = pick([
-			"Stars twinkle overhead. Pompom counts the constellations",
-			"A quiet night sky. Pompom's antenna glows softly",
-			"Moonlight bathes the terminal. Pompom is at peace",
+			"Stars twinkle overhead",
+			"Moonlight bathes the terminal",
 		]);
 		else if (hunger > 80 && energy > 80) stateMsg = pick([
-			"Pompom is living her best life right now",
-			"Full belly, rested, happy. Pompom radiates joy",
-			"Everything is perfect. Pompom couldn't be happier",
+			"Pompom is living her best life",
+			"Full belly, rested, happy",
 		]);
 		else stateMsg = pick([
-			"Pompom sits beside you, content and cozy",
-			"Pompom is here, keeping you company while you code",
-			"A gentle breeze, a happy Pompom, a good day",
-			`Pet ${mod}p, feed ${mod}e, or play ball ${mod}r!`,
+			"Pompom sits beside you, content",
+			"Keeping you company while you code",
+			"A gentle breeze, a happy Pompom",
 		]);
 	}
 
-	// Build status bar — Gemini 3.1 Pro design: grouped shortcuts + state right-aligned
-	// Groups: Interact (pet/feed/ball) · Fun (dance/music/color) · Life (sleep/wake)
-	const softC = "\x1b[38;2;166;173;200m";  // Subtext0
-	const groupSep = `${dim}  \ue0b1  `;     // Thin Powerline between groups
-	const key = (k: string, l: string) => `${keyC}${k}${lblC}\u00b7${l}`;
+	// Build contextual shortcuts — only relevant ones for current state
+	type ShortcutDef = { key: string; label: string; color: string };
+	const ctxShortcuts: ShortcutDef[] = [];
+	if (isSleeping || currentState === "sleep") {
+		ctxShortcuts.push({ key: "w", label: "Wake", color: PINK_C });
+	} else {
+		// Priority: urgent needs first
+		if (hunger < 30) ctxShortcuts.push({ key: "f", label: "Feed", color: PEACH_C });
+		if (energy < 30) ctxShortcuts.push({ key: "s", label: "Sleep", color: LAV_C });
+		// State-specific shortcuts
+		switch (currentState) {
+			case "idle": case "offscreen": case "peek":
+				ctxShortcuts.push({ key: "p", label: "Pet", color: PINK_C }, { key: "b", label: "Ball", color: PINK_C }, { key: "x", label: "Dance", color: PINK_C }, { key: "c", label: "Color", color: PINK_C });
+				break;
+			case "walk": case "excited":
+				ctxShortcuts.push({ key: "p", label: "Pet", color: PINK_C }, { key: "t", label: "Treat", color: PINK_C }, { key: "d", label: "Flip", color: PINK_C });
+				break;
+			case "singing": case "dance":
+				ctxShortcuts.push({ key: "m", label: "Music", color: PINK_C }, { key: "x", label: "Dance", color: PINK_C }, { key: "h", label: "Hug", color: PINK_C });
+				break;
+			case "game":
+				ctxShortcuts.push({ key: "g", label: "Game", color: PINK_C }, { key: "t", label: "Treat", color: PINK_C });
+				break;
+			case "fetching": case "chasing":
+				ctxShortcuts.push({ key: "b", label: "Ball", color: PINK_C }, { key: "p", label: "Pet", color: PINK_C });
+				break;
+			case "flip":
+				ctxShortcuts.push({ key: "d", label: "Flip", color: PINK_C }, { key: "p", label: "Pet", color: PINK_C });
+				break;
+			default:
+				ctxShortcuts.push({ key: "p", label: "Pet", color: PINK_C }, { key: "f", label: "Feed", color: PINK_C });
+				break;
+		}
+	}
+	// Deduplicate, limit to 4
+	const seen = new Set<string>();
+	const finalShortcuts: ShortcutDef[] = [];
+	for (const s of ctxShortcuts) {
+		if (!seen.has(s.key)) { seen.add(s.key); finalShortcuts.push(s); }
+		if (finalShortcuts.length >= 4) break;
+	}
 
-	const interact = `${key("p","Pet")} ${key("e","Feed")} ${key("r","Ball")}`;
-	const fun = `${key("x","Dance")} ${key("m","Music")} ${key("c","Color")}`;
-	const life = `${key("s","Sleep")} ${key("a","Wake")}`;
-
-	// Truncate stateMsg at word boundary (Gemini design: never cut mid-word)
+	// Truncate stateMsg at word boundary
 	const maxStateW = Math.max(8, W - 20);
 	if (getStringWidth(stateMsg) > maxStateW) {
 		const truncated = stateMsg.slice(0, maxStateW - 1);
 		const lastSpace = truncated.lastIndexOf(" ");
 		stateMsg = lastSpace > 0 ? truncated.slice(0, lastSpace) + "\u2026" : truncated + "\u2026";
 	}
-	// On very narrow terminals, hide message entirely
-	if (W < 50) stateMsg = "";
+	if (W < 40) stateMsg = "";
 
-	// Build shortcut section progressively based on width
-	let styledShortcuts = "";
-	let plainLen = 0;
-	const stateW = getStringWidth(stateMsg);
-	const overhead = 4 + stateW; // " │ state "
-
-	// Always try interact group first
-	const interactPlain = "p·Pet e·Feed r·Ball";
-	if (plainLen + getStringWidth(interactPlain) + overhead + 4 < W) {
-		styledShortcuts = ` ${dim}\u{f0544}${lblC} ${interact}`;
-		plainLen = 2 + getStringWidth(interactPlain);
-	}
-	// Add fun group
-	const funPlain = "x·Dance m·Music c·Color";
-	if (plainLen + getStringWidth(funPlain) + overhead + 8 < W) {
-		styledShortcuts += `${groupSep}${fun}`;
-		plainLen += 5 + getStringWidth(funPlain);
-	}
-	// Add life group
-	const lifePlain = "s·Sleep a·Wake";
-	if (plainLen + getStringWidth(lifePlain) + overhead + 8 < W) {
-		styledShortcuts += `${groupSep}${life}`;
-		plainLen += 5 + getStringWidth(lifePlain);
-	}
-
-	const rightPart = ` ${softC}${stateMsg}${dim} `;
-	const usedW = plainLen + 1 + stateW + 2;
-	const padR = Math.max(0, W - usedW);
-	lines.push(`${styledShortcuts}${dim}${"─".repeat(padR)}${rightPart}\x1b[0m`);
+	// Render: paw icon + bold keys with dim labels + space + right-aligned state
+	const fmtShortcuts = finalShortcuts.map(s =>
+		`${s.color}${BOLD_C}${mod}${s.key}${RST_C}${DIM_C} ${s.label}${RST_C}`
+	);
+	const leftSide = `${SAPH_C}\uf1b0${RST_C}  ${fmtShortcuts.join("  ")}`;
+	const rightSide = stateMsg ? `${SUB_C}${stateMsg}${RST_C}` : "";
+	const leftW = getStringWidth(leftSide);
+	const rightW = getStringWidth(rightSide);
+	const gap = Math.max(2, W - leftW - rightW);
+	lines.push(`${leftSide}${" ".repeat(gap)}${rightSide}`);
 
 	return lines;
 }
@@ -2707,8 +3133,50 @@ export function pompomSetAgentEarBoost({ amount }: { amount: number }) {
 	agentEarBoostTarget = clamp(amount, 0, 1);
 }
 
-export function pompomSetWeatherOverride({ weather }: { weather: Weather | null }) {
+export function pompomSetWeatherOverride({ weather, transitionMs = 0 }: { weather: Weather | null; transitionMs?: number }) {
+	const hadOverride = weatherOverride !== null;
+	if (!hadOverride && weather !== null) {
+		naturalWeatherSnapshot = captureNaturalWeatherSnapshot();
+	}
+
 	weatherOverride = weather;
+
+	if (weather === null) {
+		if (naturalWeatherSnapshot) {
+			restoreNaturalWeatherSnapshot(naturalWeatherSnapshot);
+			naturalWeatherSnapshot = null;
+		}
+		// Sync announcement state so the weather-change announcement doesn't re-fire
+		lastAnnouncedWeatherState = weatherState;
+		return;
+	}
+
+	const targetIntensity = getOverrideWeatherTargetIntensity(weather);
+	weatherBlendDurationMs = transitionMs > 0 ? transitionMs : WEATHER_BLEND_DURATION_MS;
+	if (transitionMs > 0) {
+		weatherState = weather;
+		weatherTargetIntensity = targetIntensity;
+		weatherIntensityRate = (weatherTargetIntensity - weatherIntensity) / transitionMs;
+	} else {
+		clearWeatherParticles();
+		weatherIntensity = targetIntensity;
+		weatherTargetIntensity = targetIntensity;
+		weatherIntensityRate = 0;
+		weatherState = weather === "clear" ? "clear" : weather;
+	}
+	// Sync announcement state so the weather-change announcement doesn't re-fire
+	lastAnnouncedWeatherState = weatherState;
+}
+
+/** Clear particles. "transient" removes sparkles/notes/crumbs but keeps weather. "all" clears everything. */
+export function pompomClearParticles(mode: "all" | "transient" = "transient"): void {
+	if (mode === "all") { particles.length = 0; return; }
+	for (let i = particles.length - 1; i >= 0; i--) {
+		const t = particles[i].type;
+		if (t !== "rain" && t !== "snow" && t !== "lightning" && t !== "splash" && t !== "snowpile") {
+			particles.splice(i, 1);
+		}
+	}
 }
 
 export function pompomGetWeather(): Weather {
@@ -2762,8 +3230,9 @@ export function pompomKeypress(key: string) {
 		return;
 	}
 
-	// 4th+ rapid repeat: visual-only (no say, no sfx) — handled by suppressSpeech flag below
+	// 4th+ rapid repeat: visual-only (no say, no sfx)
 	const suppressSpeech = rapidRepeatCount >= 3;
+	const suppressAudio = rapidRepeatCount >= 3;
 
 	if (key === "p") {
 		currentState = "excited"; actionTimer = 2.5; isSleeping = false;
@@ -2784,6 +3253,7 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "s") {
 		currentState = "sleep"; isSleeping = true; actionTimer = 10;
+		gameScore = 0; gameTimer = 0; gameActive = false; gameStars = [];
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
 			if (state === "critical_tired" || state === "tired") say("[whispers] Finally... sweet sleep...", 4.0, "user_action", 3, true);
@@ -2823,15 +3293,15 @@ export function pompomKeypress(key: string) {
 			} else if (state === "critical_tired") {
 				say("[whispers] A lullaby maybe...", 3.0, "user_action", 3, true);
 			} else if (state === "tired") {
-				emitSfx("dance_sparkle");
+				if (!suppressAudio) emitSfx("dance_sparkle");
 				say("[sings] Twinkle twinkle... zzz...", 4.0, "user_action", 3, true);
 			} else if (state === "recovering") {
-				emitSfx("dance_sparkle");
+				if (!suppressAudio) emitSfx("dance_sparkle");
 				const recovSongs = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes("recovering") && energy >= s.minEnergy);
 				const song = recovSongs.length > 0 ? recovSongs[Math.floor(Math.random() * recovSongs.length)] : null;
 				say(song ? song.text : "[sings] Food glorious food!", 4.0, "user_action", 3, true);
 			} else {
-				emitSfx("dance_sparkle");
+				if (!suppressAudio) emitSfx("dance_sparkle");
 				const eligible = SINGING_REPERTOIRE.filter(s => s.allowedStates.includes(state) && energy >= s.minEnergy);
 				const song = eligible.length > 0 ? eligible[Math.floor(Math.random() * eligible.length)] : null;
 				say(song ? song.text : "[sings] La la la!", 4.0, "user_action", 3, true);
@@ -2846,7 +3316,7 @@ export function pompomKeypress(key: string) {
 	else if (key === "o") { isSleeping = false; currentState = "walk"; targetX = (Math.random() > 0.5 ? 1 : -1) * (getScreenEdgeX() + 0.25); isWalking = true; }
 	else if (key === "x") {
 		isSleeping = false; currentState = "dance"; actionTimer = 4.0;
-		emitSfx("dance_sparkle");
+		if (!suppressAudio) emitSfx("dance_sparkle");
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
@@ -2885,7 +3355,7 @@ export function pompomKeypress(key: string) {
 	}
 	else if (key === "g") {
 		isSleeping = false; gameScore = 0; gameStars = []; gameActive = true; gameTimer = 20; currentState = "game";
-		emitSfx("game_start");
+		if (!suppressAudio) emitSfx("game_start");
 		lastPlayedAt = nowMs;
 		if (!suppressSpeech) {
 			const state = currentEmotionalState;
@@ -2904,7 +3374,7 @@ export function resetPompom() {
 	for (const h of weatherAccessoryTimers) clearTimeout(h);
 	weatherAccessoryTimers.length = 0;
 	time = 0; currentState = "idle"; blinkFade = 0; actionTimer = 0;
-	speechTimer = 0; speechText = ""; lastFootstepTime = 0; lastEmotionalReactionAt = 0;
+	speechTimer = 0; speechText = ""; currentSpeechPriority = 0; lastFootstepTime = 0; lastEmotionalReactionAt = 0;
 	lastIdleWalkAt = 0; lastIdleFlipAt = 0; lastIdleChaseAt = 0;
 	posX = 0; posY = 0.15; posZ = 0; bounceY = 0; lookX = 0; lookY = 0;
 	isWalking = false; isFlipping = false; isSleeping = false; isTalking = false;
@@ -2915,6 +3385,7 @@ export function resetPompom() {
 	lastFedAt = 0; lastRestedAt = 0; lastPlayedAt = 0;
 	lastInteractionAt = 0; lastDesireAt = 0;
 	currentEmotionalState = "content";
+	prepareSessionCountForNextSession();
 	firstSessionGreetingDone = false;
 	lastTimeOfDayPeriod = ""; announcedTimePeriods = new Set<DetailedTimeOfDay>();
 	sessionStartedAt = Date.now(); lastSpokenText = "";
@@ -2946,12 +3417,16 @@ export function resetPompom() {
 	weatherArcNode = 0;
 	weatherArcTimer = 0;
 	weatherReactionTimer = 0;
+	clearAccessoryReactionTimer = 0;
+	clearAccessoryReactionInterval = 180000;
 	weatherAskedAccessory = false;
 	weatherWasRaining = false;
 	lastAnnouncedWeatherState = "clear";
+	naturalWeatherSnapshot = null;
 	weatherTimer = 60000 + Math.random() * 120000; // first arc in 1-3 min
 	lastRenderedWeatherState = getWeather();
 	weatherBlend = 0;
+	weatherBlendDurationMs = WEATHER_BLEND_DURATION_MS;
 	agentOverlayActive = false;
 	agentOverlayWeight = 0;
 	agentOverlayLookX = 0;
@@ -2964,7 +3439,7 @@ export function resetPompom() {
 	agentEarBoost = 0;
 	agentEarBoostTarget = 0;
 	accessoryAsked = {};
-	ballX = -10; ballY = -10; ballVx = 0; ballVy = 0; ballVz = 0; hasBall = false;
+	ballX = -10; ballY = -10; ballVx = 0; ballVy = 0; ballVz = 0; hasBall = false; ballSpin = 0;
 	ffX = 0; ffY = 0; ffZ = 0;
 	targetX = 0;
 	foods.length = 0; particles.length = 0;

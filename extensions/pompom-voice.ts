@@ -2,6 +2,7 @@ import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as url from "node:url";
 
 export interface SpeechEvent {
 	text: string;
@@ -59,6 +60,7 @@ const TMP_DIR = path.join(os.tmpdir(), "pompom-voice");
 const MIN_INTERVAL_MS = 45000;
 const MAX_QUEUE = 3;
 const ENGINE_PRIORITY = ["elevenlabs", "deepgram", "kokoro"] as const;
+const VOICE_AVAILABILITY_TTL_MS = 10000;
 
 export interface VoiceAvailability {
 	bestEngine: VoiceConfig["engine"] | null;
@@ -138,6 +140,14 @@ let currentPlayback: childProcess.ChildProcess | null = null;
 let stopRequested = false;
 let consecutiveFailures = 0;
 let currentAbortController: AbortController | null = null;
+let queueRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let voiceAvailabilityCache:
+	| {
+		expiresAt: number;
+		value: VoiceAvailability | null;
+		pending: Promise<VoiceAvailability> | null;
+	}
+	| null = null;
 
 function sanitizeSpeechText(text: string): string {
 	return text.replace(/[^\x20-\x7E]/g, "").replace(/\s+/g, " ").trim();
@@ -211,6 +221,81 @@ function estimateDurationMs(buffer: Buffer): number {
 	return Math.max(1, Math.round((buffer.length / (24000 * 2)) * 1000));
 }
 
+function clearQueueRestartTimer(): void {
+	if (!queueRestartTimer) {
+		return;
+	}
+	clearTimeout(queueRestartTimer);
+	queueRestartTimer = null;
+}
+
+function scheduleQueueRestart(): void {
+	if (queueRestartTimer || stopRequested) {
+		return;
+	}
+	queueRestartTimer = setTimeout(() => {
+		queueRestartTimer = null;
+		consecutiveFailures = 0;
+		processQueue().catch((error) => {
+			console.error(`[pompom-voice] processQueue restart failed: ${error instanceof Error ? error.message : error}`);
+		});
+	}, 30000);
+}
+
+function findWavDataChunk(buffer: Buffer): { dataOffset: number; dataLength: number; bitsPerSample: number } | null {
+	if (buffer.length < 44) {
+		return null;
+	}
+	if (buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
+		return null;
+	}
+	let bitsPerSample = 16;
+	let offset = 12;
+	while (offset + 8 <= buffer.length) {
+		const chunkId = buffer.toString("ascii", offset, offset + 4);
+		const chunkLength = buffer.readUInt32LE(offset + 4);
+		const chunkDataOffset = offset + 8;
+		if (chunkId === "fmt " && chunkDataOffset + 16 <= buffer.length) {
+			bitsPerSample = buffer.readUInt16LE(chunkDataOffset + 14);
+		}
+		if (chunkId === "data") {
+			return {
+				dataOffset: chunkDataOffset,
+				dataLength: Math.max(0, Math.min(chunkLength, buffer.length - chunkDataOffset)),
+				bitsPerSample,
+			};
+		}
+		offset = chunkDataOffset + chunkLength + (chunkLength % 2);
+	}
+	return null;
+}
+
+function applyGainToWav(buffer: Buffer, gain: number): Buffer {
+	if (gain >= 0.999) {
+		return buffer;
+	}
+	const wavData = findWavDataChunk(buffer);
+	if (!wavData || wavData.bitsPerSample !== 16) {
+		return buffer;
+	}
+	const scaled = Buffer.from(buffer);
+	const endOffset = wavData.dataOffset + wavData.dataLength;
+	for (let offset = wavData.dataOffset; offset + 1 < endOffset; offset += 2) {
+		const sample = scaled.readInt16LE(offset);
+		const nextSample = Math.round(sample * gain);
+		const clampedSample = Math.max(-32768, Math.min(32767, nextSample));
+		scaled.writeInt16LE(clampedSample, offset);
+	}
+	return scaled;
+}
+
+function getPlaybackBuffer(buffer: Buffer): Buffer {
+	if (detectedPlayer?.command !== "aplay" && detectedPlayer?.command !== "powershell") {
+		return buffer;
+	}
+	return applyGainToWav(buffer, Math.max(0, Math.min(1, config.volume / 100)));
+}
+
 function markVoiceConfigured(): boolean {
 	if (config.configured) {
 		return false;
@@ -265,29 +350,29 @@ function detectPlayer(): AudioPlayer | null {
 }
 
 async function playAudio(buffer: Buffer): Promise<void> {
-		try {
-			if (!detectedPlayer) {
-				console.error("[pompom-voice] No audio player detected — cannot play TTS audio");
-				return;
-			}
-			const player = detectedPlayer;
-			fs.mkdirSync(TMP_DIR, { recursive: true });
+	try {
+		if (!detectedPlayer) {
+			throw new Error("No audio player detected — cannot play TTS audio");
+		}
+		const player = detectedPlayer;
+		const playbackBuffer = getPlaybackBuffer(buffer);
+		fs.mkdirSync(TMP_DIR, { recursive: true });
 		const tempFile = path.join(
 			TMP_DIR,
 			`pompom-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`,
 		);
-		fs.writeFileSync(tempFile, buffer);
+		fs.writeFileSync(tempFile, playbackBuffer);
 
-			await new Promise<void>((resolve) => {
-				const child = childProcess.spawn(
-					player.command,
-					player.argsForFile(tempFile),
-					{ stdio: "ignore" },
-				);
+		await new Promise<void>((resolve, reject) => {
+			const child = childProcess.spawn(
+				player.command,
+				player.argsForFile(tempFile),
+				{ stdio: "ignore" },
+			);
 			currentPlayback = child;
 			let finished = false;
 
-			const finish = () => {
+			const finish = (callback: () => void) => {
 				if (finished) {
 					return;
 				}
@@ -297,20 +382,29 @@ async function playAudio(buffer: Buffer): Promise<void> {
 				} catch {
 					// Temp file cleanup is best-effort — file will be cleaned on next launch or OS reboot
 				}
-				currentPlayback = null;
-				resolve();
+				if (currentPlayback === child) {
+					currentPlayback = null;
+				}
+				callback();
 			};
 
 			child.on("error", (error) => {
-				if (!stopRequested) {
-					const msg = error instanceof Error ? error.message : String(error);
-					console.error(`[pompom-voice] playback error: ${msg}`);
+				if (stopRequested) {
+					finish(resolve);
+					return;
 				}
-				finish();
+				const msg = error instanceof Error ? error.message : String(error);
+				console.error(`[pompom-voice] playback error: ${msg}`);
+				finish(() => reject(error instanceof Error ? error : new Error(msg)));
 			});
 
-			child.on("close", () => {
-				finish();
+			child.on("close", (code, signal) => {
+				if (stopRequested || code === 0) {
+					finish(resolve);
+					return;
+				}
+				const detail = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+				finish(() => reject(new Error(`Playback exited with ${detail}`)));
 			});
 		});
 	} catch (error) {
@@ -453,11 +547,11 @@ class ElevenLabsEngine implements TTSEngine {
 				text,
 				model_id: "eleven_v3",
 				voice_settings: {
-					stability: 0.0, // Must be 0.0 for ElevenLabs v3 audio tag support ([laughs], [sighs], etc.)
-					similarity_boost: 0.75, // Natural clone fidelity without introducing artifacts
-					style: 0.65, // Emotional and animated, but not over-the-top
+					stability: 0.15, // Low for audio tag expressiveness, but not 0.0 which is too harsh
+					similarity_boost: 0.8, // Natural clone fidelity
+					style: 0.55, // Warm and animated without being jarring
 					use_speaker_boost: true, // Enhances clarity for small-speaker playback
-					speed: 1.05, // Slightly snappy delivery without sounding rushed
+					speed: 0.95, // Slightly slower — softer, more natural delivery
 				},
 			}),
 			signal,
@@ -536,6 +630,7 @@ async function processQueue(): Promise<void> {
 	if (isProcessingQueue) {
 		return;
 	}
+	clearQueueRestartTimer();
 	isProcessingQueue = true;
 	try {
 		while (queue.length > 0 && config.enabled && interactive) {
@@ -563,8 +658,6 @@ async function processQueue(): Promise<void> {
 				if (!speechText || speechText.length < 3) continue;
 				const audio = await engine.synthesize(speechText, voice);
 				if (stopRequested) break;
-				lastSpokenText = nextEvent.text;
-				lastSpeakTime = Date.now();
 				playbackActive = true;
 				playbackEnvelopePhase = 0;
 				const playbackTimeout = audio.durationMs + 10000;
@@ -591,6 +684,13 @@ async function processQueue(): Promise<void> {
 				} finally {
 					if (timeoutHandle) clearTimeout(timeoutHandle);
 				}
+				if (stopRequested) {
+					playbackActive = false;
+					break;
+				}
+				// Mark as spoken AFTER successful playback — failed plays can be retried
+				lastSpokenText = nextEvent.text;
+				lastSpeakTime = Date.now();
 				playbackActive = false;
 				consecutiveFailures = 0;
 			} catch (itemError) {
@@ -616,10 +716,15 @@ async function processQueue(): Promise<void> {
 	} finally {
 		playbackActive = false;
 		isProcessingQueue = false;
+		// stopRequested is only a transient interrupt latch. Once queue work is
+		// fully unwound, clear it so normal-priority speech can recover.
+		if (stopRequested && queue.length === 0) {
+			stopRequested = false;
+		}
 		// Re-check: items may have been enqueued during processing
 		if (queue.length > 0 && config.enabled && interactive && !stopRequested) {
 			if (consecutiveFailures >= 3 && queue.length > 0) {
-				setTimeout(() => { consecutiveFailures = 0; processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); }); }, 30000);
+				scheduleQueueRestart();
 			} else {
 				processQueue().catch(err => { console.error(`[pompom-voice] processQueue restart failed: ${err instanceof Error ? err.message : err}`); });
 			}
@@ -636,6 +741,7 @@ export function initVoice(isInteractive: boolean): void {
 		isProcessingQueue = false;
 		consecutiveFailures = 0;
 		lastSpeakTime = 0;
+		clearQueueRestartTimer();
 		interactive = isInteractive;
 		config = loadVoiceConfig();
 		detectedPlayer = detectPlayer();
@@ -651,9 +757,10 @@ export function initVoice(isInteractive: boolean): void {
 /** Set mic recording state — when true, all TTS is suppressed to avoid audio conflict */
 export function setMicRecording(active: boolean): void {
 	micRecording = active;
-	// If mic just activated while TTS is playing, stop playback immediately
-	if (active && playbackActive) {
-		stopPlayback();
+	if (active) {
+		// Cancel any in-flight TTS synthesis AND active playback
+		if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
+		if (playbackActive) stopPlayback();
 	}
 }
 
@@ -716,8 +823,8 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		// Clear stop flag — only high-priority speech should re-enable after a stop
 		if (event.priority >= 3) stopRequested = false;
 		if (stopRequested) return;
-		// Hard guard: don't enqueue anything while already playing
-		if (playbackActive) {
+		// During playback, only accept high-priority events into the queue
+		if (playbackActive && event.priority < 3) {
 			return;
 		}
 		// Agent busy gate — suppress TTS audio during agent work (speech bubbles still show)
@@ -789,6 +896,7 @@ export function enqueueSpeech(event: SpeechEvent): void {
 		queue.sort((left, right) => {
 			return right.priority - left.priority;
 		});
+		clearQueueRestartTimer();
 		void processQueue();
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
@@ -858,24 +966,47 @@ export function hasVoiceBeenConfigured(): boolean {
 }
 
 export async function getVoiceAvailability(): Promise<VoiceAvailability> {
-	const [elevenlabs, deepgram, kokoro] = await Promise.all([
+	const now = Date.now();
+	if (voiceAvailabilityCache?.value && voiceAvailabilityCache.expiresAt > now) {
+		return voiceAvailabilityCache.value;
+	}
+	if (voiceAvailabilityCache?.pending) {
+		return voiceAvailabilityCache.pending;
+	}
+	const pending = Promise.all([
 		elevenlabsEngine.isAvailable(),
 		deepgramEngine.isAvailable(),
 		kokoroEngine.isAvailable(),
-	]);
-	const engines: VoiceAvailability["engines"] = {
-		elevenlabs,
-		deepgram,
-		kokoro,
-	};
-	const availableEngines = ENGINE_PRIORITY.filter((engine) => {
-		return engines[engine];
+	]).then(([elevenlabs, deepgram, kokoro]) => {
+		const engines: VoiceAvailability["engines"] = {
+			elevenlabs,
+			deepgram,
+			kokoro,
+		};
+		const availableEngines = ENGINE_PRIORITY.filter((engine) => {
+			return engines[engine];
+		});
+		const availability: VoiceAvailability = {
+			bestEngine: availableEngines[0] || null,
+			availableEngines,
+			engines,
+		};
+		voiceAvailabilityCache = {
+			expiresAt: Date.now() + VOICE_AVAILABILITY_TTL_MS,
+			value: availability,
+			pending: null,
+		};
+		return availability;
+	}).catch((error) => {
+		voiceAvailabilityCache = null;
+		throw error;
 	});
-	return {
-		bestEngine: availableEngines[0] || null,
-		availableEngines,
-		engines,
+	voiceAvailabilityCache = {
+		expiresAt: now,
+		value: null,
+		pending,
 	};
+	return pending;
 }
 
 export async function autoDetectEngine(options?: {
@@ -897,12 +1028,76 @@ export function speakTest(): void {
 	});
 }
 
+// ─── Demo voiceover pre-generation + cached playback ─────────────────────────
+
+// Demo audio ships with the package — look in the repo's demo-audio/ directory
+const MODULE_DIR = path.dirname(url.fileURLToPath(import.meta.url));
+const DEMO_AUDIO_DIR = path.join(MODULE_DIR, "..", "demo-audio");
+
+/** Synthesize a line and save to disk. Returns true if cached file exists or was generated. */
+export async function pregenerateDemoLine(key: string, text: string): Promise<boolean> {
+	const wavPath = path.join(DEMO_AUDIO_DIR, `${key}.wav`);
+	if (fs.existsSync(wavPath) && fs.statSync(wavPath).size > 1000) return true; // already cached
+	try {
+		const engine = await resolveEngine();
+		if (!engine) return false;
+		const voice = engine.name === "kokoro" ? config.kokoroVoice
+			: engine.name === "elevenlabs" ? config.elevenlabsVoice
+			: config.deepgramVoice;
+		const speechText = engine.name === "elevenlabs" ? text : stripAudioTags(text);
+		const audio = await engine.synthesize(speechText, voice);
+		fs.mkdirSync(DEMO_AUDIO_DIR, { recursive: true });
+		const tmp = wavPath + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, audio.buffer);
+		fs.renameSync(tmp, wavPath);
+		return true;
+	} catch (err) {
+		console.error(`[pompom-voice] pregenerateDemoLine(${key}) failed: ${err instanceof Error ? err.message : err}`);
+		return false;
+	}
+}
+
+/** Play a pre-generated demo audio file. Stops any previous playback first. */
+export function playDemoLine(key: string): void {
+	const wavPath = path.join(DEMO_AUDIO_DIR, `${key}.wav`);
+	if (!fs.existsSync(wavPath) || !detectedPlayer) return;
+	try {
+		stopPlayback();
+		if (detectedPlayer.command === "aplay" || detectedPlayer.command === "powershell") {
+			const buffer = fs.readFileSync(wavPath);
+			void playAudio(buffer).catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				console.error(`[pompom-voice] playDemoLine(${key}) failed: ${message}`);
+			});
+			return;
+		}
+		const proc = childProcess.spawn(
+			detectedPlayer.command,
+			detectedPlayer.argsForFile(wavPath),
+			{ stdio: "ignore", detached: false },
+		);
+		currentPlayback = proc;
+		playbackActive = true;
+		proc.on("close", () => { if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; } });
+		proc.on("error", () => { if (currentPlayback === proc) { currentPlayback = null; playbackActive = false; } });
+	} catch { /* best-effort */ }
+}
+
+/** Check if all demo lines are cached. */
+export function isDemoCached(keys: string[]): boolean {
+	return keys.every(k => {
+		const p = path.join(DEMO_AUDIO_DIR, `${k}.wav`);
+		return fs.existsSync(p) && fs.statSync(p).size > 1000;
+	});
+}
+
 export function stopPlayback(): void {
 	try {
 		queue = [];
 		playbackActive = false;
 		stopRequested = true;
 		consecutiveFailures = 0;
+		clearQueueRestartTimer();
 		if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
 		// Do NOT set isProcessingQueue = false here — let processQueue's own finally handle it.
 		// Setting it here would break mutual exclusion if processQueue is still running.
@@ -915,6 +1110,10 @@ export function stopPlayback(): void {
 			}
 		}
 		currentPlayback = null;
+		// If no queue worker is active, we can safely clear the transient latch now.
+		if (!isProcessingQueue) {
+			stopRequested = false;
+		}
 	} catch (error) {
 		const msg = error instanceof Error ? error.message : String(error);
 		console.error(`[pompom-voice] stopPlayback failed: ${msg}`);
