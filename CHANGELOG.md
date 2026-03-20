@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.28] - 2026-03-20
+
+### Features
+
+- Bundled ambient weather audio — all 5 weather soundscapes (clear, cloudy,
+  rain, snow, storm) now ship with the package. Ambient sounds work out of the
+  box without an ElevenLabs API key. Files are seeded into the user cache on
+  first init and won't overwrite existing custom or generated audio.
+
+### Bug Fixes
+
+- Hunger decay slowed 10× (0.8→0.08/s awake, 0.2→0.02/s sleeping) — Pompom
+  now asks for food every ~15 minutes instead of every ~2 minutes
+- Emotional speech priority raised from 1 to 2 so the "mentor" voice
+  personality no longer silences hungry/happy/bored reactions from TTS
+
 ## [7.8.20] - 2026-03-19
 
 ### Patch Changes

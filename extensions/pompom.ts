@@ -2204,7 +2204,7 @@ function resolveAndSpeak(now: number): void {
 	if (line) {
 		lastEmotionalReactionAt = now;
 		lastSpokenText = line.text;
-		say(line.text, 4.0, "commentary", state.startsWith("critical") ? 2 : 1, true);
+		say(line.text, 4.0, "commentary", 2, true);
 	}
 }
 
@@ -2226,8 +2226,8 @@ function updatePhysics(dt: number) {
 		lastNeedsTick = now;
 		const prevHunger = hunger;
 		const prevEnergy = energy;
-		if (!isSleeping) { energy = Math.max(0, energy - 0.5); hunger = Math.max(0, hunger - 0.8); }
-		else { energy = Math.min(100, energy + 5.0); hunger = Math.max(0, hunger - 0.2); }
+		if (!isSleeping) { energy = Math.max(0, energy - 0.5); hunger = Math.max(0, hunger - 0.08); }
+		else { energy = Math.min(100, energy + 5.0); hunger = Math.max(0, hunger - 0.02); }
 		// Threshold-crossing SFX (fire once per crossing, not every tick)
 		if (!isSleeping) {
 			if (prevHunger >= 30 && hunger < 30) emitSfx("hunger_rumble");
