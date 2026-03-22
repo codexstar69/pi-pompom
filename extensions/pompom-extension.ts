@@ -593,6 +593,32 @@ function findLatestSerializedState(currentContext: ExtensionContext) {
 	return null;
 }
 
+// ─── Pompom enabled state persistence ────────────────────────────────────────
+
+const ENABLED_CONFIG_FILE = path.join(os.homedir(), ".pi", "pompom", "enabled-config.json");
+
+function loadEnabledState(): boolean {
+	try {
+		if (!fs.existsSync(ENABLED_CONFIG_FILE)) return true; // default on for fresh installs
+		const parsed = JSON.parse(fs.readFileSync(ENABLED_CONFIG_FILE, "utf-8"));
+		return parsed.enabled !== false; // treat missing/corrupt as enabled
+	} catch {
+		return true;
+	}
+}
+
+function saveEnabledState(value: boolean): void {
+	try {
+		fs.mkdirSync(path.dirname(ENABLED_CONFIG_FILE), { recursive: true });
+		const tmp = ENABLED_CONFIG_FILE + ".tmp." + process.pid;
+		fs.writeFileSync(tmp, JSON.stringify({ enabled: value }, null, "\t"));
+		fs.renameSync(tmp, ENABLED_CONFIG_FILE);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`[pompom] saveEnabledState failed: ${msg}`);
+	}
+}
+
 export default function (pi: ExtensionAPI) {
 	let ctx: ExtensionContext | null = null;
 	let companionTimer: ReturnType<typeof setInterval> | null = null;
@@ -601,7 +627,7 @@ export default function (pi: ExtensionAPI) {
 	let widgetVisible = true;
 	let lastRenderTime = Date.now();
 	let terminalInputUnsub: (() => void) | null = null;
-	let enabled = true;
+	let enabled = loadEnabledState();
 	let overlayHint: OverlayHint | null = null;
 	let overlayHintUntil = 0;
 	let pulseOverlayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -979,6 +1005,7 @@ export default function (pi: ExtensionAPI) {
 
 	function enablePompom(commandContext: ExtensionContext) {
 		enabled = true;
+		saveEnabledState(true);
 		setVoiceEnabled(getVoiceConfig().enabled);
 		setMoodSfxEnabled(true);
 		// Only primary instance enables ambient audio to prevent duplicate sounds
@@ -997,6 +1024,7 @@ export default function (pi: ExtensionAPI) {
 
 	function disablePompom() {
 		enabled = false;
+		saveEnabledState(false);
 		cancelAiCommand();
 		stopAiSpeech();
 		setMoodSfxEnabled(false);
@@ -1006,8 +1034,8 @@ export default function (pi: ExtensionAPI) {
 		stopAmbientWeatherSync();
 		stopPlayback();
 		closeNativeWindow();
-		// Session-only mute: stop playback without persisting disabled state to disk.
-		// This way /pompom on can restore the user's saved preferences.
+		// Persisted mute: state is saved to disk so new terminals also start with Pompom off.
+		// /pompom on restores everything and persists the enabled state back.
 		resetPompom();
 		if (terminalInputUnsub) { terminalInputUnsub(); terminalInputUnsub = null; }
 	}
@@ -1589,6 +1617,7 @@ export default function (pi: ExtensionAPI) {
 		pi.on("session_start", async (_event, startCtx) => {
 			await runSafely("session_start", async () => {
 				ctx = startCtx;
+				enabled = loadEnabledState();
 				sessionStartMs = Date.now();
 				loadedVoiceHintShown = false;
 				installPompomTheme();
@@ -1685,6 +1714,7 @@ export default function (pi: ExtensionAPI) {
 			hideCompanion();
 			resetPompom();
 			ctx = switchCtx;
+				enabled = loadEnabledState();
 				// Re-register with new cwd (replaces old heartbeat atomically)
 				registerInstance(switchCtx.cwd);
 				loadedVoiceHintShown = false;
