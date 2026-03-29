@@ -1400,7 +1400,7 @@ export default function (pi: ExtensionAPI) {
 			commandContext.ui.notify(`Could not save ${item}: ${message}`, "error");
 			return;
 		}
-		await playSfx("accessory_equip");
+		if (enabled) await playSfx("accessory_equip");
 		commandContext.ui.notify(result, "info");
 	}
 
@@ -1447,8 +1447,10 @@ export default function (pi: ExtensionAPI) {
 		const thinkingLevel = pi.getThinkingLevel();
 		const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
 
-		pulseOverlay({ forceOverlay: true, lookX: 0.16, lookY: -0.1, glow: 0.95, earBoost: 0.75 }, 5000);
-		pompomSay("Let me think that through.", 4.2, "commentary", 1, true);
+		if (enabled) {
+			pulseOverlay({ forceOverlay: true, lookX: 0.16, lookY: -0.1, glow: 0.95, earBoost: 0.75 }, 5000);
+			pompomSay("Let me think that through.", 4.2, "commentary", 1, true);
+		}
 
 		let answer = "";
 		let lastBubbleUpdate = 0;
@@ -1577,8 +1579,10 @@ export default function (pi: ExtensionAPI) {
 			"</recent-session>",
 		].join("\n");
 
-		pulseOverlay({ forceOverlay: true, lookX: 0.08, lookY: -0.06, glow: 0.8, earBoost: 0.55 }, 3600);
-		pompomSay("I am wrapping up the session.", 4.2, "commentary", 1, true);
+		if (enabled) {
+			pulseOverlay({ forceOverlay: true, lookX: 0.08, lookY: -0.06, glow: 0.8, earBoost: 0.55 }, 3600);
+			pompomSay("I am wrapping up the session.", 4.2, "commentary", 1, true);
+		}
 
 		try {
 			const response = await completeSimple(
@@ -1625,12 +1629,14 @@ export default function (pi: ExtensionAPI) {
 				initSessionCount();
 				initVoice(Boolean(startCtx.hasUI));
 				initAmbient(Boolean(startCtx.hasUI));
-				if (isPrimaryInstance()) void playSfx("session_chime");
+				if (isPrimaryInstance() && enabled) void playSfx("session_chime");
 				pompomOnSpeech((event: SpeechEvent) => {
+					if (!enabled) return;
 					if (!canForwardSpeech(event)) return;
 					enqueueSpeech(event);
 				});
 				pompomOnSfx((sfx) => {
+					if (!enabled) return;
 					// Block SFX during demo — demo voiceover handles all audio
 					if (demoRunning) return;
 					// Weather SFX only on primary; user-triggered SFX on all instances
@@ -1639,6 +1645,7 @@ export default function (pi: ExtensionAPI) {
 					void playSfx(sfx as SfxName);
 				});
 				pompomOnEmotionalState((state) => {
+					if (!enabled) return;
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
 				installPompomFooter(startCtx, () => sessionStartMs, () => pi.getThinkingLevel());
@@ -1672,7 +1679,7 @@ export default function (pi: ExtensionAPI) {
 				stopPlayback();
 				stopAmbient();
 				stopAmbientWeatherSync();
-				if (wasPrimary) {
+				if (wasPrimary && enabled) {
 					await playSfx("session_goodbye");
 				}
 				resetAiSpeechState();
@@ -1726,16 +1733,19 @@ export default function (pi: ExtensionAPI) {
 				initVoice(Boolean(switchCtx.hasUI));
 				initAmbient(Boolean(switchCtx.hasUI));
 				pompomOnSpeech((event: SpeechEvent) => {
+					if (!enabled) return;
 					if (!canForwardSpeech(event)) return;
 					enqueueSpeech(event);
 				});
 				pompomOnSfx((sfx) => {
+					if (!enabled) return;
 					if (demoRunning) return;
 					const weatherSfx = ["thunder", "bird_chirp", "bee_buzz", "weather_transition", "wind_gust", "rain_drip", "cricket_chirp"];
 					if (weatherSfx.includes(sfx) && !isPrimaryInstance()) return;
 					void playSfx(sfx as SfxName);
 				});
 				pompomOnEmotionalState((state) => {
+					if (!enabled) return;
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
 			installPompomFooter(switchCtx, () => sessionStartMs, () => pi.getThinkingLevel());
@@ -1758,6 +1768,7 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("agent_start", () => {
 			onAgentStart();
 			setAgentBusy(true);
+			if (!enabled) return;
 			pulseOverlay({ forceOverlay: true, lookX: 0.2, lookY: -0.1, glow: 0.92, earBoost: 0.7 }, 2600);
 			speakCommentary({ eventName: "agent_start" });
 		});
@@ -1767,9 +1778,10 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("agent_end", () => {
 			onAgentEnd();
 			setAgentBusy(false);
+			persistAgentState();
+			if (!enabled) return;
 			pulseOverlay({ forceOverlay: true, lookX: 0.06, lookY: -0.04, glow: 0.75, earBoost: 0.45 }, 2200);
 			speakCommentary({ eventName: "agent_end" });
-			persistAgentState();
 		});
 	});
 
@@ -1777,6 +1789,7 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("tool_execution_start", () => {
 			const payload = getToolEventPayload(event);
 			onToolCall({ toolCallId: payload.toolCallId, toolName: payload.toolName, args: payload.args });
+			if (!enabled) return;
 			pulseOverlay({ forceOverlay: true, lookX: 0.24, lookY: -0.12, glow: 1, earBoost: 0.85 }, 1800);
 			speakCommentary({ eventName: "tool_call", toolName: payload.toolName });
 			// Subtle agent activity audio — max once per 30s, primary only
@@ -1797,6 +1810,7 @@ export default function (pi: ExtensionAPI) {
 				isError: payload.isError,
 				result: payload.result,
 			});
+			if (!enabled) return;
 			pulseOverlay({
 				forceOverlay: true,
 				lookX: payload.isError ? -0.14 : 0.14,
@@ -1811,6 +1825,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("message_start", async (event) => {
 		await runSafely("message_start", () => {
 			const role = getMessageRole(getEventMessage(event));
+			if (!enabled) return;
 			if (role === "user") {
 				pulseOverlay({ forceOverlay: true, lookX: -0.1, lookY: 0, glow: 0.38, earBoost: 0.25 }, 1200);
 			}
@@ -1825,6 +1840,7 @@ export default function (pi: ExtensionAPI) {
 		await runSafely("message_end", () => {
 			const message = getEventMessage(event);
 			const role = getMessageRole(message);
+			if (!enabled) return;
 			// Don't mirror assistant text as Pompom speech — that causes double-speak
 			speakCommentary({ eventName: "message_end", role });
 		});
@@ -1969,7 +1985,7 @@ export default function (pi: ExtensionAPI) {
 						}
 					},
 					onAmbientToggle: (on) => {
-						if (on) startAmbientWeatherSync();
+						if (on && enabled) startAmbientWeatherSync();
 						else stopAmbientWeatherSync();
 					},
 					onAccessoryChange: async () => {
@@ -2461,7 +2477,7 @@ export default function (pi: ExtensionAPI) {
 
 				if (sub === "on") {
 					setAmbientEnabled(true);
-					startAmbientWeatherSync();
+					if (enabled) startAmbientWeatherSync();
 					commandContext.ui.notify("Ambient sounds enabled. Weather audio will play in the background.", "info");
 					return;
 				}
@@ -2666,8 +2682,10 @@ export default function (pi: ExtensionAPI) {
 					"</recent-session>",
 				].join("\n");
 
-				pulseOverlay({ forceOverlay: true, lookX: 0.1, lookY: -0.08, glow: 0.85, earBoost: 0.6 }, 5000);
-				pompomSay("Analyzing the session...", 3.0, "commentary", 1, true);
+				if (enabled) {
+					pulseOverlay({ forceOverlay: true, lookX: 0.1, lookY: -0.08, glow: 0.85, earBoost: 0.6 }, 5000);
+					pompomSay("Analyzing the session...", 3.0, "commentary", 1, true);
+				}
 
 				try {
 					const response = await completeSimple(
@@ -3013,6 +3031,7 @@ export default function (pi: ExtensionAPI) {
 						sessionManager: commandContext.sessionManager as any,
 						shortcut: CHAT_SHORTCUT_DISPLAY,
 						onThinking: (active: boolean) => {
+							if (!enabled) return;
 							// Trigger Pompom's visual thinking animation when chat is processing
 							if (active) {
 								pulseOverlay({ forceOverlay: true, lookX: 0.14, lookY: -0.08, glow: 0.9, earBoost: 0.7 }, 30000);
@@ -3049,7 +3068,7 @@ export default function (pi: ExtensionAPI) {
 						anchor: "center" as any,
 						margin: { top: 0, left: 1, right: 1 } as any,
 						nonCapturing: true,
-					},
+					} as any,
 					onHandle: (handle: any) => {
 						chatOverlayHandle = handle;
 						handle.focus();

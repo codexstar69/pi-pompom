@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.29] - 2026-03-29
+
+### Bug Fixes
+
+- Pompom disabled state now persists globally across new terminal sessions —
+  turning off Pompom in settings (or via `/pompom off`) fully silences all sound
+  effects, animations, AI speech, companion widget, ambient weather sync, and
+  native window in every new Pi terminal until explicitly re-enabled
+- Gate all `playSfx`, `pulseOverlay`, `speakCommentary`, `pompomSay`,
+  `showCompanion`, `setupKeyHandler`, `startAmbientWeatherSync`,
+  `scheduleAiSpeech`, and `openNativeWindow` behind the persisted `enabled` flag
+- Gate event-driven callbacks (`pompomOnSpeech`, `pompomOnSfx`,
+  `pompomOnEmotionalState`) and lifecycle handlers (`agent_start`, `agent_end`,
+  `tool_execution_start/end`, `message_start/end`) with `if (!enabled) return`
+- Gate user-command animations in `/pompom ask`, `/pompom recap`,
+  `/pompom analyze`, accessory equip, and side-chat thinking overlay
+- Block ambient weather sync start while globally disabled (settings toggle and
+  `/pompom:ambient on` command)
+- Footer bar, hints, and side-chat features intentionally remain active when
+  Pompom is disabled
+
+### Chores
+
+- Fix pre-existing TypeScript error: cast `overlayOptions` to `any` for untyped
+  `nonCapturing` property (Pi SDK type definitions lag behind runtime API)
+
 ## [7.8.28] - 2026-03-20
 
 ### Features
