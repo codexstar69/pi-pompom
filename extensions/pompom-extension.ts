@@ -636,6 +636,26 @@ export default function (pi: ExtensionAPI) {
 	let primaryAmbientOwner = false;
 	let demoAccessorySnapshot: ReturnType<typeof pompomGetAccessories> | null = null;
 
+	function teardownSession() {
+		stopDemo();
+		cancelAiCommand();
+		persistAgentState();
+		setAgentBusy(false);
+		setMoodSfxEnabled(false);
+		resetVoiceActivityState();
+		stopPlayback();
+		stopAmbient();
+		stopAmbientWeatherSync();
+		closeNativeWindow();
+		resetAiSpeechState();
+		sessionStartMs = Date.now();
+		cleanupSessionUiState();
+		resetSessionCountGuardIfAvailable();
+		initSessionCount();
+		hideCompanion();
+		resetPompom();
+	}
+
 	function persistAgentState() {
 		try {
 			if (!ctx) {
@@ -761,7 +781,20 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx) return null;
 			const model = resolvePompomModel(ctx);
 			if (!model) return null;
-			const apiKey = await ctx.modelRegistry.getApiKey(model);
+			let apiKey: string | undefined;
+			let headers: Record<string, string> | undefined;
+			if (typeof (ctx.modelRegistry as any).getApiKeyAndHeaders === "function") {
+				const auth = await (ctx.modelRegistry as any).getApiKeyAndHeaders(model);
+				if (!auth || typeof auth.ok !== "boolean") return null;
+				if (!auth.ok) return null;
+				if (typeof auth.apiKey !== "string" || auth.apiKey.length === 0) {
+					return null;
+				}
+				apiKey = auth.apiKey;
+				headers = auth.headers != null && typeof auth.headers === "object" ? auth.headers : undefined;
+			} else {
+				apiKey = await ctx.modelRegistry.getApiKey(model);
+			}
 			if (!apiKey) return null;
 
 			const stats = getSessionStats();
@@ -817,7 +850,7 @@ export default function (pi: ExtensionAPI) {
 				response = await completeSimple(
 					model as any,
 					{ messages: [createUserMessage(userPrompt)], systemPrompt },
-					{ apiKey, signal: controller.signal },
+					{ apiKey, headers, signal: controller.signal },
 				);
 			} catch (error) {
 				if (error instanceof Error && error.name === "AbortError") {
@@ -1424,8 +1457,30 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		let apiKey: string | undefined;
+		let headers: Record<string, string> | undefined;
 		try {
-			apiKey = await commandContext.modelRegistry.getApiKey(model);
+			if (typeof (commandContext.modelRegistry as any).getApiKeyAndHeaders === "function") {
+				const auth = await (commandContext.modelRegistry as any).getApiKeyAndHeaders(model);
+				if (!auth || typeof auth.ok !== "boolean") {
+					commandContext.ui.notify("API key lookup failed: unexpected response shape", "error");
+					finishAiCommand(runId);
+					return;
+				}
+				if (!auth.ok) {
+					commandContext.ui.notify(`API key lookup failed: ${auth.error ?? "unknown error"}`, "error");
+					finishAiCommand(runId);
+					return;
+				}
+				if (typeof auth.apiKey !== "string" || auth.apiKey.length === 0) {
+					commandContext.ui.notify("API key lookup failed: missing or empty apiKey", "error");
+					finishAiCommand(runId);
+					return;
+				}
+				apiKey = auth.apiKey;
+				headers = auth.headers != null && typeof auth.headers === "object" ? auth.headers : undefined;
+			} else {
+				apiKey = await commandContext.modelRegistry.getApiKey(model);
+			}
 		} catch (err) {
 			commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
 			finishAiCommand(runId);
@@ -1469,7 +1524,7 @@ export default function (pi: ExtensionAPI) {
 					].join("\n"),
 					messages: promptMessages,
 				},
-				{ apiKey, reasoning, signal }
+				{ apiKey, headers, reasoning, signal }
 			);
 
 			for await (const event of stream) {
@@ -1538,8 +1593,30 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		let apiKey: string | undefined;
+		let headers: Record<string, string> | undefined;
 		try {
-			apiKey = await commandContext.modelRegistry.getApiKey(model);
+			if (typeof (commandContext.modelRegistry as any).getApiKeyAndHeaders === "function") {
+				const auth = await (commandContext.modelRegistry as any).getApiKeyAndHeaders(model);
+				if (!auth || typeof auth.ok !== "boolean") {
+					commandContext.ui.notify("API key lookup failed: unexpected response shape", "error");
+					finishAiCommand(runId);
+					return;
+				}
+				if (!auth.ok) {
+					commandContext.ui.notify(`API key lookup failed: ${auth.error ?? "unknown error"}`, "error");
+					finishAiCommand(runId);
+					return;
+				}
+				if (typeof auth.apiKey !== "string" || auth.apiKey.length === 0) {
+					commandContext.ui.notify("API key lookup failed: missing or empty apiKey", "error");
+					finishAiCommand(runId);
+					return;
+				}
+				apiKey = auth.apiKey;
+				headers = auth.headers != null && typeof auth.headers === "object" ? auth.headers : undefined;
+			} else {
+				apiKey = await commandContext.modelRegistry.getApiKey(model);
+			}
 		} catch (err) {
 			commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
 			finishAiCommand(runId);
@@ -1590,7 +1667,7 @@ export default function (pi: ExtensionAPI) {
 				{
 					messages: [createUserMessage(recapPrompt)],
 				},
-				{ apiKey, reasoning: "low", signal }
+				{ apiKey, headers, reasoning: "low", signal }
 			);
 			throwIfAiCommandCanceled(runId);
 
@@ -1620,6 +1697,13 @@ export default function (pi: ExtensionAPI) {
 
 		pi.on("session_start", async (_event, startCtx) => {
 			await runSafely("session_start", async () => {
+				const reason: string | undefined = typeof (_event as any).reason === "string" ? (_event as any).reason : undefined;
+
+				// If reason indicates a session switch (not initial startup), run teardown first
+				if (reason !== undefined && reason !== "startup") {
+					teardownSession();
+				}
+
 				ctx = startCtx;
 				enabled = loadEnabledState();
 				sessionStartMs = Date.now();
@@ -1662,6 +1746,15 @@ export default function (pi: ExtensionAPI) {
 				}
 				showVoiceHint();
 				showAmbientHint();
+
+				// session_switch additional re-init for non-startup reasons
+				if (reason !== undefined && reason !== "startup") {
+					loadedAmbientHintShown = false;
+					lastAmbientWeather = null;
+					wasTTSPlaying = false;
+					lastProactiveAlertAt = 0;
+					widgetVisible = true;
+				}
 			});
 		});
 
@@ -1703,23 +1796,7 @@ export default function (pi: ExtensionAPI) {
 		pi.on("session_switch", async (_event, switchCtx) => {
 			await runSafely("session_switch", () => {
 				// Teardown old session state (but keep instance registered until new one is ready)
-				stopDemo();
-				cancelAiCommand();
-				persistAgentState();
-				setAgentBusy(false);
-				setMoodSfxEnabled(false);
-				resetVoiceActivityState();
-				stopPlayback();
-				stopAmbient();
-				stopAmbientWeatherSync();
-				closeNativeWindow();
-				resetAiSpeechState();
-				sessionStartMs = Date.now();
-				cleanupSessionUiState();
-				resetSessionCountGuardIfAvailable();
-				initSessionCount();
-			hideCompanion();
-			resetPompom();
+				teardownSession();
 			ctx = switchCtx;
 				enabled = loadEnabledState();
 				// Re-register with new cwd (replaces old heartbeat atomically)
@@ -2634,8 +2711,30 @@ export default function (pi: ExtensionAPI) {
 					return;
 				}
 				let apiKey: string | undefined;
+				let headers: Record<string, string> | undefined;
 				try {
-					apiKey = await commandContext.modelRegistry.getApiKey(model);
+					if (typeof (commandContext.modelRegistry as any).getApiKeyAndHeaders === "function") {
+						const auth = await (commandContext.modelRegistry as any).getApiKeyAndHeaders(model);
+						if (!auth || typeof auth.ok !== "boolean") {
+							commandContext.ui.notify("API key lookup failed: unexpected response shape", "error");
+							finishAiCommand(runId);
+							return;
+						}
+						if (!auth.ok) {
+							commandContext.ui.notify(`API key lookup failed: ${auth.error ?? "unknown error"}`, "error");
+							finishAiCommand(runId);
+							return;
+						}
+						if (typeof auth.apiKey !== "string" || auth.apiKey.length === 0) {
+							commandContext.ui.notify("API key lookup failed: missing or empty apiKey", "error");
+							finishAiCommand(runId);
+							return;
+						}
+						apiKey = auth.apiKey;
+						headers = auth.headers != null && typeof auth.headers === "object" ? auth.headers : undefined;
+					} else {
+						apiKey = await commandContext.modelRegistry.getApiKey(model);
+					}
 				} catch (err) {
 					commandContext.ui.notify(`API key lookup failed: ${err instanceof Error ? err.message : err}`, "error");
 					finishAiCommand(runId);
@@ -2691,7 +2790,7 @@ export default function (pi: ExtensionAPI) {
 					const response = await completeSimple(
 						model,
 						{ messages: [createUserMessage(prompt)] },
-						{ apiKey, reasoning: "low", signal },
+						{ apiKey, headers, reasoning: "low", signal },
 					);
 					throwIfAiCommandCanceled(runId);
 					const analysis = extractTextContent(response.content);
