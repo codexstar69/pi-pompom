@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## [7.8.31] - 2026-04-03
+## [7.8.32] - 2026-04-03
+
+### Changed
+- **Faster weather transitions** — weather arc node durations compressed ~60%
+  so transitions between clear, cloudy, rain, storm, and snow happen every
+  5-6 minutes instead of 20-45 minutes. Pause between arcs reduced from
+  2-7 min to 1-5 min.
 
 ### Fixed
 - **TTS audio not resuming after mic release** — `stopRequested` flag in
