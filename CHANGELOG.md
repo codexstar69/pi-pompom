@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.30] - 2026-04-03
+
+### Fixed
+- **Pi API compatibility: session events** — `session_start` now uses per-event
+  `event.reason` detection for new Pi API. Legacy `session_switch` handler
+  preserved for backward compatibility with older Pi versions.
+- **Shared teardown function** — extracted `teardownSession()` called from both
+  `session_start` (non-startup) and `session_switch` paths, preventing behavioral
+  divergence between the two lifecycle entry points.
+- **Pi API compatibility: auth migration** — `ModelRegistry.getApiKey(model)`
+  replaced with `getApiKeyAndHeaders(model)` via runtime `typeof` guard at all 4
+  call sites (generateDynamicLine, ask, recap, game commands). Automatic fallback
+  to `getApiKey()` for older Pi versions.
+- **Headers forwarding** — `headers` from auth response now forwarded in all 4
+  `completeSimple`/`streamSimple` calls for models.json custom auth support.
+- **Auth response shape validation** — full payload validation at every auth site
+  (`auth.ok` boolean, `apiKey` non-empty string, `headers` object sanitization).
+- **Security** — no raw API keys or auth headers are logged in any error path.
+
 ## [7.8.29] - 2026-03-29
 
 ### Bug Fixes
