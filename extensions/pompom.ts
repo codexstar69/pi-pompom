@@ -786,46 +786,46 @@ const WEATHER_ARCS: WeatherArc[] = [
 	{
 		name: "rain_storm",
 		nodes: [
-			{ weather: "clear", durationMs: 5 * 60000, targetIntensity: 0 },
-			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.4 },
-			{ weather: "rain", durationMs: 4 * 60000, targetIntensity: 0.3 },
-			{ weather: "rain", durationMs: 5 * 60000, targetIntensity: 0.7 },
-			{ weather: "storm", durationMs: 8 * 60000, targetIntensity: 1.0 },
-			{ weather: "rain", durationMs: 4 * 60000, targetIntensity: 0.6 },
-			{ weather: "rain", durationMs: 3 * 60000, targetIntensity: 0.2 },
-			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
-			{ weather: "clear", durationMs: 8 * 60000, targetIntensity: 0 },
+			{ weather: "clear", durationMs: 2 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 1.5 * 60000, targetIntensity: 0.4 },
+			{ weather: "rain", durationMs: 2 * 60000, targetIntensity: 0.3 },
+			{ weather: "rain", durationMs: 2 * 60000, targetIntensity: 0.7 },
+			{ weather: "storm", durationMs: 3 * 60000, targetIntensity: 1.0 },
+			{ weather: "rain", durationMs: 2 * 60000, targetIntensity: 0.6 },
+			{ weather: "rain", durationMs: 1.5 * 60000, targetIntensity: 0.2 },
+			{ weather: "cloudy", durationMs: 1.5 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 2 * 60000, targetIntensity: 0 },
 		],
 	},
 	{
 		name: "snow_cycle",
 		nodes: [
-			{ weather: "clear", durationMs: 5 * 60000, targetIntensity: 0 },
-			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.4 },
-			{ weather: "snow", durationMs: 5 * 60000, targetIntensity: 0.3 },
-			{ weather: "snow", durationMs: 8 * 60000, targetIntensity: 0.8 },
-			{ weather: "snow", durationMs: 4 * 60000, targetIntensity: 1.0 },
-			{ weather: "snow", durationMs: 4 * 60000, targetIntensity: 0.4 },
-			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
-			{ weather: "clear", durationMs: 8 * 60000, targetIntensity: 0 },
+			{ weather: "clear", durationMs: 2 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 1.5 * 60000, targetIntensity: 0.4 },
+			{ weather: "snow", durationMs: 2 * 60000, targetIntensity: 0.3 },
+			{ weather: "snow", durationMs: 3 * 60000, targetIntensity: 0.8 },
+			{ weather: "snow", durationMs: 2 * 60000, targetIntensity: 1.0 },
+			{ weather: "snow", durationMs: 2 * 60000, targetIntensity: 0.4 },
+			{ weather: "cloudy", durationMs: 1.5 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 2 * 60000, targetIntensity: 0 },
 		],
 	},
 	{
 		name: "light_rain",
 		nodes: [
-			{ weather: "clear", durationMs: 6 * 60000, targetIntensity: 0 },
-			{ weather: "cloudy", durationMs: 5 * 60000, targetIntensity: 0.5 },
-			{ weather: "rain", durationMs: 10 * 60000, targetIntensity: 0.4 },
-			{ weather: "cloudy", durationMs: 4 * 60000, targetIntensity: 0.3 },
-			{ weather: "clear", durationMs: 10 * 60000, targetIntensity: 0 },
+			{ weather: "clear", durationMs: 2 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 2 * 60000, targetIntensity: 0.5 },
+			{ weather: "rain", durationMs: 5 * 60000, targetIntensity: 0.4 },
+			{ weather: "cloudy", durationMs: 2 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 3 * 60000, targetIntensity: 0 },
 		],
 	},
 	{
 		name: "sunny_day",
 		nodes: [
-			{ weather: "clear", durationMs: 20 * 60000, targetIntensity: 0 },
-			{ weather: "cloudy", durationMs: 5 * 60000, targetIntensity: 0.3 },
-			{ weather: "clear", durationMs: 15 * 60000, targetIntensity: 0 },
+			{ weather: "clear", durationMs: 6 * 60000, targetIntensity: 0 },
+			{ weather: "cloudy", durationMs: 2 * 60000, targetIntensity: 0.3 },
+			{ weather: "clear", durationMs: 5 * 60000, targetIntensity: 0 },
 		],
 	},
 ];
@@ -983,7 +983,7 @@ function updateWeatherSystem(dtMs: number): void {
 			} else {
 				weatherArc = null;
 				// Start next arc after a clear pause
-				weatherTimer = 120000 + Math.random() * 300000; // 2-5 min pause
+				weatherTimer = 60000 + Math.random() * 240000; // 1-5 min pause between arcs
 			}
 		}
 	} else {
