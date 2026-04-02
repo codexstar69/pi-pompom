@@ -761,6 +761,11 @@ export function setMicRecording(active: boolean): void {
 		// Cancel any in-flight TTS synthesis AND active playback
 		if (currentAbortController) { currentAbortController.abort(); currentAbortController = null; }
 		if (playbackActive) stopPlayback();
+	} else {
+		// Clear the stop latch so normal-priority TTS can resume after mic release.
+		// Without this, stopRequested stays true from the stopPlayback() call above
+		// and blocks all priority < 3 speech indefinitely.
+		stopRequested = false;
 	}
 }
 

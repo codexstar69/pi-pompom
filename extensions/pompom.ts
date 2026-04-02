@@ -476,7 +476,7 @@ let agentErrorCount = 0;
 // Fires every 2-5 minutes in positive emotional states.
 // Each request includes the shortcut hint so the user knows what to press.
 let lastActivityRequestAt = 0;
-const ACTIVITY_REQUEST_COOLDOWN_MS = 120_000; // min 2 min between requests
+const ACTIVITY_REQUEST_COOLDOWN_MS = 600_000; // min 10 min between requests (was 2 min — too frequent)
 const ACTIVITY_REQUEST_STATES: EmotionalState[] = ["content", "happy", "blissful", "playful", "bored"];
 
 

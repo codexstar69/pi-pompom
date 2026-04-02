@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.8.31] - 2026-04-03
+
+### Fixed
+- **TTS audio not resuming after mic release** — `stopRequested` flag in
+  pompom-voice.ts was never cleared when `setMicRecording(false)` was called,
+  permanently blocking all normal-priority TTS speech (priority < 3) after any
+  microphone use. Now explicitly cleared on mic release so commentary, mood
+  speech, and reactions resume immediately.
+- **Activity requests too frequent** — Pompom's spontaneous play/dance/sing
+  requests reduced from every 2 minutes to every 10 minutes to be less
+  intrusive during focused coding sessions.
+
 ## [7.8.30] - 2026-04-03
 
 ### Fixed
