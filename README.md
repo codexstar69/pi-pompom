@@ -35,6 +35,10 @@
 ---
 
 <p align="center">
+  <img src="docs/screenshots/pompom-hero.png" alt="Pompom — Do a flip!" width="700">
+</p>
+
+<p align="center">
   <img src="docs/screenshots/demo-preview.gif" alt="Pompom Demo" width="700">
 </p>
 
