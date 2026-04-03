@@ -35,11 +35,11 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/pompom-hero.png" alt="Pompom — Do a flip!" width="700">
+  <img src="https://raw.githubusercontent.com/codexstar69/pi-pompom/main/docs/screenshots/pompom-hero.png" alt="Pompom — Do a flip!" width="700">
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/demo-preview.gif" alt="Pompom Demo" width="700">
+  <img src="https://raw.githubusercontent.com/codexstar69/pi-pompom/main/docs/screenshots/demo-preview.gif" alt="Pompom Demo" width="700">
 </p>
 
 ---
@@ -71,7 +71,7 @@ While all of that works in the background, she is also playful. She asks you to 
 Press `⌥/` (macOS) or `Alt+/` (Windows/Linux) or run `/pompom:chat` to open a floating AI chat panel alongside the main agent.
 
 <p align="center">
-  <img src="docs/screenshots/side-chat.png" alt="Pompom Side Chat" width="700">
+  <img src="https://raw.githubusercontent.com/codexstar69/pi-pompom/main/docs/screenshots/side-chat.png" alt="Pompom Side Chat" width="700">
 </p>
 
 - Pompom has her own AI instance running in parallel. She does not interrupt your main agent.
@@ -326,7 +326,7 @@ Pompom expresses emotions based on her needs:
 Run `/pompom-settings` to open the interactive 9-tab settings panel. No commands to memorize. Everything is right there.
 
 <p align="center">
-  <img src="docs/screenshots/settings-panel.png" alt="Pompom Settings Panel" width="700">
+  <img src="https://raw.githubusercontent.com/codexstar69/pi-pompom/main/docs/screenshots/settings-panel.png" alt="Pompom Settings Panel" width="700">
 </p>
 
 | Tab | What you can do |
@@ -348,7 +348,7 @@ Navigate with arrow keys, Enter to select, Esc to close.
 Pompom adds a compact, information-rich status bar at the bottom of your Pi terminal.
 
 <p align="center">
-  <img src="docs/screenshots/footer.png" alt="Pompom Footer" width="700">
+  <img src="https://raw.githubusercontent.com/codexstar69/pi-pompom/main/docs/screenshots/footer.png" alt="Pompom Footer" width="700">
 </p>
 
 - Pompom's mood face + name (always visible)
