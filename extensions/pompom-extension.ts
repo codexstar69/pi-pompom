@@ -1961,12 +1961,12 @@ export default function (pi: ExtensionAPI) {
 	const shortcutActions: [string, string][] = [
 		["alt+p", "p"],  // Pet
 		["alt+n", "f"],  // Noms (feed)
-		["alt+r", "b"],  // thRow (ball)
+		["alt+e", "b"],  // thrEw (ball)
 		["alt+z", "d"],  // Zoom flip
 		["alt+u", "h"],  // hUg
 		["alt+a", "w"],  // Awake (wake)
 		["alt+t", "t"],  // Treat
-		["alt+x", "x"],  // Dance
+		["alt+q", "x"],  // Quirky dance
 		["alt+g", "g"],  // Game
 		["alt+s", "s"],  // Sleep
 		["alt+o", "o"],  // Hide
@@ -2093,7 +2093,7 @@ export default function (pi: ExtensionAPI) {
 					disablePompom();
 					commandContext.ui.notify(
 						"Pompom off — animation, voice, and sounds all disabled.\n" +
-						`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325/" : "Alt+/"}\n` +
+						`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325I" : "Alt+I"}\n` +
 						"To restore everything: /pompom on",
 						"info"
 					);
@@ -2896,7 +2896,7 @@ export default function (pi: ExtensionAPI) {
 				disablePompom();
 				commandContext.ui.notify(
 					"Pompom off — animation, voice, and sounds all disabled.\n" +
-					`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325/" : "Alt+/"}\n` +
+					`Side chat is still available: /pompom:chat or ${process.platform === "darwin" ? "\u2325I" : "Alt+I"}\n` +
 					"To restore everything: /pompom on",
 					"info"
 				);
@@ -2999,8 +2999,8 @@ export default function (pi: ExtensionAPI) {
 
 	// ─── Pompom Side Chat ───────────────────────────────────────────
 
-	const CHAT_SHORTCUT = "alt+/";
-	const CHAT_SHORTCUT_DISPLAY = process.platform === "darwin" ? "\u2325/" : "Alt+/";
+	const CHAT_SHORTCUT = "alt+i";
+	const CHAT_SHORTCUT_DISPLAY = process.platform === "darwin" ? "\u2325I" : "Alt+I";
 	let chatOverlayHandle: { focus: () => void; unfocus: () => void; isFocused: () => boolean } | null = null;
 	let chatOpenInProgress = false;
 	let aiCommandInProgress = false;
