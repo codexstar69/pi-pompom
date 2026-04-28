@@ -260,21 +260,24 @@ function renderFooter(width: number, sessionMs: number, thinkingLevel: string, c
 // ─── API ─────────────────────────────────────────────────────────────────────
 
 export function installPompomFooter(
-	ctx: ExtensionContext,
+	getCtx: () => ExtensionContext | null,
 	getSessionStartMs: () => number,
 	getThinkingLevel: () => string,
 ): void {
-	if (!ctx.hasUI) return;
+	const initialCtx = getCtx();
+	if (!initialCtx?.hasUI) return;
 
-	ctx.ui.setFooter((_tui, _theme, _footerData) => {
+	initialCtx.ui.setFooter((_tui, _theme, _footerData) => {
 		let disposed = false;
 		return {
 			invalidate() {},
 			dispose() { disposed = true; },
 			render(width: number): string[] {
 				if (disposed || width <= 0) return ["", ""];
+				const live = getCtx();
+				if (!live) return ["", ""];
 				try {
-					return [truncateToWidth(renderFooter(width, getSessionStartMs(), getThinkingLevel(), ctx), width), ""];
+					return [truncateToWidth(renderFooter(width, getSessionStartMs(), getThinkingLevel(), live), width), ""];
 				} catch {
 					return ["", ""];
 				}

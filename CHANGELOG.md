@@ -2,6 +2,80 @@
 
 All notable changes to this project will be documented in this file.
 
+## [7.9.0] - 2026-04-28
+
+### Audit & verification
+- Multi-model parallel review (godspeed: GPT-5.5 codex, Claude Opus 4.7,
+  Sonnet 4.6, Kimi K2.6, DeepSeek V4 Pro, MiniMax M2.7, GLM 5.1, Gemini 3.1
+  Pro) against the upstream `pi-coding-agent` 0.65 → 0.70.5 changelog.
+  Plan iterated through 11 rounds of adversarial review until **gemini +
+  codex + opus 4.7 unanimously approved** the design. Post-impl smoke
+  exercises 7 lifecycle scenarios (terminal /quit, switch-first, shutdown-
+  first, /reload, rapid /new_session→/quit, mutex serialization, error-
+  doesn't-deadlock). See [docs/2026-04-28-godspeed-upstream-audit.md].
+
+### Fixed
+- **Captured `pi`/`ctx` after session replacement (HIGH)** — `installPompomFooter`
+  closure held a stale `ExtensionContext` after `/clone`, `/fork`, `/resume`.
+  Per upstream 0.69.0 breaking change, captured ctx accessors throw post-
+  replacement; the prior `try/catch` masked the throw and rendered a blank
+  footer with no diagnostic. Signature now takes `getCtx: () => ExtensionContext
+  | null` and re-reads live ctx per render. Both call sites (session_start,
+  session_switch) updated atomically.
+- **Lifecycle race between session_shutdown and session_switch (HIGH)** —
+  `await playSfx("session_goodbye")` yielded the event loop, allowing
+  session_switch to interleave and clobber new-session state via shutdown's
+  inlined teardown calls. Now uses a Promise-based mutex (`lifecycleLock`) to
+  strictly serialize session_start, session_switch, and session_shutdown
+  handlers; combined with a host-authoritative `targetSessionFile` stale-
+  event guard (per 0.68.0 changelog), the four documented dispatch orderings
+  all resolve correctly.
+- **`terminalInputUnsub` subscription leak on session switch** —
+  `setupKeyHandler()` reassigned the slot on every switch without freeing
+  the prior subscription. Cleanup moved into `teardownSession()` which both
+  shutdown and switch paths now call, plus an idempotent guard in shutdown.
+- **`sessionStartMs` not reset on session switch** — footer time-since-start
+  carried the previous session's timestamp into the new session. Now
+  `Date.now()` on every session_switch.
+- **`session_shutdown` event payload ignored** — handler was registered as
+  `async () =>`, discarding `event.reason` and `event.targetSessionFile`
+  added in upstream 0.68.0. Now reads both via narrow type assertion;
+  `reason` distinguishes `quit` (terminal) vs `reload`/`new_session`/`fork`/
+  `resume` (switch-style); `targetSessionFile` powers the stale-event guard.
+- **`isGlimpseAvailable().then` race (Fix #7)** — native-window auto-open
+  promise could resolve after a session switch and open a window for the
+  wrong session. Captured `sessionEpoch` at issue-time; bails in the `.then`
+  callback if the epoch advanced.
+- **`wrapInto()` hang-indent for long messages in side chat** — accepted
+  but ignored `_prefixW`, leaving multi-line wraps starting at column 0.
+  Now properly indents continuation lines by `prefixW`.
+- **Footer try/catch silently masking ctx throws** — kept for defense-in-
+  depth but no longer load-bearing thanks to the `getCtx` re-read pattern.
+
+### Added
+- **Mood-aware streaming working indicator (0.68.0 API)** —
+  `ctx.ui.setWorkingIndicator()` returns ASCII-safe frames per Pompom mood
+  (happy/content/hungry/sleeping/playful/musical/tired) with mood-tuned
+  intervals; falls back to braille spinner for unknown moods. Optional API
+  guarded with optional-chain so older pi versions silently no-op.
+- **Layout reclaim while companion is up (0.70.3 API)** —
+  `ctx.ui.setWorkingVisible(false)` in `showCompanion`, `(true)` in
+  `hideCompanion`. Suppresses pi's built-in working loader row when Pompom
+  owns the visual feedback. Optional API guarded.
+- **`terminate: true` on `peek_main` for status checks (0.69.0 API)** — the
+  side-chat `peek_main` tool now returns `terminate: true` when called with
+  `since_last: true`, ending the tool batch without an automatic LLM
+  follow-up turn. Saves ~one model call per `status` / `stuck` shortcut
+  invocation.
+- **Autocomplete provider for `/pompom*` commands (0.69.0 API)** —
+  `ctx.ui.addAutocompleteProvider()` lists 15 pompom commands when the
+  user types `/pompom...`. Optional API guarded.
+
+### Compatibility
+- Targets upstream `pi-coding-agent` 0.65 → 0.70.5; all new-API integrations
+  use optional-chain so older hosts gracefully degrade. No breaking changes
+  for users on the prior 7.8.x line.
+
 ## [7.8.32] - 2026-04-03
 
 ### Changed

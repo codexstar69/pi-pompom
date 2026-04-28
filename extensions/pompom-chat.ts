@@ -282,7 +282,15 @@ export class PompomChatOverlay implements Component, Focusable {
 						return "";
 					}).filter(Boolean).join("\n\n");
 
-					return { content: [{ type: "text" as const, text: "Main agent activity:\n\n" + formatted }], details: {} };
+					// Optimization C: terminate-after-tool for plain status checks (since_last=true).
+					// "status" / "stuck" shortcuts call peek_main({ since_last: true }) to dump
+					// recent activity verbatim. The follow-up LLM turn just paraphrases the same
+					// data — saves ~one model call per status invocation.
+					return {
+						content: [{ type: "text" as const, text: "Main agent activity:\n\n" + formatted }],
+						details: {},
+						terminate: params.since_last === true,
+					} as { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown>; terminate?: boolean };
 				} catch {
 					return { content: [{ type: "text" as const, text: "Could not read main agent state." }], details: {} };
 				}
@@ -587,11 +595,14 @@ export class PompomChatOverlay implements Component, Focusable {
 		return lines.map(l => visibleWidth(l) > width ? truncateToWidth(l, width) : l);
 	}
 
-	/** Wrap text using Pi's built-in ANSI-aware word wrapper, prepending a prefix to the first line. */
-	private wrapInto(out: string[], prefix: string, _prefixW: number, text: string, maxW: number) {
-		const fullText = prefix + text;
-		const wrapped = wrapTextWithAnsi(fullText, Math.max(4, maxW));
-		for (const line of wrapped) out.push(line);
+	/** Wrap text with hang-indent: first line gets prefix, continuations indent by prefixW. */
+	private wrapInto(out: string[], prefix: string, prefixW: number, text: string, maxW: number) {
+		const innerW = Math.max(4, maxW - prefixW);
+		const wrapped = wrapTextWithAnsi(text, innerW);
+		if (wrapped.length === 0) return;
+		out.push(prefix + wrapped[0]);
+		const indent = " ".repeat(prefixW);
+		for (let i = 1; i < wrapped.length; i++) out.push(indent + wrapped[i]);
 	}
 
 

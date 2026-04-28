@@ -175,6 +175,20 @@ const SAVE_DIR = path.join(os.homedir(), ".pi", "pompom");
 const SAVE_FILE = path.join(SAVE_DIR, "accessories.json");
 const WIDGET_ID = "codexstar-pompom-companion";
 const POMPOM_AGENT_STATE_TYPE = "pompom-agent-state";
+
+// Optimization A — mood-aware streaming working indicator (0.68.0).
+// ASCII-safe single-cell frames per mood; fallback to braille for unknown moods.
+// Each entry: { frames, intervalMs }. Intervals tuned so heavier moods animate slower.
+const MOOD_SPINNER_FRAMES: Record<string, { frames: string[]; intervalMs: number }> = {
+	happy:    { frames: [":3 ", ":D ", ":3 ", ":> "], intervalMs: 220 },
+	content:  { frames: [":) ", ":] ", ":) ", ":] "], intervalMs: 240 },
+	hungry:   { frames: [":o ", ":O ", ":o ", ":0 "], intervalMs: 200 },
+	sleeping: { frames: ["zZ ", "Zz ", "z. ", ".. "], intervalMs: 600 },
+	playful:  { frames: ["^o^", "^v^", "^.^", "^_^"], intervalMs: 180 },
+	musical:  { frames: ["♪. ", ".♪ ", "♫. ", ".♫ "], intervalMs: 200 },
+	tired:    { frames: ["-.-", "-_-", "-.-", "._."], intervalMs: 360 },
+};
+const DEFAULT_SPINNER_FRAMES = { frames: ["⠋", "⠙", "⠸", "⠴", "⠦", "⠇"], intervalMs: 80 };
 let loadedVoiceHintShown = false;
 
 const emptyUsage = {
@@ -636,6 +650,34 @@ export default function (pi: ExtensionAPI) {
 	let primaryAmbientOwner = false;
 	let demoAccessorySnapshot: ReturnType<typeof pompomGetAccessories> | null = null;
 
+	// Lifecycle serialization (godspeed plan-review rounds 4-11): serializes
+	// session_start, session_switch, session_shutdown handlers so at most one body
+	// executes at a time. Combined with the targetSessionFile guard below, this
+	// prevents stale-event clobbering of the active session's state.
+	let lifecycleLock: Promise<void> = Promise.resolve();
+	function serializeLifecycle<T>(name: string, fn: () => Promise<T>): Promise<T | undefined> {
+		const next: Promise<T | undefined> = lifecycleLock.then(fn).catch((err) => {
+			console.error(`[pompom lifecycle ${name}]`, err instanceof Error ? err.message : err);
+			return undefined;
+		});
+		lifecycleLock = next.then(() => undefined, () => undefined);
+		return next;
+	}
+
+	// Host-authoritative session identity for stale-event detection (per 0.68.0
+	// changelog). Tracked at session_start/switch; compared against
+	// session_shutdown event's targetSessionFile. Replaces the fragile
+	// ctxAtEntry heuristic that doesn't survive host-awaits-handlers dispatch.
+	let currentSessionFile: string | undefined;
+	function getSessionFile(c: ExtensionContext | null): string | undefined {
+		return (c as { sessionManager?: { getSessionFile?: () => string | undefined } } | null)
+			?.sessionManager?.getSessionFile?.() ?? undefined;
+	}
+
+	// Session epoch for guarding async callbacks (e.g. isGlimpseAvailable().then)
+	// that may resolve after a session replacement (Fix #7).
+	let sessionEpoch = 0;
+
 	function teardownSession() {
 		stopDemo();
 		cancelAiCommand();
@@ -654,6 +696,53 @@ export default function (pi: ExtensionAPI) {
 		initSessionCount();
 		hideCompanion();
 		resetPompom();
+		// Fix #3: free terminalInputUnsub on every teardown so session_switch
+		// doesn't leak the old subscription before re-registering.
+		if (terminalInputUnsub) {
+			terminalInputUnsub();
+			terminalInputUnsub = null;
+		}
+	}
+
+	// Optimization A — bind streaming working indicator to Pompom's mood (0.68.0).
+	// Optional API guarded with optional-chain; older pi versions silently no-op.
+	function installPompomWorkingIndicator(ec: ExtensionContext): void {
+		const ui = ec.ui as { setWorkingIndicator?: (provider: () => { frames: string[]; intervalMs: number }) => void } | undefined;
+		ui?.setWorkingIndicator?.(() => {
+			try {
+				const mood = pompomStatus().mood;
+				return MOOD_SPINNER_FRAMES[mood] ?? DEFAULT_SPINNER_FRAMES;
+			} catch {
+				return DEFAULT_SPINNER_FRAMES;
+			}
+		});
+	}
+
+	// Optimization D — autocomplete /pompom* commands and side-chat shortcut keywords (0.69.0).
+	// Optional API guarded; falls through to built-in autocomplete on older pi versions.
+	const POMPOM_COMMAND_NAMES = [
+		"/pompom", "/pompom-on", "/pompom-off", "/pompom-settings",
+		"/pompom:ask", "/pompom:voice", "/pompom:ambient", "/pompom:recap",
+		"/pompom:agents", "/pompom:stuck", "/pompom:analyze", "/pompom:terminals",
+		"/pompom:window", "/pompom:demo", "/pompom:chat",
+	];
+	function installPompomAutocomplete(ec: ExtensionContext): void {
+		type AutocompleteItem = { value: string; label: string; replaceLength: number };
+		type AutocompleteResult = { items: AutocompleteItem[] } | null;
+		const ui = ec.ui as { addAutocompleteProvider?: (fn: (input: { input: string; cursor: number }) => AutocompleteResult) => void } | undefined;
+		ui?.addAutocompleteProvider?.((input) => {
+			try {
+				const before = input.input.slice(0, input.cursor);
+				const m = before.match(/(\/[a-z:_-]*)$/);
+				if (!m) return null;
+				const prefix = m[1];
+				const matches = POMPOM_COMMAND_NAMES.filter(c => c.startsWith(prefix));
+				if (matches.length === 0) return null;
+				return { items: matches.map(c => ({ value: c, label: c, replaceLength: prefix.length })) };
+			} catch {
+				return null;
+			}
+		});
 	}
 
 	function persistAgentState() {
@@ -1161,6 +1250,10 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		companionActive = true;
+		// Optimization B (0.70.3): suppress built-in working loader row while Pompom
+		// owns the visual feedback. Optional API — guarded with optional-chain.
+		(ctx?.ui as { setWorkingVisible?: (visible: boolean) => void } | undefined)
+			?.setWorkingVisible?.(false);
 		mountCompanionWidget();
 		startHealthCheck();
 
@@ -1206,6 +1299,9 @@ export default function (pi: ExtensionAPI) {
 
 	function hideCompanion() {
 		companionActive = false;
+		// Optimization B: restore built-in working loader row when companion is gone.
+		(ctx?.ui as { setWorkingVisible?: (visible: boolean) => void } | undefined)
+			?.setWorkingVisible?.(true);
 		if (companionTimer) {
 			clearInterval(companionTimer);
 			companionTimer = null;
@@ -1696,7 +1792,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 		pi.on("session_start", async (_event, startCtx) => {
-			await runSafely("session_start", async () => {
+			await serializeLifecycle("session_start", () => runSafely("session_start", async () => {
 				const reason: string | undefined = typeof (_event as any).reason === "string" ? (_event as any).reason : undefined;
 
 				// If reason indicates a session switch (not initial startup), run teardown first
@@ -1705,6 +1801,8 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				ctx = startCtx;
+				currentSessionFile = getSessionFile(startCtx);
+				sessionEpoch++;
 				enabled = loadEnabledState();
 				sessionStartMs = Date.now();
 				loadedVoiceHintShown = false;
@@ -1732,7 +1830,9 @@ export default function (pi: ExtensionAPI) {
 					if (!enabled) return;
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
-				installPompomFooter(startCtx, () => sessionStartMs, () => pi.getThinkingLevel());
+				installPompomFooter(() => ctx, () => sessionStartMs, () => pi.getThinkingLevel());
+				installPompomWorkingIndicator(startCtx);
+				installPompomAutocomplete(startCtx);
 				restoreCompanionState(startCtx);
 				if (enabled) {
 					showCompanion();
@@ -1741,7 +1841,11 @@ export default function (pi: ExtensionAPI) {
 					scheduleAiSpeech();
 					// Auto-open native window on session start (primary only)
 					if (isPrimaryInstance() && isWindowEnabled()) {
-						void isGlimpseAvailable().then(ok => { if (ok && enabled) void openNativeWindow(); });
+						const epoch = sessionEpoch;
+						void isGlimpseAvailable().then(ok => {
+							if (epoch !== sessionEpoch) return; // session replaced; bail (Fix #7)
+							if (ok && enabled) void openNativeWindow();
+						});
 					}
 				}
 				showVoiceHint();
@@ -1755,49 +1859,75 @@ export default function (pi: ExtensionAPI) {
 					lastProactiveAlertAt = 0;
 					widgetVisible = true;
 				}
-			});
+			}));
 		});
 
-		pi.on("session_shutdown", async () => {
-			await runSafely("session_shutdown", async () => {
-				const wasPrimary = isPrimaryInstance();
-				closeNativeWindow();
-				deregisterInstance();
-				stopDemo();
-				cancelAiCommand();
-				persistAgentState();
-				setAgentBusy(false);
-				setMoodSfxEnabled(false);
-				resetVoiceActivityState();
-				stopPlayback();
-				stopAmbient();
-				stopAmbientWeatherSync();
-				if (wasPrimary && enabled) {
-					await playSfx("session_goodbye");
+		pi.on("session_shutdown", async (event) => {
+			// Read typed shutdown event (Fix #5 — 0.68.0 added reason + targetSessionFile).
+			// quit (terminal) | reload | new_session | resume | fork — only "quit"
+			// (and undefined for older hosts) is truly terminal; the rest pair with
+			// a session re-init.
+			const reason: string | undefined =
+				typeof (event as unknown as { reason?: unknown })?.reason === "string"
+					? (event as unknown as { reason: string }).reason
+					: undefined;
+			const targetSessionFile: string | undefined =
+				typeof (event as unknown as { targetSessionFile?: unknown })?.targetSessionFile === "string"
+					? (event as unknown as { targetSessionFile: string }).targetSessionFile
+					: undefined;
+			const isSwitchStyle = reason === "new_session" || reason === "fork" || reason === "resume" || reason === "reload";
+			const wasPrimary = isPrimaryInstance();
+
+			await serializeLifecycle("session_shutdown", () => runSafely("session_shutdown", async () => {
+				// Stale-event guard (Fix #2 — host-authoritative session ID).
+				// If host tells us this shutdown is for a session that's no longer
+				// current, the corresponding session_switch already cleaned up the
+				// old session and installed the new one. Bail before clobbering it.
+				if (
+					targetSessionFile !== undefined &&
+					currentSessionFile !== undefined &&
+					targetSessionFile !== currentSessionFile
+				) {
+					return;
 				}
-				resetAiSpeechState();
-				sessionStartMs = 0;
-				cleanupSessionUiState();
-				pompomOnSpeech(null);
-				pompomOnSfx(null);
-				pompomOnEmotionalState(null);
-				setMoodSfxState(null);
-				resetSessionCountGuardIfAvailable();
-				hideCompanion();
-				resetPompom();
-				resetAgentState();
-				if (terminalInputUnsub) {
-					terminalInputUnsub();
-					terminalInputUnsub = null;
+
+				// Goodbye chime — terminal only, fire-and-forget (no yield-point).
+				if (wasPrimary && enabled && !isSwitchStyle) {
+					void playSfx("session_goodbye");
 				}
-			});
+
+				// Shutdown-only items: skip on switch-style because the paired
+				// session_switch handler will rebuild instance registration,
+				// listener subscriptions, and agent state. Tearing them down
+				// only to immediately rebuild is wasteful and risks gaps.
+				if (!isSwitchStyle) {
+					deregisterInstance();
+					pompomOnSpeech(null);
+					pompomOnSfx(null);
+					pompomOnEmotionalState(null);
+					setMoodSfxState(null);
+					resetAgentState();
+				}
+
+				// Shared canonical cleanup (incl. terminalInputUnsub via Fix #3).
+				teardownSession();
+
+				if (!isSwitchStyle) {
+					sessionStartMs = 0;
+					ctx = null;
+					currentSessionFile = undefined;
+				}
+			}));
 		});
 
 		pi.on("session_switch", async (_event, switchCtx) => {
-			await runSafely("session_switch", () => {
+			await serializeLifecycle("session_switch", () => runSafely("session_switch", async () => {
 				// Teardown old session state (but keep instance registered until new one is ready)
 				teardownSession();
-			ctx = switchCtx;
+				ctx = switchCtx;
+				currentSessionFile = getSessionFile(switchCtx);
+				sessionEpoch++;
+				sessionStartMs = Date.now(); // Fix #4 — reset timer for new session
 				enabled = loadEnabledState();
 				// Re-register with new cwd (replaces old heartbeat atomically)
 				registerInstance(switchCtx.cwd);
@@ -1825,7 +1955,9 @@ export default function (pi: ExtensionAPI) {
 					if (!enabled) return;
 					if (isPrimaryInstance()) setMoodSfxState(state);
 				});
-			installPompomFooter(switchCtx, () => sessionStartMs, () => pi.getThinkingLevel());
+			installPompomFooter(() => ctx, () => sessionStartMs, () => pi.getThinkingLevel());
+			installPompomWorkingIndicator(switchCtx);
+			installPompomAutocomplete(switchCtx);
 			restoreCompanionState(switchCtx);
 			if (enabled) {
 				showCompanion();
@@ -1833,13 +1965,17 @@ export default function (pi: ExtensionAPI) {
 				startAmbientWeatherSync();
 				scheduleAiSpeech();
 				if (isPrimaryInstance() && isWindowEnabled()) {
-					void isGlimpseAvailable().then(ok => { if (ok && enabled) void openNativeWindow(); });
+					const epoch = sessionEpoch;
+					void isGlimpseAvailable().then(ok => {
+						if (epoch !== sessionEpoch) return; // session replaced; bail (Fix #7)
+						if (ok && enabled) void openNativeWindow();
+					});
 				}
 			}
 			showVoiceHint();
 			showAmbientHint();
+			}));
 		});
-	});
 
 	pi.on("agent_start", async () => {
 		await runSafely("agent_start", () => {
